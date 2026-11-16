@@ -78,6 +78,7 @@ struct RequestListView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .disabled(model.isUpdatingPresence)
             HStack(spacing: 8) {
                 Button {
                     Task { await model.setBusyFor30Minutes() }
@@ -87,13 +88,14 @@ struct RequestListView: View {
                 }
                 .buttonStyle(.bordered)
                 .tint(PagerTheme.orange)
+                .disabled(model.isUpdatingPresence)
                 if let until = model.presenceUntil, model.presenceAvailability != .available {
                     Text("〜 \(until, style: .time) まで")
                         .font(.caption)
                         .foregroundStyle(PagerTheme.inkSoft)
                 }
             }
-            Text("取り込み中・離席中は通話が文字に切り替わります")
+            Text(presenceExplanation)
                 .font(.caption2)
                 .foregroundStyle(PagerTheme.inkSoft)
             if let error = model.presenceError {
@@ -109,6 +111,16 @@ struct RequestListView: View {
         .padding(16)
         .background(PagerTheme.card, in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(PagerTheme.ink.opacity(0.08)))
+    }
+
+    private var presenceExplanation: String {
+        if model.isUpdatingPresence { return "エージェントに状態を共有しています…" }
+        switch model.effectivePresenceAvailability() {
+        case .available: return "通話や通知で連絡を受け取れます"
+        case .busy: return "取り込み中は、通話の代わりに文字で連絡が届きます"
+        case .away: return "離席中は、通話の代わりに文字で連絡が届きます"
+        case .unknown: return "状態を選ぶとエージェントに共有されます"
+        }
     }
 
     private func resendPresence() async {

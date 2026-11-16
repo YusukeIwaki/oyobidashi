@@ -119,7 +119,12 @@ private fun AvailabilityRow(vm: MainViewModel) {
                 Text("$it まで取り込み中", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        Text("取り込み中・離席中は通話が文字に切り替わります", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val explanation = when (current) {
+            Availability.BUSY -> "取り込み中は、通話の代わりに文字で連絡が届きます"
+            Availability.AWAY -> "離席中は、通話の代わりに文字で連絡が届きます"
+            else -> "通話や通知で連絡を受け取れます"
+        }
+        Text(explanation, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     vm.graph.presenceSyncError.collectAsState().value?.let {
         Text(

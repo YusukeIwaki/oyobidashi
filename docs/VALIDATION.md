@@ -8,7 +8,7 @@
 |---|---|---|
 | relay | `bun test --cwd relay` | **548 pass / 0 fail** |
 | MCP | `bun test --cwd mcp` | **232 pass / 0 fail** |
-| iOS Kit | `swift test --package-path ios/OyobidashiKit` | **185 tests / 1 skip / 0 fail** |
+| iOS Kit | `swift test --package-path ios/OyobidashiKit` | **187 tests / 1 skip / 0 fail** |
 | Android core | JDK17で `android/gradlew -p android :core:test` | **183 tests / 1 skip / 0 fail** |
 | 実サーバー結合 | JDK17で `bun test --cwd integration` | **18 pass / 0 fail** |
 | TypeScript | relay / mcp の `tsc --noEmit` | 成功 |
@@ -118,6 +118,18 @@ iOS Simulatorでは権限の「設定」ボタンからOSの設定アプリを�
 ![iOS 設定](evidence/ios-settings-simplified.png)
 ![Android ホーム](evidence/android-home-simplified.png)
 ![Android 設定](evidence/android-settings-simplified.png)
+
+## 状態変更の競合と表示 (2026-11-16)
+
+iOSでは、状態取得の開始後に利用者が状態を変えると、遅れて届く取得結果で新しい選択を巻き戻す競合がありました。操作の世代とペアリングを照合し、古い取得結果を反映しないよう修正しました。送信失敗時も選択を保持し、再送信できます。送信中は追加操作を無効にし、共有中の表示を出します。両OSとも、選んだ状態に合わせて連絡方法の説明を更新します。
+
+- 回帰試験で「離席中」が古い取得結果の「対応可」に戻る失敗を再現し、修正後の成功を確認しました。通信失敗後の再取得で選択を保持し、再送信でエラーが消えることも検証しています。Swift全187件・skip1件・失敗0件。
+- iOS Simulator / Android Emulatorで、対応可・取り込み中・離席中の選択と説明表示を確認し、実stdio MCPの`get_human_status`で反映を確認しました。
+- 取り込み中に`high/call`の質問を実MCPで作成し、`requested_mode: call` / `delivery_mode: text`になることを確認しました。確認用の質問は取り消し済みで、QA端末の状態は対応可に戻しています。
+- iOS Simulator・iPhone実機向け・Android debugのビルド成功。iPhoneとAndroid QAエミュレータへ再インストール済みです。iPhoneは再ロックされており、修正版のタップ結果は利用者の確認待ちです。
+
+![iOS 離席中の表示](evidence/ios-presence-away.png)
+![Android 離席中の表示](evidence/android-presence-away.png)
 
 ## 未確認・外部条件
 

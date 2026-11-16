@@ -93,6 +93,7 @@ public final class AppModel: AnswerSubmitting {
     public private(set) var presenceNote: String?
     public private(set) var presenceError: RelayError?
     public private(set) var isUpdatingPresence = false
+    @ObservationIgnored private var presenceRevision: UInt64 = 0
     /// アプリ内に表示する通話。CallKit応答後の操作画面と、利用不可時の着信代替画面で共有する。
     public var fallbackCallRequest: AgentRequest?
     @ObservationIgnored public weak var incomingCallHandler: (any IncomingCallHandling)?
@@ -279,16 +280,16 @@ public final class AppModel: AnswerSubmitting {
 
     @discardableResult
     public func updatePresence(availability: PresenceAvailability, until: Date? = nil, note: String? = nil) async -> Bool {
-        guard let client else { return false }
+        guard let client, let credentials else { return false }
+        presenceRevision &+= 1
+        let revision = presenceRevision
         // 楽観的に反映し、失敗したらエラー表示 (値は保持して再試行可能にする)
-        let previousAvailability = presenceAvailability
-        let previousUntil = presenceUntil
         presenceAvailability = availability
         presenceUntil = until
         presenceNote = note
         isUpdatingPresence = true
         presenceError = nil
-        defer { isUpdatingPresence = false }
+        defer { if presenceRevision == revision { isUpdatingPresence = false } }
         let body = PresenceUpdateBody(
             availability: availability,
             until: until.map { .set($0) } ?? .clear,
@@ -296,17 +297,16 @@ public final class AppModel: AnswerSubmitting {
         )
         do {
             _ = try await client.updatePresence(body)
+            guard self.credentials == credentials, presenceRevision == revision else { return false }
             noteReachable()
             return true
         } catch {
+            guard self.credentials == credentials, presenceRevision == revision else { return false }
             let relayError = RelayError.wrap(error)
             noteFailure(relayError)
             presenceError = relayError
             if relayError == .unauthorized {
                 signOut(reason: .unauthorized)
-            } else {
-                // 圏外時は楽観値を保持 (次回再送できるようエラーだけ残す)
-                _ = previousAvailability; _ = previousUntil
             }
             return false
         }
@@ -446,9 +446,12 @@ public final class AppModel: AnswerSubmitting {
     }
 
     public func refreshPresence() async {
-        guard let client else { return }
+        // 編集中・未送信の選択は、サーバーの古い状態で巻き戻さない。
+        guard let client, let credentials, !isUpdatingPresence, presenceError == nil else { return }
+        let revision = presenceRevision
         do {
             let response = try await client.getPresence()
+            guard self.credentials == credentials, presenceRevision == revision, !isUpdatingPresence else { return }
             if let own = response.devices.first(where: { $0.deviceID == myDeviceID }) {
                 presenceAvailability = own.availability
                 presenceUntil = own.until
