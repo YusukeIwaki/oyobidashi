@@ -62,7 +62,7 @@ import java.util.concurrent.Executors
 
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PairingScreen(vm: MainViewModel) {
+fun PairingScreen(vm: MainViewModel, onClose: (() -> Unit)? = null) {
     val context = LocalContext.current
     var scanning by rememberSaveable { mutableStateOf(false) }
     var url by rememberSaveable { mutableStateOf("") }
@@ -88,7 +88,18 @@ fun PairingScreen(vm: MainViewModel) {
         return
     }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("お呼び出し") }) }) { padding ->
+    Scaffold(topBar = {
+        TopAppBar(
+            title = { Text("ペアリング") },
+            navigationIcon = {
+                if (onClose != null) {
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "戻る")
+                    }
+                }
+            },
+        )
+    }) { padding ->
         Column(
             modifier = Modifier
                 .padding(padding)

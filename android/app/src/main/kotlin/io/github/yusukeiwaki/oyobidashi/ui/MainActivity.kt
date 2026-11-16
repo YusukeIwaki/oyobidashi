@@ -141,6 +141,10 @@ fun AppRoot(vm: MainViewModel) {
                 BackHandler { vm.screen = Screen.List }
                 SettingsScreen(vm, current)
             }
+            Screen.Pairing -> {
+                BackHandler { vm.screen = Screen.Settings }
+                PairingScreen(vm, onClose = { vm.screen = Screen.Settings })
+            }
         }
     }
 
@@ -165,7 +169,7 @@ fun AppRoot(vm: MainViewModel) {
     }
 
     // ペアリング済みの状態でディープリンク経由の再ペアリングに失敗した場合のエラー表示
-    if (current != null) {
+    if (current != null && vm.screen != Screen.Pairing) {
         vm.pairingError?.let { message ->
             AlertDialog(
                 onDismissRequest = { vm.pairingError = null },

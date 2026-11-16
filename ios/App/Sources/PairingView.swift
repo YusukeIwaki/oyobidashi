@@ -2,6 +2,8 @@ import OyobidashiKit
 import SwiftUI
 
 struct PairingView: View {
+    var onClose: (() -> Void)? = nil
+    var onPaired: (() -> Void)? = nil
     @Environment(AppModel.self) private var model
     @State private var urlText = ""
     @State private var codeText = ""
@@ -78,6 +80,13 @@ struct PairingView: View {
                 }
             }
             .navigationTitle("ペアリング")
+            .toolbar {
+                if let onClose {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("閉じる", action: onClose)
+                    }
+                }
+            }
             .scrollContentBackground(.hidden)
             .background(PagerTheme.cream.ignoresSafeArea())
             .tint(PagerTheme.orange)
@@ -114,7 +123,9 @@ struct PairingView: View {
 
     private func pair(_ info: PairingInfo) {
         inputError = nil
-        Task { await model.pair(info) }
+        Task {
+            if await model.pair(info) { onPaired?() }
+        }
     }
 }
 

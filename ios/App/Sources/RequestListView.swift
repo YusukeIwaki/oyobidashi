@@ -9,9 +9,7 @@ struct RequestListView: View {
         let store = model.store
         ScrollView {
             VStack(spacing: 14) {
-                headerCard
                 availabilityCard
-                VoicePermissionsView(hidesWhenReady: true)
                 if store.reachability == .unreachable {
                     banner(icon: "wifi.slash", text: RelayError.unreachableMessage, detail: "接続できるようになると自動的に再接続します。入力中の回答は保存されます。", color: PagerTheme.orange) {
                         Task { await model.refresh() }
@@ -22,15 +20,9 @@ struct RequestListView: View {
                         Task { await model.refresh() }
                     }
                 }
-                if model.presenceError != nil {
-                    banner(icon: "person.crop.circle.badge.exclamationmark", text: model.presenceError!.userMessage, detail: "状態の送信に失敗しました。再試行できます", color: .red) {
-                        Task { await resendPresence() }
-                    }
-                }
-
-                sectionHeader("未回答")
+                sectionHeader("未回答の通知")
                 if store.pending.isEmpty {
-                    Text("未回答の質問はありません")
+                    Text("未回答の通知はありません")
                         .font(.callout)
                         .foregroundStyle(PagerTheme.inkSoft)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -44,26 +36,14 @@ struct RequestListView: View {
                         .buttonStyle(.plain)
                     }
                 }
-
-                if !store.history.isEmpty {
-                    sectionHeader("履歴")
-                    ForEach(store.history) { request in
-                        NavigationLink(value: request.id) {
-                            RequestRow(request: request, hasDraft: false, resolvedLocally: store.locallyResolvedIDs.contains(request.id))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
             }
             .padding(16)
         }
         .background(PagerTheme.cream.ignoresSafeArea())
-        .navigationTitle("お呼び出し")
+        .navigationTitle("ホーム")
+        .navigationBarTitleDisplayMode(.inline)
         .refreshable { await model.refresh() }
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                PagerIconView(size: 30)
-            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showingSettings = true
@@ -76,33 +56,6 @@ struct RequestListView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView()
         }
-    }
-
-    private var headerCard: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("お呼び出し")
-                    .font(.title2.bold())
-                    .foregroundStyle(PagerTheme.ink)
-                Text(connectionLabel)
-                    .font(.caption.bold())
-                    .foregroundStyle(connectionColor)
-            }
-            Spacer()
-            // 小さな緑 LCD モチーフ
-            HStack(spacing: 3) {
-                ForEach(0..<4, id: \.self) { _ in
-                    RoundedRectangle(cornerRadius: 1).fill(PagerTheme.lcdDeep.opacity(0.7)).frame(width: 10, height: 7)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(PagerTheme.lcd, in: RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(PagerTheme.ink.opacity(0.6), lineWidth: 1))
-        }
-        .padding(16)
-        .background(PagerTheme.card, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(PagerTheme.ink.opacity(0.08)))
     }
 
     private var availabilityCard: some View {
@@ -139,14 +92,19 @@ struct RequestListView: View {
                         .font(.caption)
                         .foregroundStyle(PagerTheme.inkSoft)
                 }
-                Spacer()
-                Text(model.effectivePresenceAvailability().japaneseLabel)
-                    .font(.caption.bold())
-                    .foregroundStyle(PagerTheme.orange)
             }
             Text("取り込み中・離席中は通話が文字に切り替わります")
                 .font(.caption2)
                 .foregroundStyle(PagerTheme.inkSoft)
+            if let error = model.presenceError {
+                Button {
+                    Task { await resendPresence() }
+                } label: {
+                    Label(error.userMessage + " タップして再送信", systemImage: "arrow.clockwise")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
         }
         .padding(16)
         .background(PagerTheme.card, in: RoundedRectangle(cornerRadius: 16))
@@ -156,18 +114,6 @@ struct RequestListView: View {
     private func resendPresence() async {
         let until = model.presenceUntil
         _ = await model.updatePresence(availability: model.presenceAvailability, until: until, note: model.presenceNote)
-    }
-
-    private var connectionLabel: String {
-        switch model.store.connection {
-        case .connected: return "接続中"
-        case .connecting: return "接続しています…"
-        case .reconnecting: return "再接続を待っています"
-        case .disconnected: return model.store.reachability == .unreachable ? "接続できません" : "未接続"
-        }
-    }
-    private var connectionColor: Color {
-        model.store.connection == .connected ? PagerTheme.lcdDeep : PagerTheme.orange
     }
 
     private func sectionHeader(_ title: String) -> some View {

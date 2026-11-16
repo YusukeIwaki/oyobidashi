@@ -68,7 +68,7 @@ oyobidashi.firebase.senderId=<project_info.project_number>
 ```
 
 (`-Poyobidashi.firebase.projectId=…` のように Gradle プロパティで渡すこともできます。) 4つすべてが揃ったときだけ Firebase を初期化します。
-値は BuildConfig に埋め込まれ、起動時に `FirebaseApp.initializeApp` へ渡されます。設定画面の「プッシュ通知 (FCM)」で有効/無効を確認できます。
+値は BuildConfig に埋め込まれ、起動時に `FirebaseApp.initializeApp` へ渡されます。設定画面の「通知サービス」で利用可否を確認できます。通知・マイク・カメラ・音声認識・全画面着信の再設定も、アプリの「設定」→「権限」から行えます。
 
 relay 側には、同じ Firebase プロジェクトのサービスアカウント JSON を `~/.oyobidashi/config.json` の `fcm.service_account_path` に設定します。
 

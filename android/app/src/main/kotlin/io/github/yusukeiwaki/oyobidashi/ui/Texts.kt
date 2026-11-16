@@ -94,10 +94,10 @@ object Texts {
     }
 
     fun availabilityLabel(availability: Availability): String = when (availability) {
-        Availability.AVAILABLE -> "応答可"
-        Availability.BUSY -> "取込中"
+        Availability.AVAILABLE -> "対応可"
+        Availability.BUSY -> "取り込み中"
         Availability.AWAY -> "離席中"
-        Availability.UNKNOWN -> "応答可"
+        Availability.UNKNOWN -> "対応可"
     }
 
     fun availabilityDescription(availability: Availability): String = when (availability) {

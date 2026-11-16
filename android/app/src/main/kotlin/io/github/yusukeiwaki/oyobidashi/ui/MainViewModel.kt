@@ -19,6 +19,7 @@ sealed interface Screen {
     data object List : Screen
     data class Detail(val requestId: String) : Screen
     data object Settings : Screen
+    data object Pairing : Screen
 }
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {

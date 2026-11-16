@@ -26,8 +26,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -59,7 +57,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -91,78 +88,38 @@ private fun UnreachableBanner() {
     }
 }
 
-/** 液晶モチーフの小さな表示窓。未読件数と在席をドット風に出す。 */
-@Composable
-private fun LcdHeader(pendingCount: Int, availability: Availability, until: String?) {
-    val line = buildString {
-        append("ﾐﾄﾞｸ ")
-        append(pendingCount)
-        append("ｹﾝ")
-        append("  ")
-        append(
-            when (availability) {
-                Availability.AVAILABLE -> "ﾀｲｷOK"
-                Availability.BUSY -> "ﾄﾘｺﾐ"
-                Availability.AWAY -> "ﾘｾｷ"
-                Availability.UNKNOWN -> "ﾀｲｷOK"
-            }
-        )
-        if (availability == Availability.BUSY) {
-            Texts.clock(until).takeIf { it.isNotEmpty() }?.let { append(" ${it}ﾏﾃﾞ") }
-        }
-    }
-    Surface(
-        color = MaterialTheme.colorScheme.tertiaryContainer,
-        shape = MaterialTheme.shapes.small,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                "●",
-                color = if (pendingCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.4f),
-                style = MaterialTheme.typography.bodySmall,
-            )
-            Text(
-                line,
-                color = MaterialTheme.colorScheme.onTertiaryContainer,
-                style = MaterialTheme.typography.bodyMedium,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-            )
-        }
-    }
-}
-
 @Composable
 private fun AvailabilityRow(vm: MainViewModel) {
     val presence by vm.graph.presence.collectAsState()
     val current = presence.effectiveAvailability
-    Row(
+    Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("在席", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        listOf(Availability.AVAILABLE, Availability.BUSY, Availability.AWAY).forEach { a ->
-            FilterChip(
-                selected = current == a,
-                onClick = {
-                    when (a) {
-                        Availability.BUSY -> vm.graph.setPresence(
-                            Availability.BUSY,
-                            Instant.now().plus(30, ChronoUnit.MINUTES).toString(),
-                        )
-                        else -> vm.graph.setPresence(a)
-                    }
-                },
-                label = { Text(Texts.availabilityLabel(a)) },
-            )
+        Text("あなたの状態", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(Availability.AVAILABLE, Availability.BUSY, Availability.AWAY).forEach { a ->
+                FilterChip(
+                    selected = current == a,
+                    onClick = {
+                        when (a) {
+                            Availability.BUSY -> vm.graph.setPresence(
+                                Availability.BUSY,
+                                Instant.now().plus(30, ChronoUnit.MINUTES).toString(),
+                            )
+                            else -> vm.graph.setPresence(a)
+                        }
+                    },
+                    label = { Text(Texts.availabilityLabel(a)) },
+                )
+            }
         }
+        if (current == Availability.BUSY) {
+            Texts.clock(presence.until).takeIf { it.isNotEmpty() }?.let {
+                Text("$it まで取り込み中", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Text("取り込み中・離席中は通話が文字に切り替わります", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     vm.graph.presenceSyncError.collectAsState().value?.let {
         Text(
@@ -174,47 +131,10 @@ private fun AvailabilityRow(vm: MainViewModel) {
     }
 }
 
-@Composable
-private fun CallBanner(vm: MainViewModel) {
-    val call by vm.graph.callManager.uiState.collectAsState()
-    val state = call ?: return
-    val context = LocalContext.current
-    Surface(
-        color = MaterialTheme.colorScheme.primaryContainer,
-        shape = MaterialTheme.shapes.small,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
-            .clickable {
-                context.startActivity(
-                    Intent(context, CallActivity::class.java)
-                        .setAction(CallActivity.ACTION_SHOW)
-                        .putExtra(CallActivity.EXTRA_REQUEST_ID, state.requestId)
-                        .putExtra(CallActivity.EXTRA_CALL_ID, state.callId)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                )
-            },
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Icon(Icons.Filled.Call, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
-            Text(
-                if (state.ringing) "通話着信中 — タップして応答" else "通話中 — タップして開く",
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f),
-            )
-        }
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RequestListScreen(vm: MainViewModel, session: Session) {
     val state by session.repository.state.collectAsState()
-    val presence by vm.graph.presence.collectAsState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -235,7 +155,7 @@ fun RequestListScreen(vm: MainViewModel, session: Session) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("お呼び出し") },
+                title = { Text("ホーム") },
                 actions = {
                     IconButton(onClick = { scope.launch { session.repository.refresh() } }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "更新")
@@ -250,28 +170,31 @@ fun RequestListScreen(vm: MainViewModel, session: Session) {
         Column(Modifier.padding(padding).fillMaxSize()) {
             if (state.refreshing) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (state.relayUnreachable) UnreachableBanner()
-            CallBanner(vm)
-            LcdHeader(state.pending.size, presence.effectiveAvailability, presence.until)
             AvailabilityRow(vm)
             val pending = state.pending
-            val history = state.history
             LazyColumn(Modifier.fillMaxSize()) {
-                item { SectionHeader("未回答 (${pending.size})") }
+                item { SectionHeader("未回答の通知 (${pending.size})") }
                 if (pending.isEmpty()) {
                     item {
                         Text(
-                            "未回答の質問はありません",
+                            "未回答の通知はありません",
                             Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
                 items(pending, key = { "p-" + it.id }) { request ->
-                    RequestRow(request, hasDraft = state.draft(request.id).text.isNotEmpty()) { vm.openRequest(request.id) }
-                }
-                if (history.isNotEmpty()) item { SectionHeader("履歴") }
-                items(history, key = { "h-" + it.id }) { request ->
-                    RequestRow(request, hasDraft = false) { vm.openRequest(request.id) }
+                    RequestRow(request, hasDraft = state.draft(request.id).text.isNotEmpty()) {
+                        val call = vm.graph.callManager.uiState.value
+                        if (call != null && call.requestId == request.id) {
+                            context.startActivity(Intent(context, CallActivity::class.java)
+                                .setAction(CallActivity.ACTION_SHOW)
+                                .putExtra(CallActivity.EXTRA_REQUEST_ID, call.requestId)
+                                .putExtra(CallActivity.EXTRA_CALL_ID, call.callId))
+                        } else {
+                            vm.openRequest(request.id)
+                        }
+                    }
                 }
             }
         }
@@ -297,11 +220,9 @@ private fun PriorityChip(priority: Priority) {
         Priority.URGENT -> Triple("至急", MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer)
         else -> return
     }
-    AssistChip(
-        onClick = {},
-        label = { Text(label, style = MaterialTheme.typography.labelSmall) },
-        colors = AssistChipDefaults.assistChipColors(containerColor = container, labelColor = content),
-    )
+    Surface(color = container, contentColor = content, shape = MaterialTheme.shapes.small) {
+        Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
+    }
 }
 
 @Composable
@@ -323,15 +244,7 @@ private fun RequestRow(request: Request, hasDraft: Boolean, onClick: () -> Unit)
             )
             PriorityChip(request.priority)
             if (request.isLiveCall) {
-                AssistChip(
-                    onClick = {},
-                    label = { Text("通話着信中", style = MaterialTheme.typography.labelSmall) },
-                    leadingIcon = { Icon(Icons.Filled.Call, contentDescription = null) },
-                    colors = AssistChipDefaults.assistChipColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        labelColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    ),
-                )
+                Text(if (request.call?.state == CallState.ACTIVE) "通話中" else "着信中", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             }
             Texts.deliveryLabel(request.deliveryMode)?.takeIf { request.isPending && !request.isLiveCall }?.let {
                 Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
