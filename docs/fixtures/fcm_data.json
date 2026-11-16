@@ -1,0 +1,12 @@
+{
+  "request_id": "req_01JCXYZ",
+  "kind": "question",
+  "title": "claude-code からの質問",
+  "body": "本番DBのマイグレーションを実行してよいですか?",
+  "urgency": "normal",
+  "priority": "normal",
+  "delivery_mode": "actions",
+  "status": "pending",
+  "call": "null",
+  "choices": "[\"はい\",\"いいえ\"]"
+}

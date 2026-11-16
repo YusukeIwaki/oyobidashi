@@ -1,0 +1,22 @@
+{
+  "aps": {
+    "alert": {
+      "title": "claude-code からの質問",
+      "body": "本番DBのマイグレーションを実行してよいですか?\n1: はい / 2: いいえ"
+    },
+    "sound": "default",
+    "mutable-content": 1,
+    "interruption-level": "active",
+    "category": "OYOBIDASHI_ACTIONS_2",
+    "thread-id": "oyobidashi"
+  },
+  "request_id": "req_01JCXYZ",
+  "kind": "question",
+  "priority": "normal",
+  "delivery_mode": "actions",
+  "status": "pending",
+  "choices": [
+    "はい",
+    "いいえ"
+  ]
+}

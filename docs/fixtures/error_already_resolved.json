@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "already_resolved",
+    "message": "request is already answered"
+  }
+}

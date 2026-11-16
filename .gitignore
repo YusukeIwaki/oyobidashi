@@ -1,0 +1,59 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Bun / Node
+node_modules/
+*.tsbuildinfo
+
+# oyobidashi のローカル状態・資格情報 (絶対にコミットしない)
+.oyobidashi/
+.secrets/
+.credentials/
+*.p8
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
+*service-account*.json
+*service_account*.json
+*client_secret*.json
+credentials.json
+google-services.json
+GoogleService-Info.plist
+.env
+.env.*
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+
+# iOS
+ios/**/.build/
+ios/**/.swiftpm/
+ios/*.xcodeproj/
+ios/**/xcuserdata/
+ios/DerivedData/
+ios/build/
+*.xcresult
+
+# Android
+android/.gradle/
+android/**/build/
+android/local.properties
+android/.kotlin/
+android/captures/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# Claude Code のローカル設定
+.claude/settings.local.json
+.xcodebuildmcp/

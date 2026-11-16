@@ -1,0 +1,21 @@
+{
+  "id": "req_01JCNTF",
+  "kind": "notification",
+  "question": "ビルドが完了しました",
+  "context": null,
+  "choices": null,
+  "urgency": "normal",
+  "status": "notified",
+  "answer": null,
+  "agent": {
+    "name": "codex",
+    "cwd": null
+  },
+  "created_at": "2026-11-15T14:10:00.000Z",
+  "updated_at": "2026-11-15T14:10:00.000Z",
+  "expires_at": "2026-11-15T15:10:00.000Z",
+  "priority": "normal",
+  "requested_mode": "auto",
+  "call": null,
+  "delivery_mode": "text"
+}

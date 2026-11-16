@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- LAN 内の http://<プライベートIP>:8787 / ws:// に接続するため、全ビルドタイプで cleartext を許可する。
+     (IP アドレスやサブネット単位の指定は network security config ではできない) -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

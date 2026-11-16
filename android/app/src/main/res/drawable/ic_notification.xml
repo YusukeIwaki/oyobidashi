@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 通知用 (白単色)。ポケベルの輪郭 + 液晶線 + 3キー。 -->
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.6"
+        android:pathData="M4,8 Q4,6 6,6 H18 Q20,6 20,8 V16 Q20,18 18,18 H6 Q4,18 4,16 Z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M7,9 H17 V10 H7 ZM7,11.5 H14 V12.5 H7 Z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M7,14.5 H9 V16.5 H7 ZM11,14.5 H13 V16.5 H11 ZM15,14.5 H17 V16.5 H15 Z" />
+</vector>

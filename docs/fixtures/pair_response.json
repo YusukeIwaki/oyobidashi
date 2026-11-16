@@ -1,0 +1,9 @@
+{
+  "device": {
+    "id": "dev_01",
+    "name": "iPhone 16",
+    "platform": "ios",
+    "created_at": "2026-11-15T13:59:00.000Z"
+  },
+  "device_token": "test-device-token"
+}

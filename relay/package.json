@@ -1,0 +1,22 @@
+{
+  "name": "oyobidashi-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "serve": "bun run src/cli.ts serve",
+    "pair": "bun run src/cli.ts pair",
+    "devices": "bun run src/cli.ts devices",
+    "revoke": "bun run src/cli.ts revoke",
+    "status": "bun run src/cli.ts status",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2"
+  }
+}

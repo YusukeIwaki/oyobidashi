@@ -1,0 +1,15 @@
+{
+  "name":"oyobidashi",
+  "version":"0.2.0",
+  "private":true,
+  "scripts":{
+    "dev":"./scripts/dev.sh",
+    "pair":"./scripts/pair.sh",
+    "mcp":"./scripts/mcp.sh",
+    "test:relay":"bun test --cwd relay",
+    "test:mcp":"bun test --cwd mcp",
+    "test:integration":"bun test --cwd integration",
+    "typecheck:relay":"bun run --cwd relay typecheck",
+    "typecheck:mcp":"bun run --cwd mcp typecheck"
+  }
+}

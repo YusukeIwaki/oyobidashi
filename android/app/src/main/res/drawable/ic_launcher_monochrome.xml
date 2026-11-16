@@ -1,0 +1,12 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- テーマ別アイコン用 (単色)。本体は輪郭、キー・液晶線・きらめきは塗り。 -->
+    <path android:fillColor="#00000000" android:strokeColor="#FF000000" android:strokeWidth="4"
+        android:pathData="M30,42 Q30,36 36,36 H72 Q78,36 78,42 V68 Q78,74 72,74 H36 Q30,74 30,68 Z" />
+    <path android:fillColor="#FF000000"
+        android:pathData="M40,45 H68 V48 H40 ZM40,50 H60 V53 H40 Z" />
+    <path android:fillColor="#FF000000"
+        android:pathData="M40,60 H46 V66 H40 ZM51,60 H57 V66 H51 ZM62,60 H68 V66 H62 Z" />
+    <path android:fillColor="#FF000000"
+        android:pathData="M72,24 L74,30 L80,32 L74,34 L72,40 L70,34 L64,32 L70,30 Z" />
+</vector>

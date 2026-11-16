@@ -1,0 +1,18 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- ポケベル本体 (墨)。重要部は 66dp セーフゾーン (21..87) 内。 -->
+    <path android:fillColor="#FF23201A"
+        android:pathData="M30,42 Q30,36 36,36 H72 Q78,36 78,42 V68 Q78,74 72,74 H36 Q30,74 30,68 Z" />
+    <!-- 液晶 (緑) -->
+    <path android:fillColor="#FF388E3C"
+        android:pathData="M36,42 H72 V54 H36 Z" />
+    <!-- 液晶の文字 (薄緑2行) -->
+    <path android:fillColor="#FFA5D6A7"
+        android:pathData="M40,46 H68 V48 H40 ZM40,50 H60 V52 H40 Z" />
+    <!-- 3つのキー (クリーム) -->
+    <path android:fillColor="#FFFFF6E5"
+        android:pathData="M40,60 H46 V66 H40 ZM51,60 H57 V66 H51 ZM62,60 H68 V66 H62 Z" />
+    <!-- AI のきらめき (オレンジの4点星) -->
+    <path android:fillColor="#FFE8641B"
+        android:pathData="M72,24 L74,30 L80,32 L74,34 L72,40 L70,34 L64,32 L70,30 Z" />
+</vector>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ポケベル調: 温かいクリーム、濃い墨、オレンジのアクセント、緑の液晶 -->
+    <color name="cream_background">#FFF6E5</color>
+    <color name="cream_surface">#FFFDF6</color>
+    <color name="cream_container">#F5EAD0</color>
+    <color name="ink">#23201A</color>
+    <color name="ink_variant">#5C5648</color>
+    <color name="ink_outline">#D8CDB4</color>
+    <color name="pager_orange">#E8641B</color>
+    <color name="pager_orange_container">#FFDCC2</color>
+    <color name="pager_orange_dark">#B34A12</color>
+    <color name="lcd_background">#0F2E1D</color>
+    <color name="lcd_text">#7CFC9A</color>
+    <color name="lcd_dim">#2E7D32</color>
+
+    <color name="ic_launcher_background">#FFF6E5</color>
+    <color name="notification_accent">#E8641B</color>
+</resources>

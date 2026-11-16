@@ -1,0 +1,96 @@
+name: Oyobidashi
+options:
+  bundleIdPrefix: io.github.yusukeiwaki
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  developmentLanguage: ja
+packages:
+  OyobidashiKit:
+    path: OyobidashiKit
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: "6KG5EF3BN2"
+targets:
+  Oyobidashi:
+    type: application
+    platform: iOS
+    sources:
+      - path: App/Sources
+      - path: App/Assets.xcassets
+    dependencies:
+      - package: OyobidashiKit
+      - target: OyobidashiNotificationService
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.yusukeiwaki.oyobidashi
+        PRODUCT_NAME: Oyobidashi
+        MARKETING_VERSION: "0.2.0"
+        CURRENT_PROJECT_VERSION: "2"
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: お呼び出し
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        CFBundleURLTypes:
+          - CFBundleURLName: io.github.yusukeiwaki.oyobidashi.pair
+            CFBundleTypeRole: Editor
+            CFBundleURLSchemes:
+              - oyobidashi
+        NSCameraUsageDescription: ペアリング用のQRコードを読み取るためにカメラを使用します。
+        NSMicrophoneUsageDescription: エージェントからの質問に音声で回答するためにマイクを使用します。
+        NSSpeechRecognitionUsageDescription: 音声での回答を文字に変換するために音声認識を使用します。
+        NSLocalNetworkUsageDescription: 同じWi‑Fi上のMacで動いている中継サーバーに接続して、質問の受信と回答の送信を行います。
+        # 中継サーバーは LAN 内のプライベートIP宛ての平文 HTTP / WS。
+        # NSAllowsLocalNetworking は IP アドレス・.local・ドット無しホスト名への接続だけを ATS の対象外にする。
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        UIBackgroundModes:
+          - voip
+          - remote-notification
+          - audio
+    entitlements:
+      path: App/Oyobidashi.entitlements
+      properties:
+        aps-environment: development
+        com.apple.developer.usernotifications.time-sensitive: true
+
+  OyobidashiNotificationService:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: NotificationService
+        excludes: [Info.plist]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.yusukeiwaki.oyobidashi.NotificationService
+        MARKETING_VERSION: "0.2.0"
+        CURRENT_PROJECT_VERSION: "2"
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+    info:
+      path: NotificationService/Info.plist
+      properties:
+        CFBundleDisplayName: お呼び出し通知
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService

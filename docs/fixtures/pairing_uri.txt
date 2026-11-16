@@ -1,0 +1,1 @@
+oyobidashi://pair?url=http%3A%2F%2F192.168.1.10%3A8787&code=3f9a1c0e7b2d4a6f8c1e0b9d7a5f3c21

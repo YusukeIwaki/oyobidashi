@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">お呼び出し</string>
+    <string name="channel_low">お呼び出し・ひかえめ</string>
+    <string name="channel_low_desc">優先度の低いお知らせ。音やバイブレーションなしで通知します</string>
+    <string name="channel_normal">お呼び出し</string>
+    <string name="channel_normal_desc">通常の質問とお知らせ</string>
+    <string name="channel_high">お呼び出し・重要</string>
+    <string name="channel_high_desc">優先度の高い質問を音とバイブレーションで知らせます</string>
+    <string name="channel_calls">お呼び出し・通話</string>
+    <string name="channel_calls_desc">エージェントからの音声通話の着信</string>
+</resources>

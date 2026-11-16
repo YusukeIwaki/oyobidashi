@@ -1,0 +1,5 @@
+# Replace with your own hostname. Run Caddy on this Mac and use a publicly trusted certificate.
+# Start relay: ./scripts/dev.sh --host 127.0.0.1 --public-url https://oyobidashi.example.com
+oyobidashi.example.com {
+    reverse_proxy 127.0.0.1:8787
+}
