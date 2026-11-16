@@ -71,7 +71,12 @@ struct RequestListView: View {
             }
             Picker("状態", selection: Binding(
                 get: { model.effectivePresenceAvailability() },
-                set: { newValue in Task { await model.updatePresence(availability: newValue, until: nil) } }
+                set: { newValue in
+                    Task {
+                        if newValue == .busy { await model.setBusyFor30Minutes() }
+                        else { await model.updatePresence(availability: newValue, until: nil) }
+                    }
+                }
             )) {
                 ForEach([PresenceAvailability.available, .busy, .away], id: \.rawValue) { value in
                     Label(value.japaneseLabel, systemImage: value.systemImage).tag(value)
@@ -79,21 +84,14 @@ struct RequestListView: View {
             }
             .pickerStyle(.segmented)
             .disabled(model.isUpdatingPresence)
-            HStack(spacing: 8) {
-                Button {
-                    Task { await model.setBusyFor30Minutes() }
-                } label: {
-                    Label("30分 取り込み中", systemImage: "timer")
-                        .font(.caption.bold())
+            if model.effectivePresenceAvailability() != .available, let until = model.presenceUntil {
+                Label {
+                    Text("\(until, style: .time) まで")
+                } icon: {
+                    Image(systemName: "timer")
                 }
-                .buttonStyle(.bordered)
-                .tint(PagerTheme.orange)
-                .disabled(model.isUpdatingPresence)
-                if let until = model.presenceUntil, model.presenceAvailability != .available {
-                    Text("〜 \(until, style: .time) まで")
-                        .font(.caption)
-                        .foregroundStyle(PagerTheme.inkSoft)
-                }
+                .font(.caption)
+                .foregroundStyle(PagerTheme.inkSoft)
             }
             Text(presenceExplanation)
                 .font(.caption2)
