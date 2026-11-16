@@ -80,6 +80,24 @@ class RequestsRepositoryTest {
     }
 
     @Test
+    fun `authoritative notified request keeps its notification until cancelled`() {
+        val notice = request("notice", RequestStatus.NOTIFIED, kind = RequestKind.NOTIFICATION, updatedAt = t1)
+        repo.onEvent(RelayEvent.RequestCreated(notice))
+        repo.applyRequest(notice) // FCM配信後のHTTP取得でも同じ照合を通る。
+        assertTrue("未取消のお知らせを消さない", notifier.cancelled.isEmpty())
+
+        repo.applyRequest(notice.copy(status = RequestStatus.CANCELLED, updatedAt = t2))
+        assertEquals(listOf("notice"), notifier.cancelled)
+    }
+
+    @Test
+    fun `hello does not dismiss a notified notice`() {
+        val notice = request("notice", RequestStatus.NOTIFIED, kind = RequestKind.NOTIFICATION)
+        repo.onEvent(RelayEvent.Hello(listOf(notice)))
+        assertTrue(notifier.cancelled.isEmpty())
+    }
+
+    @Test
     fun `duplicate created and updated events are idempotent`() {
         val r = request("a")
         repeat(3) { repo.onEvent(RelayEvent.RequestCreated(r)) }
@@ -134,6 +152,18 @@ class RequestsRepositoryTest {
     }
 
     // ---- refresh ----
+
+    @Test
+    fun `refresh keeps notified notices and dismisses cancelled notices`() = runTest {
+        val notice = request("notice", RequestStatus.NOTIFIED, kind = RequestKind.NOTIFICATION, updatedAt = t1)
+        api.onList = { listOf(notice) }
+        repo.refresh()
+        assertTrue(notifier.cancelled.isEmpty())
+
+        api.onList = { listOf(notice.copy(status = RequestStatus.CANCELLED, updatedAt = t2)) }
+        repo.refresh()
+        assertEquals(listOf("notice"), notifier.cancelled)
+    }
 
     @Test
     fun `refresh merges the server list and clears notifications of resolved ones`() = runTest {

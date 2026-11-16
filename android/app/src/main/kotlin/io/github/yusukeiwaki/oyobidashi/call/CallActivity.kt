@@ -31,6 +31,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -46,6 +48,8 @@ import io.github.yusukeiwaki.oyobidashi.ui.OyobidashiTheme
  */
 class CallActivity : ComponentActivity() {
     private var pendingAnswer: Pair<String, String>? = null
+    private var displayedRequestId by mutableStateOf("")
+    private var displayedCallId by mutableStateOf("")
 
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         val pending = pendingAnswer
@@ -67,15 +71,14 @@ class CallActivity : ComponentActivity() {
                 WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
         )
+        updateDisplayedCall(intent)
         if (savedInstanceState == null) handleIntent(intent)
 
-        val reqId = intent.getStringExtra(EXTRA_REQUEST_ID).orEmpty()
-        val cId = intent.getStringExtra(EXTRA_CALL_ID).orEmpty()
         setContent {
             OyobidashiTheme {
                 CallScreen(
-                    requestId = reqId,
-                    callId = cId,
+                    requestId = displayedRequestId,
+                    callId = displayedCallId,
                     onAnswer = { r, c -> requestAnswer(r, c) },
                     onDecline = { r, c ->
                         graph.callManager.decline(r, c)
@@ -98,7 +101,14 @@ class CallActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        updateDisplayedCall(intent)
         handleIntent(intent)
+    }
+
+    private fun updateDisplayedCall(intent: Intent?) {
+        // Notification actions reuse this Activity while the preceding call's end screen remains.
+        displayedRequestId = intent?.getStringExtra(EXTRA_REQUEST_ID).orEmpty()
+        displayedCallId = intent?.getStringExtra(EXTRA_CALL_ID).orEmpty()
     }
 
     private fun handleIntent(intent: Intent?) {

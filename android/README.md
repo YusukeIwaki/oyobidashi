@@ -91,7 +91,7 @@ FCM トークンはペアリング時 (`POST /v1/pair` の `push_token`)、起�
 | 権限 | 用途 | 求めるタイミング |
 |---|---|---|
 | `POST_NOTIFICATIONS` (Android 13+) | 質問の通知 | ペアリング後、一覧画面を最初に開いたとき |
-| `RECORD_AUDIO` | 音声入力 (`SpeechRecognizer`) | マイクボタンを最初に押したとき |
+| `RECORD_AUDIO` | 音声入力・通話 (`SpeechRecognizer`) | 音声入力または通話へ初めて応答するとき。設定から再設定可能 |
 | `CAMERA` | ペアリングQRコードの読み取り | 「QRコードを読み取る」を最初に押したとき |
 | `INTERNET` / `ACCESS_NETWORK_STATE` | relay との通信、ネットワーク復帰時の自動再接続 | (実行時の許可は不要) |
 

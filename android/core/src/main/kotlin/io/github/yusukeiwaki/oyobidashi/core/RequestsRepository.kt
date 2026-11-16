@@ -135,14 +135,19 @@ class RequestsRepository(
             s.copy(requests = sorted(merge(kept, pending)))
         }
         dropped.forEach { notifier.cancel(it) }
-        pending.filterNot { it.isPending }.forEach { notifier.cancel(it.id) }
+        pending.filter(::shouldDismissNotification).forEach { notifier.cancel(it.id) }
     }
 
-    /** 1件をマージする。pending でなくなったら通知を消す。 */
+    /** 回答済み・取消等の通知は消す。未取消のお知らせ (notified) は維持する。 */
     fun applyRequest(request: Request) {
         _state.update { it.copy(requests = sorted(merge(it.requests, listOf(request)))) }
-        if (_state.value.find(request.id)?.isPending != true) notifier.cancel(request.id)
+        _state.value.find(request.id)?.let {
+            if (shouldDismissNotification(it)) notifier.cancel(it.id)
+        }
     }
+
+    private fun shouldDismissNotification(request: Request): Boolean =
+        !request.isPending && !(request.kind == RequestKind.NOTIFICATION && request.status == RequestStatus.NOTIFIED)
 
     /**
      * Push (FCM) や通知タップで知った質問を、relay に届かなくても (LAN 外でも) 表示・下書きできるよう
@@ -200,7 +205,7 @@ class RequestsRepository(
             val list = api.listRequests(status = null, limit = limit)
             markReachable()
             _state.update { it.copy(requests = sorted(merge(it.requests, list)), refreshing = false, refreshError = null) }
-            _state.value.requests.filterNot { it.isPending }.forEach { notifier.cancel(it.id) }
+            _state.value.requests.filter(::shouldDismissNotification).forEach { notifier.cancel(it.id) }
         } catch (e: RelayException) {
             noteReachability(e)
             if (e.isUnauthorized) {
