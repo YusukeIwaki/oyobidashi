@@ -10,6 +10,7 @@
 | MCP | `bun test --cwd mcp` | **232 pass / 0 fail** |
 | iOS Kit | `swift test --package-path ios/OyobidashiKit` | **187 tests / 1 skip / 0 fail** |
 | Android core | JDK17で `android/gradlew -p android :core:test` | **186 tests / 1 skip / 0 fail** |
+| Android画面遷移 | `:app:testDebugUnitTest` | **5 tests / 0 fail** |
 | 実サーバー結合 | JDK17で `bun test --cwd integration` | **18 pass / 0 fail** |
 | TypeScript | relay / mcp の `tsc --noEmit` | 成功 |
 | iOSアプリ + Notification Service Extension | XcodeBuildMCP、iPhone 17 / iOS 27.0 | ビルド・インストール・起動成功 |
@@ -157,6 +158,33 @@ Pixel 10a / Android 17 / API 37へWi-Fi ADBで接続しました。SDKのPlatfor
 
 ![Pixel実機 連続着信の2本目](evidence/pixel-call-active.png)
 ![Pixel実機 ホーム](evidence/pixel-home.png)
+
+## Android Material 3・戻る操作 (2026-11-16)
+
+ホーム・設定をMaterial 3のカード、セグメントボタン、アイコン付きListItem、大きなトップバーで構成しました。Android 12以降は端末のダイナミックカラーを使い、それ以前は青系のライト・ダーク配色を使用します。ホームは状態と未回答の通知だけ、設定はペアリング・権限・アプリ情報だけを表示します。[Material 3公式ガイド](https://developer.android.com/develop/ui/compose/designsystems/material3)。
+
+Pixel 10aのダーク表示と専用エミュレータのライト表示で確認しました。ダーク表示でも選択中の状態を見分けられるよう、状態カードにsurfaceコンテナ色を使用しています。文字サイズ1.3倍では状態選択を縦並びのラジオボタンへ切り替え、横並びの折り返しによる崩れを防ぎました。エミュレータの文字サイズは試験後に元へ戻しています。
+
+ツールバーとシステムバックは共通の画面遷移処理を使用します。単体試験5件で、ホームがシステムバックを妨げないこと、再ペアリング→設定→ホーム、通知の質問→ホーム、別の通知で古い質問の戻る履歴を作らないこと、設定への重複遷移を検証しました。
+
+| 実機・エミュレータでの確認 | 結果 |
+|---|---|
+| Pixel: 設定から端の戻るジェスチャー | ホームへ戻る |
+| Pixel: ホームで戻るキー | ランチャーへ戻り、再起動でホームを表示 |
+| エミュレータ: QR読み取りで戻る | 再ペアリング画面へ戻り、入力したコードも保持 |
+| エミュレータ: 再ペアリングで戻る → 設定で戻る | 設定 → ホームの順に戻る |
+| Pixel: ペアリング解除の確認ダイアログで戻る | ダイアログだけ閉じ、ペアリングを維持 |
+| Pixel: OSの通知設定から戻る | アプリの設定画面へ復帰 |
+| Pixel: 設定から通知と同じIntentで実際の質問を開く | 質問を表示。キーボード表示中の最初の戻るはキーボードだけを閉じ、次の戻るでホームへ戻る。設定へは戻らない |
+| 状態の選択・未回答カード・設定の末尾までのスクロール | 反映・表示に問題なし。確認用の質問はMCPから取り消し済み |
+
+`:app:assembleDebug` / `:app:testDebugUnitTest`は成功し、Pixelとエミュレータへ最終APKをインストール済みです。今回、通話・通知配送のロジックは変更していません。
+
+![Material 3 ホーム・ライト](evidence/android-material-home-light.png)
+![Material 3 設定・ライト](evidence/android-material-settings-light.png)
+![Material 3 ホーム・ダーク](evidence/android-material-home-dark.png)
+![Material 3 設定・ダーク](evidence/android-material-settings-dark.png)
+![大きな文字での状態選択](evidence/android-material-large-text.png)
 
 ## 未確認・外部条件
 

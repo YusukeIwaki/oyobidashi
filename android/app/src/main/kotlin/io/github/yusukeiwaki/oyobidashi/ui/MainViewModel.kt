@@ -15,18 +15,16 @@ import io.github.yusukeiwaki.oyobidashi.core.RelayException
 import io.github.yusukeiwaki.oyobidashi.graph
 import kotlinx.coroutines.launch
 
-sealed interface Screen {
-    data object List : Screen
-    data class Detail(val requestId: String) : Screen
-    data object Settings : Screen
-    data object Pairing : Screen
-}
-
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     val graph = app.graph
     val session = graph.session
 
-    var screen by mutableStateOf<Screen>(Screen.List)
+    private var navigation by mutableStateOf(AppNavigation())
+    val screen: Screen get() = navigation.current
+    val canGoBack: Boolean get() = navigation.canGoBack
+    fun back() { navigation = navigation.back() }
+    fun openSettings() { navigation = navigation.openSettings() }
+    fun openPairing() { navigation = navigation.openPairing() }
 
     // ---- ペアリング ----
     var pairingBusy by mutableStateOf(false)
@@ -69,7 +67,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 graph.pair(info)
-                screen = Screen.List
+                navigation = AppNavigation()
             } catch (e: RelayException) {
                 pairingError = Texts.pairFailure(e)
             } finally {
@@ -85,7 +83,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 graph.unpair(force)
-                screen = Screen.List
+                navigation = AppNavigation()
             } catch (e: RelayException) {
                 unpairError = Texts.unpairFailure(e)
             } finally {
@@ -104,6 +102,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // 壊れた extra は無視して、通常どおり relay から取得する
             }
         }
-        screen = Screen.Detail(id)
+        navigation = navigation.openRequest(id)
     }
 }

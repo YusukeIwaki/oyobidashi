@@ -13,7 +13,7 @@ AI コーディングエージェント (Claude Code / Codex) からの質問を
 
 | モジュール | 内容 |
 |---|---|
-| `core/` | 純 Kotlin/JVM。契約のモデル (kotlinx.serialization)、`RelayClient` (OkHttp)、ペアリングURIパーサ、WebSocket イベントクライアント (再接続/バックオフ)、FCM ペイロードパーサ、状態ロジック (`RequestsRepository`)、通知からの直接返信ロジック (`DirectReplyHandler`)。ユニットテストはすべてここ |
+| `core/` | 純 Kotlin/JVM。契約のモデル (kotlinx.serialization)、`RelayClient` (OkHttp)、ペアリングURIパーサ、WebSocket イベントクライアント (再接続/バックオフ)、FCM ペイロードパーサ、状態ロジック (`RequestsRepository`)、通知からの直接返信ロジック (`DirectReplyHandler`)とそのユニットテスト |
 | `app/` | Android 層。Compose UI、通知 (`AndroidNotifier`)、FCM サービス、`ReplyReceiver`、EncryptedSharedPreferences、CameraX + ML Kit の QR 読み取り、SpeechRecognizer |
 
 ## 必要なもの
@@ -31,7 +31,7 @@ Gradle は同梱の wrapper (`./gradlew`, Gradle 8.11.1) を使います。
 
 ```sh
 cd android
-./gradlew test            # JVM ユニットテスト (core)。docs/fixtures を直接読みます
+./gradlew test            # core と画面遷移の JVM ユニットテスト
 ./gradlew assembleDebug   # app/build/outputs/apk/debug/app-debug.apk
 ./gradlew installDebug    # 接続中の端末/エミュレータにインストール
 ./gradlew lint            # 任意
@@ -96,6 +96,14 @@ FCM トークンはペアリング時 (`POST /v1/pair` の `push_token`)、起�
 | `INTERNET` / `ACCESS_NETWORK_STATE` | relay との通信、ネットワーク復帰時の自動再接続 | (実行時の許可は不要) |
 
 拒否しても、QR は手入力で、音声入力はキーボードで代替できます。
+
+## 画面・戻る操作
+
+ホームは状態と未回答の通知、設定はペアリングと権限の確認・再設定を表示します。Material 3と端末のダイナミックカラーを使用し、ライト・ダーク表示に対応しています。
+
+再ペアリングからは設定、設定・質問からはホームへ戻ります。QR読み取り中はまず読み取り画面を閉じ、キーボードや確認ダイアログの表示中はそれらを先に閉じます。ホームで戻るとAndroidのランチャーへ戻ります。
+
+画面遷移の単体試験は、リポジトリのルートから `android/gradlew -p android :app:testDebugUnitTest` で実行できます。実機での戻る操作・表示の確認記録は[検証結果](../docs/VALIDATION.md#android-material-3戻る操作-2026-11-16)を参照してください。
 
 ## 回答の `input_method`
 

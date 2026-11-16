@@ -3,10 +3,8 @@ package io.github.yusukeiwaki.oyobidashi.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,27 +14,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -57,27 +48,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import io.github.yusukeiwaki.oyobidashi.R
 import io.github.yusukeiwaki.oyobidashi.Session
 import io.github.yusukeiwaki.oyobidashi.call.CallActivity
-import io.github.yusukeiwaki.oyobidashi.core.Availability
 import io.github.yusukeiwaki.oyobidashi.core.CallState
-import io.github.yusukeiwaki.oyobidashi.core.DeliveryMode
 import io.github.yusukeiwaki.oyobidashi.core.InputMethod
 import io.github.yusukeiwaki.oyobidashi.core.Priority
 import io.github.yusukeiwaki.oyobidashi.core.Request
 import io.github.yusukeiwaki.oyobidashi.core.RequestKind
 import io.github.yusukeiwaki.oyobidashi.core.Urgency
 import kotlinx.coroutines.launch
-import java.time.Instant
-import java.time.temporal.ChronoUnit
 
 @Composable
-private fun UnreachableBanner() {
+internal fun UnreachableBanner() {
     Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
         Text(
             Texts.UNREACHABLE,
@@ -85,204 +71,6 @@ private fun UnreachableBanner() {
             color = MaterialTheme.colorScheme.onErrorContainer,
             style = MaterialTheme.typography.bodyMedium,
         )
-    }
-}
-
-@Composable
-private fun AvailabilityRow(vm: MainViewModel) {
-    val presence by vm.graph.presence.collectAsState()
-    val current = presence.effectiveAvailability
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text("あなたの状態", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(Availability.AVAILABLE, Availability.BUSY, Availability.AWAY).forEach { a ->
-                FilterChip(
-                    selected = current == a,
-                    onClick = {
-                        when (a) {
-                            Availability.BUSY -> vm.graph.setPresence(
-                                Availability.BUSY,
-                                Instant.now().plus(30, ChronoUnit.MINUTES).toString(),
-                            )
-                            else -> vm.graph.setPresence(a)
-                        }
-                    },
-                    label = { Text(Texts.availabilityLabel(a)) },
-                )
-            }
-        }
-        if (current == Availability.BUSY) {
-            Texts.clock(presence.until).takeIf { it.isNotEmpty() }?.let {
-                Text("$it まで取り込み中", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        val explanation = when (current) {
-            Availability.BUSY -> "取り込み中は、通話の代わりに文字で連絡が届きます"
-            Availability.AWAY -> "離席中は、通話の代わりに文字で連絡が届きます"
-            else -> "通話や通知で連絡を受け取れます"
-        }
-        Text(explanation, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-    vm.graph.presenceSyncError.collectAsState().value?.let {
-        Text(
-            it,
-            modifier = Modifier.padding(horizontal = 16.dp),
-            color = MaterialTheme.colorScheme.error,
-            style = MaterialTheme.typography.bodySmall,
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun RequestListScreen(vm: MainViewModel, session: Session) {
-    val state by session.repository.state.collectAsState()
-    val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-
-    // 通知の権限 (Android 13+) は一覧を最初に開いたときに求める
-    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
-    LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
-    // 通常起動では未解決を取り直す。
-    LaunchedEffect(session) {
-        session.repository.refresh()
-    }
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("ホーム") },
-                actions = {
-                    IconButton(onClick = { scope.launch { session.repository.refresh() } }) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "更新")
-                    }
-                    IconButton(onClick = { vm.screen = Screen.Settings }) {
-                        Icon(Icons.Filled.Settings, contentDescription = "設定")
-                    }
-                },
-            )
-        },
-    ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize()) {
-            if (state.refreshing) LinearProgressIndicator(Modifier.fillMaxWidth())
-            if (state.relayUnreachable) UnreachableBanner()
-            AvailabilityRow(vm)
-            val pending = state.pending
-            LazyColumn(Modifier.fillMaxSize()) {
-                item { SectionHeader("未回答の通知 (${pending.size})") }
-                if (pending.isEmpty()) {
-                    item {
-                        Text(
-                            "未回答の通知はありません",
-                            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                items(pending, key = { "p-" + it.id }) { request ->
-                    RequestRow(request, hasDraft = state.draft(request.id).text.isNotEmpty()) {
-                        val call = vm.graph.callManager.uiState.value
-                        if (call != null && call.requestId == request.id) {
-                            context.startActivity(Intent(context, CallActivity::class.java)
-                                .setAction(CallActivity.ACTION_SHOW)
-                                .putExtra(CallActivity.EXTRA_REQUEST_ID, call.requestId)
-                                .putExtra(CallActivity.EXTRA_CALL_ID, call.callId))
-                        } else {
-                            vm.openRequest(request.id)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SectionHeader(text: String) {
-    Text(
-        text,
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp),
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
-    )
-}
-
-@Composable
-private fun PriorityChip(priority: Priority) {
-    if (priority == Priority.NORMAL || priority == Priority.UNKNOWN) return
-    val (label, container, content) = when (priority) {
-        Priority.LOW -> Triple("低", MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant)
-        Priority.HIGH -> Triple("高", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
-        Priority.URGENT -> Triple("至急", MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer)
-        else -> return
-    }
-    Surface(color = container, contentColor = content, shape = MaterialTheme.shapes.small) {
-        Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
-    }
-}
-
-@Composable
-private fun RequestRow(request: Request, hasDraft: Boolean, onClick: () -> Unit) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(
-                Texts.agentLabel(request),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            PriorityChip(request.priority)
-            if (request.isLiveCall) {
-                Text(if (request.call?.state == CallState.ACTIVE) "通話中" else "着信中", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-            }
-            Texts.deliveryLabel(request.deliveryMode)?.takeIf { request.isPending && !request.isLiveCall }?.let {
-                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Text(Texts.time(request), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Text(
-            request.question,
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = if (request.isPending) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        val sub = buildList {
-            if (request.urgency == Urgency.HIGH && request.isPending && request.priority != Priority.HIGH && request.priority != Priority.URGENT) add("至急")
-            if (request.isLiveCall) add("タップして通話を開く")
-            if (request.isCallFallback) {
-                Texts.callOutcomeLabel(request.call?.outcome)?.let { add(it) }
-                add("テキストで回答")
-            }
-            if (!request.isPending) add(Texts.status(request))
-            request.answer?.text?.takeIf { it.isNotEmpty() }?.let { add("「$it」") }
-            if (hasDraft) add("下書きあり")
-        }.joinToString(" ・ ")
-        if (sub.isNotEmpty()) {
-            Text(
-                sub,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
     }
 }
 
@@ -306,7 +94,7 @@ fun RequestDetailScreen(vm: MainViewModel, session: Session, requestId: String) 
             TopAppBar(
                 title = { Text(request?.let { Texts.agentLabel(it) } ?: "質問", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
-                    IconButton(onClick = { vm.screen = Screen.List }) {
+                    IconButton(onClick = { vm.back() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "戻る")
                     }
                 },
