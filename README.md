@@ -4,6 +4,14 @@ AIエージェントがMCPで人間に質問し、スマートフォンの選択
 
 アプリID: **`io.github.yusukeiwaki.oyobidashi`**。参考実装: [kainushi](https://github.com/YusukeIwaki/kainushi)。
 
+## clone後のセットアップをAIに任せる
+
+Claude CodeまたはCodexでこのリポジトリを開き、次を依頼してください。
+
+> AGENTS.mdを読み、oyobidashi-setupスキルで開発環境をセットアップしてください。ブラウザを操作してFirebase・サービスアカウントJSON・Apple APNsを準備し、ローカル起動・MCP登録・端末確認までお願いします。ログインはブラウザ上で行います。
+
+ClaudeはClaude in Chrome、CodexはChrome拡張またはComputer useを接続します。スキルはそれぞれ `.claude/skills/` と `.agents/skills/`、共通の入口は[AGENTS.md](AGENTS.md)です。CLAUDE.mdは使いません。既存設定を再利用し、鍵と本人の署名設定はgit管理外へ保存します。[詳しいセットアップ手順](docs/SETUP.md)。
+
 ## 応答の流れ
 
 | 質問 | 届き方 |
@@ -70,9 +78,9 @@ AndroidもPixel 10a / Android 17で、実FCM着信、音声回答のMCP返却、
 
 アプリを閉じている場合の着信にはAPNs VoIP / FCMが必要です。起動中のLAN動作はWebSocketだけでも試せます。
 
-- **Android:** FirebaseプロジェクトのAndroidアプリに上記IDを登録し、`android/local.properties`に`oyobidashi.firebase.projectId/applicationId/apiKey/senderId`を設定します。[詳細](android/README.md)。今回の作業環境では`oyobidashi-7a842`を作成・登録し、ローカル設定済みです。
+- **Android:** 自分のFirebaseプロジェクトにAndroidアプリを登録します。ダウンロードしたJSONは `./scripts/setup.sh firebase` で検証・取り込みでき、`android/local.properties`とrelayを設定します。[Firebaseの準備](docs/setup/FIREBASE.md)、[アプリの詳細](android/README.md)。
 - **FCM送信:** ログイン済みGoogle Cloud CLIを使う場合、`.oyobidashi/config.json`へ`"fcm": {"auth":"gcloud","project_id":"YOUR_PROJECT"}`を追加して中継を再起動します。サービスアカウント鍵を使う既存方式も利用できます。
-- **iOS:** Apple DeveloperでApp IDのPush Notificationsを有効にし、APNs認証鍵を中継に設定します。通常APNsとVoIPの端末トークンを別々に管理します。[詳細](relay/README.md)、[iOSビルド](ios/README.md)。今回の作業環境では本体・通知拡張のApp IDとAPNs認証鍵を登録し、中継への設定まで完了しました。
+- **iOS:** 自分のApple DeveloperチームでApp IDとAPNs鍵を準備し、`./scripts/setup.sh apple` で取り込みます。別チームでは自分のBundle IDを使い、`ios/project.local.yml`へ署名設定を分離します。通常APNsとVoIPの端末トークンを別々に管理します。[Appleの準備](docs/setup/APPLE.md)、[iOSビルド](ios/README.md)。
 - **外出先:** 既定はLAN内です。DNS・正規のTLS証明書・MacへのHTTPS/WSS経路を設定し、`./scripts/dev.sh --host 127.0.0.1 --public-url https://YOUR_HOST`で起動できます。[Caddy設定例](docs/Caddyfile.example)。明示したホストのローカルHTTPSプロキシだけを信頼し、エージェント用APIはプロキシから拒否します。外部公開は今回実施していません。
 
 PushはOSやネットワークにより遅延・不達になります。iOSのサイレントPushによる通知削除も即時保証されません。復帰・再接続時にサーバーの状態と照合し、終了済みの質問への返信を防ぎます。VoIP Pushは着信開始だけに使い、終話・取り消しは接続済みの通信経路で伝えます。

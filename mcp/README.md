@@ -1,5 +1,7 @@
 # oyobidashi MCP サーバー (`mcp/`)
 
+初回は[共通セットアップ](../docs/SETUP.md)を推奨します。ルートで `./scripts/setup.sh mcp --client both` を実行すると、絶対パスと状態ディレクトリを揃えたローカルMCP設定を生成します。以下は手動登録の代替手順です。ルートのスクリプトを使うrelayの状態は `.oyobidashi/` なので、手動登録も `scripts/mcp.sh` を使うか `OYOBIDASHI_HOME` を一致させてください。
+
 AI コーディングエージェント (Claude Code / Codex) が、お呼び出し (人間) のスマホを鳴らして質問し、テキスト・音声・選択肢による回答を受け取るための **stdio MCP サーバー** です。
 
 - 状態を持たない薄いクライアントで、`relay/` の Agent API (`docs/PROTOCOL.md` 4章) を叩くだけです。
@@ -132,9 +134,9 @@ OYOBIDASHI_DEFAULT_WAIT_SECONDS = "100"
 - エージェント側がツール呼び出しをキャンセル (MCP の `notifications/cancelled`) すると、ポーリングを止めます (質問自体は取り消しません。不要なら `cancel_request` を呼んでください)。
 - クライアントが progress token を付けた場合、ポーリング 1 周ごとに `notifications/progress` を送ります。
 
-## CLAUDE.md / AGENTS.md に書くスニペット (例)
+## AGENTS.md に書くスニペット (例)
 
-エージェントが適切な場面で `ask_human` を呼ぶよう、プロジェクトの `CLAUDE.md` (Claude Code) や `AGENTS.md` (Codex) に次のような指示を入れておくのがおすすめです。
+エージェントが適切な場面で `ask_human` を呼ぶよう、共通の `AGENTS.md` に次のような指示を入れておけます。Claude CodeでAGENTS.mdを読み込む方法はルートのSessionStartフックを参照してください。
 
 ```markdown
 ## お呼び出しへの連絡 (oyobidashi)

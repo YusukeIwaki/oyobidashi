@@ -1,5 +1,7 @@
 # oyobidashi relay
 
+初回は[AIに任せるセットアップ](../docs/SETUP.md)を使えます。ブラウザでのFirebase/APNs準備、秘密鍵の取り込み、MCP、端末確認まで共通手順にまとめています。ルートの `scripts/*.sh` は既定でリポジトリの `.oyobidashi/` を使います。以下のrelay CLI直接実行時の既定 `~/.oyobidashi/` と区別してください。
+
 
 > v0.2: 通話・在席フィードバック・通知取り消しを追加しました。[全体の起動方法と制限](../README.md)、[拡張プロトコル](../docs/EXTENSIONS.md)を参照してください。既定はLAN内、明示したHTTPSプロキシ経由でも利用できます。
 

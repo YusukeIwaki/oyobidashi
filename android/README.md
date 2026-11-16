@@ -1,5 +1,7 @@
 # oyobidashi Android アプリ
 
+初回は[AIに任せるセットアップ](../docs/SETUP.md)を使えます。[Firebaseのブラウザ手順](../docs/setup/FIREBASE.md)に、プロジェクト作成からサービスアカウントJSON取得・取り込みまでまとめています。
+
 
 > v0.2: 通話・在席フィードバック・通知取り消しを追加しました。[全体の起動方法と制限](../README.md)、[拡張プロトコル](../docs/EXTENSIONS.md)を参照してください。既定はLAN内、明示したHTTPSプロキシ経由でも利用できます。
 
@@ -54,7 +56,7 @@ cd android
 
 ## プッシュ通知 (FCM) の設定 — 任意
 
-`google-services.json` と google-services Gradle プラグインは **使いません**。Firebase の値が無くてもビルド・起動でき、その場合は
+ビルドで `google-services.json` と google-services Gradle プラグインは **使いません**。ダウンロードしたJSONを `./scripts/setup.sh firebase` へ渡すと、以下の値を安全に転記できます。Firebase の値が無くてもビルド・起動でき、その場合は
 アプリを開いている間 (WebSocket 接続中) だけローカル通知が出ます。
 
 アプリを閉じていても通知を受けたい場合は、Firebase プロジェクトに Android アプリ (`io.github.yusukeiwaki.oyobidashi`) を追加し、
@@ -70,7 +72,7 @@ oyobidashi.firebase.senderId=<project_info.project_number>
 (`-Poyobidashi.firebase.projectId=…` のように Gradle プロパティで渡すこともできます。) 4つすべてが揃ったときだけ Firebase を初期化します。
 値は BuildConfig に埋め込まれ、起動時に `FirebaseApp.initializeApp` へ渡されます。設定画面の「通知サービス」で利用可否を確認できます。通知・マイク・カメラ・音声認識・全画面着信の再設定も、アプリの「設定」→「権限」から行えます。
 
-relay 側には、同じ Firebase プロジェクトのサービスアカウント JSON を `~/.oyobidashi/config.json` の `fcm.service_account_path` に設定します。
+relay 側には、同じ Firebase プロジェクトのサービスアカウント JSON を `config.json` の `fcm.service_account_path` に設定します。ルートの補助スクリプト利用時は `.oyobidashi/config.json`、relay CLIを直接使う場合は `~/.oyobidashi/config.json` です。`setup.sh firebase` ならrelayも同時に設定します。
 
 FCM トークンはペアリング時 (`POST /v1/pair` の `push_token`)、起動時・フォアグラウンド復帰時、および `onNewToken` で
 `PUT /v1/devices/me` により登録されます。

@@ -2,6 +2,25 @@
 
 2026-11-16 (Asia/Tokyo)。参考アプリの移植後、実際のBun中継・stdio MCP・ネイティブアプリを使用して確認しました。テスト用の画面データや架空の成功応答を製品に追加していません。
 
+## clone向けセットアップ (2026-11-16)
+
+AGENTS.md、Claude/Codexのセットアップスキル、ブラウザでのクラウド準備手順、ローカル設定の補助スクリプトを追加しました。今回の追加検証では既存アカウントにFirebaseプロジェクトやAPNs鍵を新規作成せず、一時ディレクトリと実行時生成の検証鍵を使用しました。ブラウザでの新規プロビジョニング全工程の再実行は未実施です。
+
+| 確認 | 結果 |
+|---|---|
+| `bun test scripts/setup-local.test.ts` | **14 pass / 0 fail**。既存トークン・他プロバイダー保持、不正な既存設定の非破壊、入力のプロジェクト不一致拒否、PKCS#8鍵形式、権限、MCP競合、秘密値の非表示を検証 |
+| 補助スクリプトとテストのTypeScript strictチェック | 成功 |
+| 両方のSKILL.md | skill-creatorのquick_validateで成功 |
+| 未設定の隔離環境から `setup.sh bootstrap` | 3パッケージのfrozen-lockfileインストール、relay設定作成に成功 |
+| Claude SessionStart用シェル | `sh -n` 成功。実行結果がAGENTS.md全文と一致 |
+| 別チーム・別Bundle IDでXcodeGen生成 | 本体と通知拡張の両ターゲットの実build settingsがローカル指定に一致 |
+| 生成したローカルspecでiOS Simulator向けビルド | 本体・通知拡張とも署名なしビルド成功 |
+| 隔離relayと実stdio MCP | 別ポートでhealth成功、`get_human_status` 成功。既存relay・端末には接続せず確認 |
+| `git check-ignore` | relay設定・p8・Android設定・iOSローカルspec・両MCP設定がすべて対象 |
+| gitleaks | 追跡対象と新規ソースの秘密情報検出なし |
+
+Claude/Codex本体でのスキル自動選択・ブラウザログイン・新規クラウド作成の一連の確認は、このローカル補助処理の試験とは区別します。実アカウントで設定する際は[セットアップの完了条件](SETUP.md)まで実施してください。
+
 ## 自動試験・ビルド
 
 | 対象 | 実行 | 結果 |

@@ -6,6 +6,8 @@
     "dev":"./scripts/dev.sh",
     "pair":"./scripts/pair.sh",
     "mcp":"./scripts/mcp.sh",
+    "setup":"./scripts/setup.sh",
+    "test:setup":"bun test scripts/setup-local.test.ts",
     "test:relay":"bun test --cwd relay",
     "test:mcp":"bun test --cwd mcp",
     "test:integration":"bun test --cwd integration",

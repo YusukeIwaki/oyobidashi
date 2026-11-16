@@ -11,7 +11,6 @@ packages:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    DEVELOPMENT_TEAM: "6KG5EF3BN2"
 targets:
   Oyobidashi:
     type: application

@@ -1,5 +1,7 @@
 # oyobidashi iOS アプリ
 
+初回は[AIに任せるセットアップ](../docs/SETUP.md)を使えます。本人のAppleチーム・APNs鍵・Bundle IDは[Appleの準備](../docs/setup/APPLE.md)で設定します。
+
 
 > v0.2: 通話・在席フィードバック・通知取り消しを追加しました。[全体の起動方法と制限](../README.md)、[拡張プロトコル](../docs/EXTENSIONS.md)を参照してください。既定はLAN内、明示したHTTPSプロキシ経由でも利用できます。
 
@@ -31,9 +33,11 @@ swift test
 
 ```sh
 cd ios
-xcodegen generate        # Oyobidashi.xcodeproj, App/Info.plist, App/Oyobidashi.entitlements を生成
+xcodegen generate --spec project.local.yml # setup.sh appleで生成した本人の署名設定
 open Oyobidashi.xcodeproj
 ```
+
+APNsを使わないシミュレータ・署名なしのビルド確認だけなら `xcodegen generate --spec project.yml` を使えます。共有specには開発チームを固定していません。
 
 署名なしでコンパイルだけ確認する場合:
 
@@ -44,10 +48,8 @@ xcodebuild -project Oyobidashi.xcodeproj -scheme Oyobidashi \
 
 ## 実機で動かす
 
-1. **署名チームを確認する。** `project.yml` には今回登録したTeam `6KG5EF3BN2` を設定済み。
-   別チームで使う場合は `DEVELOPMENT_TEAM` を変更し、`xcodegen generate` し直す。本体と通知拡張の両ターゲットへ反映される。
-   Bundle Identifier は `io.github.yusukeiwaki.oyobidashi` (relay の APNs 設定 `bundle_id` と一致させること)。
-   他人のチームで同じ ID が使えない場合は `project.yml` の `PRODUCT_BUNDLE_IDENTIFIER` と relay 側の `bundle_id` の両方を変える。
+1. **署名チームを確認する。** `./scripts/setup.sh apple --team-id ... --key-id ... --key-file ... --bundle-id ...` をルートから実行すると、git管理外の `project.local.yml` に本人のチーム・本体と通知拡張のBundle IDを設定します。
+   作者とは別のチームでは固有のBundle IDが必要です。relayのAPNs `bundle_id` も補助スクリプトが同じ本体IDに揃えます。`project.yml` を直接個人向けに書き換える必要はありません。
 2. **Capability を確認する。** entitlements ファイルで次の2つを要求している。自動署名ならプロビジョニングプロファイルに自動で反映される。
    - Push Notifications (`aps-environment`)
    - Time Sensitive Notifications (`com.apple.developer.usernotifications.time-sensitive`)

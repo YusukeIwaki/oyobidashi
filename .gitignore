@@ -57,3 +57,8 @@ android/captures/
 # Claude Code のローカル設定
 .claude/settings.local.json
 .xcodebuildmcp/
+
+# クローン先ごとの署名チーム・MCPの絶対パス
+ios/project.local.yml
+.mcp.json
+.codex/config.toml
