@@ -27,8 +27,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -163,7 +161,6 @@ class CallActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CallScreen(
     requestId: String,
@@ -179,7 +176,7 @@ private fun CallScreen(
     val ui by graph.callManager.uiState.collectAsState()
     val state = ui?.takeIf { it.requestId == requestId && (callId.isEmpty() || it.callId == callId) }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("通話") }) }) { padding ->
+    Scaffold { padding ->
         Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             Column(
                 modifier = Modifier.widthIn(max = 640.dp).fillMaxSize()
@@ -188,7 +185,6 @@ private fun CallScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 if (state == null) {
-                    Text("通話は終了しました", style = MaterialTheme.typography.headlineSmall)
                     Text(
                         "この通話は既に応答・終了しているか、他の端末で対応されました。" +
                             "質問が残っている場合はテキストで回答できます。",
