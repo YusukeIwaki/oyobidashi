@@ -56,3 +56,40 @@ if (stage) {
     }).observe(stage);
   }
 }
+
+// 場面のアニメーション: 1〜4を順に進める。説明を押すとその場面へ移る
+const story = document.getElementById("story");
+if (story) {
+  const buttons = [...story.querySelectorAll<HTMLButtonElement>("[data-go]")];
+  const ms = [0, 3600, 6200, 6000, 5000];
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // 表示確認用: ?scene=1 のように場面を固定できる
+  const fixed = Number(new URLSearchParams(location.search).get("scene"));
+  const auto = !still && !(fixed >= 1 && fixed <= 4);
+  let step = fixed >= 1 && fixed <= 4 ? fixed : Number(story.dataset.step);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let visible = false;
+  const go = (n: number) => {
+    step = n;
+    story.dataset.step = String(n);
+    for (const b of buttons) {
+      if (Number(b.dataset.go) === n) b.setAttribute("aria-current", "step");
+      else b.removeAttribute("aria-current");
+    }
+    clearTimeout(timer);
+    if (auto && visible) timer = setTimeout(() => go((n % 4) + 1), ms[n]);
+  };
+  for (const b of buttons) b.addEventListener("click", () => go(Number(b.dataset.go)));
+  go(step);
+  if (auto) {
+    // 見えたら最初から始め、画面外では止める
+    new IntersectionObserver(
+      ([entry]) => {
+        visible = Boolean(entry?.isIntersecting);
+        if (visible) go(1);
+        else clearTimeout(timer);
+      },
+      { threshold: 0.35 },
+    ).observe(story);
+  }
+}

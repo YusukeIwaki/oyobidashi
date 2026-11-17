@@ -1,42 +1,131 @@
+---
+// 机から台所へ移る1枚の絵。場面は .story の data-step (1〜4) で切り替える。
+// 吹き出しは文字が縮まないよう、SVGの外にHTMLで重ねている (位置は絵に対する%)。
+const steps = [
+  { title: "「困ったら電話して」", text: "そう言って、席を立つ。" },
+  { title: "料理に集中", text: "画面は見ない。" },
+  { title: "電話が鳴る", text: "炒めながら、声で答える。" },
+  { title: "いただきます", text: "パソコンには一度も戻らなかった。" },
+];
+const initial = 3;
+---
 <section class="sec" id="scene">
   <div class="wrap">
-    <div class="sec__head">
+    <div class="sec__head sec__head--tight">
       <span class="chip" aria-hidden="true">ｼﾅﾘｵ</span>
       <h2>席を立っても、<br>仕事は止まらない。</h2>
-      <p>Claude Codeに作業を任せたけれど、そろそろ夕飯の支度をしないといけない。そんな日の通話記録です。</p>
     </div>
 
-    <ol class="log">
-      <li>
-        <time>18:30</time>
-        <div>
-          <h3>「困ったら電話して」と言って、台所へ</h3>
-          <p>画面を見張る必要はありません。パソコンは開いたまま、手はまな板へ。</p>
+    <div class="story" id="story" data-step={initial}>
+      <div class="story__stage" aria-hidden="true">
+        <div class="story__world">
+          <svg viewBox="0 60 800 380" xmlns="http://www.w3.org/2000/svg">
+            <!-- 壁 -->
+            <rect class="s-wall" x="36" y="150" width="300" height="230" rx="28" />
+            <rect class="s-wall" x="470" y="130" width="310" height="250" rx="28" />
+            <line class="s-floor" x1="16" y1="380" x2="784" y2="380" />
+
+            <!-- 植木 -->
+            <g class="s-plant">
+              <ellipse cx="338" cy="318" rx="9" ry="26" transform="rotate(-24 338 318)" />
+              <ellipse cx="362" cy="318" rx="9" ry="26" transform="rotate(24 362 318)" />
+              <ellipse cx="350" cy="308" rx="9" ry="30" />
+            </g>
+            <path class="s-pot" d="M334 346h32l-5 34h-22z" />
+
+            <!-- 机とノートパソコン -->
+            <rect class="s-ink2" x="84" y="246" width="8" height="74" rx="4" />
+            <rect class="s-ink2" x="84" y="312" width="64" height="8" rx="4" />
+            <rect class="s-ink2" x="86" y="318" width="5" height="62" />
+            <rect class="s-ink2" x="141" y="318" width="5" height="62" />
+            <rect class="s-ink" x="150" y="270" width="152" height="8" rx="2" />
+            <rect class="s-ink" x="290" y="276" width="6" height="104" />
+            <rect class="s-ink" x="214" y="212" width="68" height="52" rx="5" />
+            <rect class="s-lcdbg" x="219" y="217" width="58" height="40" rx="2" />
+            <rect class="s-ink2" x="198" y="264" width="96" height="6" rx="3" />
+            <g class="s-dots">
+              <circle cx="236" cy="237" r="3.5" /><circle cx="248" cy="237" r="3.5" /><circle cx="260" cy="237" r="3.5" />
+            </g>
+            <path class="s-check" d="M236 237l9 9 16-18" />
+
+            <!-- 座っている人 -->
+            <g class="p-sit">
+              <rect class="s-ink" x="104" y="294" width="76" height="20" rx="10" />
+              <rect class="s-ink" x="162" y="298" width="18" height="80" rx="9" />
+              <rect class="s-ink" x="162" y="368" width="32" height="12" rx="6" />
+              <rect class="s-shirt" x="98" y="226" width="42" height="86" rx="18" />
+              <path class="s-arm" d="M124 250L160 270 198 262" />
+              <circle class="s-skin" cx="200" cy="262" r="6.5" />
+              <circle class="s-skin" cx="122" cy="204" r="17" />
+              <path class="s-ink" d="M104 208a18 18 0 0 1 35-10q-14 0-21-9q-2 14-14 19z" />
+            </g>
+
+            <!-- 台所 -->
+            <rect class="s-counter" x="588" y="272" width="186" height="108" />
+            <line class="s-floor" x1="681" y1="284" x2="681" y2="368" />
+            <rect class="s-ink" x="580" y="262" width="202" height="10" rx="2" />
+            <g class="s-steam">
+              <path d="M626 240q-6-8 0-16t0-16" /><path d="M646 240q-6-8 0-16t0-16" />
+            </g>
+            <g class="s-pan">
+              <path class="s-ink" d="M612 248h50v8a6 6 0 0 1-6 6h-38a6 6 0 0 1-6-6z" />
+              <rect class="s-ink" x="660" y="249" width="26" height="5" rx="2.5" />
+            </g>
+            <g class="s-bowl">
+              <path d="M610 244h54a27 18 0 0 1-54 0z" />
+              <ellipse cx="637" cy="244" rx="22" ry="4.5" />
+            </g>
+            <g class="s-phone">
+              <rect class="s-ink" x="716" y="220" width="26" height="42" rx="6" />
+              <rect class="s-phone__scr" x="720" y="225" width="18" height="30" rx="2" />
+            </g>
+            <g class="s-ring">
+              <path d="M706 228q-7 13 0 26" /><path d="M752 228q7 13 0 26" />
+              <path d="M697 222q-11 19 0 38" /><path d="M761 222q11 19 0 38" />
+            </g>
+
+            <!-- 立っている人 (場面1では机の位置にいて、歩いてくる) -->
+            <g class="p-stand">
+              <g class="p-leg p-leg--back">
+                <rect class="s-ink" x="543" y="282" width="13" height="94" rx="6.5" />
+                <rect class="s-ink" x="543" y="368" width="26" height="12" rx="6" />
+              </g>
+              <g class="p-leg">
+                <rect class="s-ink" x="526" y="282" width="13" height="94" rx="6.5" />
+                <rect class="s-ink" x="526" y="368" width="24" height="12" rx="6" />
+              </g>
+              <rect class="s-shirt" x="520" y="188" width="42" height="106" rx="18" />
+              <circle class="s-skin" cx="542" cy="168" r="17" />
+              <path class="s-ink" d="M524 172a18 18 0 0 1 35-10q-14 0-21-9q-2 14-14 19z" />
+              <g class="p-arm">
+                <path class="s-arm" d="M544 212L574 246 606 238" />
+                <line class="s-tool" x1="606" y1="238" x2="630" y2="250" />
+                <circle class="s-skin" cx="608" cy="238" r="6.5" />
+              </g>
+            </g>
+          </svg>
+
+          <p class="bub bub--go">困ったら電話して</p>
+          <p class="bub bub--pc bub--work">作業中…</p>
+          <p class="bub bub--pc bub--done">完了</p>
+          <p class="bub bub--tel bub--ask">旧APIを消しますか、<br>残しますか?</p>
+          <p class="bub bub--me bub--ans">残して、警告だけ出して</p>
+          <p class="bub bub--tel bub--fin">終わりました</p>
+          <p class="bub bub--me bub--eat">いただきます</p>
         </div>
-      </li>
-      <li class="log--call">
-        <time>18:47</time>
-        <div>
-          <h3>着信。「旧APIを消しますか、残しますか?」</h3>
-          <p>玉ねぎを炒めながら、声で「残して、警告だけ出して」。電話が切れると、エージェントはもう作業に戻っています。</p>
-          <span class="tag">音声通話 ・ 23秒</span>
-        </div>
-      </li>
-      <li>
-        <time>19:05</time>
-        <div>
-          <h3>通知。「終わりました。次はどうしますか?」</h3>
-          <p>急ぎでない用件は、電話ではなく通知で。ボタンをひとつ押して、次のタスクを渡します。</p>
-          <span class="tag">通知ボタン ・「PRを作って」</span>
-        </div>
-      </li>
-      <li>
-        <time>19:20</time>
-        <div>
-          <h3>いただきます</h3>
-          <p>パソコンには一度も戻っていません。食べ終わるころには、プルリクエストができています。</p>
-        </div>
-      </li>
-    </ol>
+      </div>
+
+      <ol class="story__steps">
+        {steps.map((s, i) => (
+          <li>
+            <button type="button" data-go={i + 1} aria-current={i + 1 === initial ? "step" : undefined}>
+              <span class="story__n" aria-hidden="true">{i + 1}</span>
+              <strong>{s.title}</strong>
+              <span>{s.text}</span>
+            </button>
+          </li>
+        ))}
+      </ol>
+    </div>
   </div>
 </section>

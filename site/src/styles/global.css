@@ -18,6 +18,7 @@
   --mincho: "Shippori Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
   --gothic: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
   --dot: "DotGothic16", "Osaka-Mono", "MS Gothic", monospace;
+  --logo: "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", var(--gothic);
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   --gutter: clamp(16px, 4vw, 40px);
@@ -66,8 +67,7 @@ h1, h2 {
 .top__in { display: flex; align-items: center; gap: 24px; height: 64px; }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; margin-right: auto; }
 .brand__mark { width: 36px; height: 36px; }
-.brand__name { font-family: var(--mincho); font-weight: 800; font-size: 1.2rem; letter-spacing: 0.06em; }
-.brand__latin { font-family: var(--dot); font-size: 0.78rem; color: var(--ink-2); letter-spacing: 0.08em; padding-top: 3px; }
+.brand__name { font-family: var(--logo); font-weight: 800; font-size: 1.36rem; letter-spacing: 0.01em; line-height: 1; }
 .nav { display: flex; gap: 26px; font-size: 0.9rem; font-weight: 500; }
 .nav a { text-decoration: none; padding: 6px 0; border-bottom: 2px solid transparent; }
 .nav a:hover { border-bottom-color: var(--orange); }
@@ -210,22 +210,120 @@ h1, h2 {
 .sec__head h2 { font-size: clamp(2rem, 4.6vw, 3.4rem); margin: 18px 0 20px; }
 .sec__head p { color: var(--ink-2); font-size: 1.02rem; }
 .sec__head a { color: var(--orange-dark); }
+.sec__head--tight { margin-bottom: 0; }
+.sec__head--tight h2 { margin-bottom: 0; }
 .sec--tint { background: var(--container); }
 .sec--ink { background: var(--ink); color: var(--paper); }
 .sec--ink .sec__head p { color: #C9C0AA; }
 .sec--ink .chip { box-shadow: inset 0 0 0 1px rgba(124, 252, 154, .25); }
 
-/* ── 通話記録 ── */
-.log { border-top: 2px solid var(--ink); }
-.log li { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 24px; padding: 30px 0; border-bottom: 1px dashed var(--line); }
-.log li:last-child { border-bottom: 2px solid var(--ink); }
-.log time { font-family: var(--dot); font-size: 2rem; line-height: 1.3; letter-spacing: 0.04em; color: var(--ink-2); }
-.log h3 { font-family: var(--mincho); font-weight: 800; font-size: clamp(1.2rem, 2.2vw, 1.6rem); line-height: 1.5; }
-.log p { color: var(--ink-2); margin-top: 8px; max-width: 40em; }
-.log--call time { color: var(--orange-dark); }
-.log--call time::after { content: "☎"; margin-left: 10px; font-size: 1.3rem; }
+/* ── 場面のアニメーション ── */
+.story { --skin: #EDBE9B; }
+.story__stage { max-width: 940px; margin: 0 auto; overflow: hidden; }
+.story__world { position: relative; aspect-ratio: 800 / 380; }
+.story__world svg { width: 100%; height: 100%; }
+.s-wall { fill: var(--container); }
+.s-floor { stroke: var(--ink); stroke-width: 2; stroke-linecap: round; }
+.s-ink { fill: var(--ink); }
+.s-ink2 { fill: var(--ink-2); }
+.s-lcdbg { fill: var(--lcd-bg); }
+.s-shirt { fill: var(--orange); }
+.s-skin { fill: var(--skin); }
+.s-arm { fill: none; stroke: var(--orange-dark); stroke-width: 12; stroke-linecap: round; stroke-linejoin: round; }
+.s-tool { stroke: var(--ink); stroke-width: 4; stroke-linecap: round; }
+.s-plant { fill: var(--green); }
+.s-pot { fill: var(--orange-dark); }
+.s-counter { fill: var(--surface); stroke: var(--ink); stroke-width: 2; }
+.s-dots { fill: var(--lcd); }
+.s-check { fill: none; stroke: var(--lcd); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.s-steam { fill: none; stroke: var(--line); stroke-width: 4; stroke-linecap: round; }
+.s-bowl path { fill: var(--surface); stroke: var(--ink); stroke-width: 2.5; stroke-linejoin: round; }
+.s-bowl ellipse { fill: var(--orange-soft); stroke: var(--ink); stroke-width: 2.5; }
+.s-phone__scr { fill: var(--ink-2); transition: fill .3s; }
+.s-ring { fill: none; stroke: var(--orange); stroke-width: 3.5; stroke-linecap: round; }
+
+/* 場面ごとの出し分け */
+.p-sit, .p-stand, .s-dots, .s-check, .s-steam, .s-pan, .s-bowl, .s-ring, .s-tool { transition: opacity .35s; }
+/* 立ち上がってから歩く。歩幅と速さは人の背丈に合わせている (約420を2.8秒、6歩)。
+   机へ戻るときは歩かせず、場面ごと切り替える */
+.story { --walk: 2.8s; --rise: .45s; }
+.p-stand { transition: transform var(--walk) cubic-bezier(.3, 0, .6, 1) var(--rise), opacity .3s; }
+.story[data-step="1"] .p-stand { opacity: 0; transform: translateX(-420px); transition: opacity .3s, transform 0s .3s; }
+.story:not([data-step="1"]) .p-sit { opacity: 0; }
+.p-leg { transform-origin: 541px 290px; }
+.story:not([data-step="1"]) .p-leg { animation: stride calc(var(--walk) / 3) linear var(--rise) 3; }
+.story:not([data-step="1"]) .p-leg--back { animation-name: stride-back; }
+.story:not([data-step="1"]) .p-stand { animation: bob calc(var(--walk) / 6) ease-in-out var(--rise) 6; }
+.story:is([data-step="2"], [data-step="3"]) :is(.s-steam, .s-tool) { transition-delay: calc(var(--walk) + var(--rise)); }
+.story[data-step="1"] :is(.s-dots, .s-steam, .s-tool),
+.story:not([data-step="4"]) :is(.s-check, .s-bowl),
+.story[data-step="4"] :is(.s-dots, .s-pan, .s-tool),
+.story:not([data-step="3"]) .s-ring { opacity: 0; }
+.p-arm { transform-origin: 544px 212px; }
+.story:is([data-step="2"], [data-step="3"]) .p-arm { animation: swing calc(var(--walk) + var(--rise) + .3s) ease-in-out both, stir 1.1s ease-in-out calc(var(--walk) + var(--rise) + .3s) infinite alternate; }
+.s-dots circle { animation: blink 1.2s infinite; }
+.s-dots circle:nth-child(2) { animation-delay: .2s; }
+.s-dots circle:nth-child(3) { animation-delay: .4s; }
+.s-steam path { animation: steam 2.2s ease-in-out infinite; }
+.s-steam path:nth-child(2) { animation-delay: 1.1s; }
+.s-phone { transform-origin: 729px 262px; }
+.story[data-step="3"] .s-phone { animation: buzz .16s linear 14; }
+.story[data-step="3"] .s-phone__scr { fill: var(--orange); }
+.story[data-step="3"] .s-ring { animation: blink .7s 4; }
+@keyframes bob { 50% { translate: 0 -4px; } }
+@keyframes stride { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-19deg); } 75% { transform: rotate(19deg); } }
+@keyframes stride-back { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(19deg); } 75% { transform: rotate(-19deg); } }
+/* 歩くあいだは腕を下ろして振り、着いたら鍋へ伸ばす */
+@keyframes swing { 0%, 12% { transform: rotate(52deg); } 30% { transform: rotate(64deg); } 48% { transform: rotate(46deg); } 66% { transform: rotate(64deg); } 84% { transform: rotate(50deg); } 100% { transform: rotate(-5deg); } }
+@keyframes stir { from { transform: rotate(-5deg); } to { transform: rotate(4deg); } }
+@keyframes steam { 0% { transform: translateY(6px); opacity: 0; } 40% { opacity: 1; } 100% { transform: translateY(-10px); opacity: 0; } }
+@keyframes buzz { 25% { transform: rotate(-5deg); } 75% { transform: rotate(5deg); } }
+
+/* 吹き出し。位置は絵 (800×380) に対する% */
+.bub {
+  position: absolute; margin: 0; padding: 7px 13px; border-radius: 14px;
+  background: var(--surface); border: 2px solid var(--ink); color: var(--ink);
+  font-size: 0.94rem; font-weight: 700; line-height: 1.5; white-space: nowrap;
+  opacity: 0; transform: translateY(8px) scale(.94); transform-origin: 30% 100%;
+  transition: opacity .3s, transform .3s;
+}
+.bub::after {
+  content: ""; position: absolute; left: 24px; bottom: -8px; width: 12px; height: 12px;
+  background: inherit; border: solid var(--ink); border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.bub--tel { background: var(--orange-dark); border-color: var(--orange-dark); color: #fff; }
+.bub--tel::after { left: auto; right: 34px; border-color: var(--orange-dark); }
+.bub--pc { background: var(--lcd-bg); border-color: var(--lcd-bg); color: var(--lcd); font-family: var(--dot); font-weight: 400; }
+.bub--pc::after { border-color: var(--lcd-bg); }
+.bub--go { left: 8%; bottom: 71.8%; }
+.bub--pc { left: 27%; bottom: 64.8%; }
+.bub--me { left: 63.5%; bottom: 79.9%; }
+.bub--tel { right: 3%; bottom: 61.4%; }
+.story[data-step="1"] .bub--go,
+.story:is([data-step="2"], [data-step="3"]) .bub--work,
+.story[data-step="3"] :is(.bub--ask, .bub--ans),
+.story[data-step="4"] :is(.bub--done, .bub--fin, .bub--eat) { opacity: 1; transform: none; }
+.story[data-step="1"] .bub--go { transition-delay: .4s; }
+.story[data-step="2"] .bub--work { transition-delay: 2.3s; }
+.story[data-step="3"] .bub--ask { transition-delay: .5s; }
+.story[data-step="3"] .bub--ans { transition-delay: 2.4s; }
+.story[data-step="4"] .bub--fin { transition-delay: .4s; }
+.story[data-step="4"] .bub--eat { transition-delay: 1.6s; }
+
+/* 場面の説明。押すとその場面へ */
+.story__steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 28px; border-top: 2px solid var(--ink); }
+.story__steps li + li { border-left: 1px dashed var(--line); }
+.story__steps button {
+  display: block; width: 100%; height: 100%; padding: 18px 16px 22px; border: 0; border-top: 4px solid transparent; margin-top: -2px;
+  background: none; color: var(--ink-2); font: inherit; text-align: left; cursor: pointer;
+}
+.story__steps strong { display: block; font-family: var(--mincho); font-weight: 800; font-size: 1.06rem; line-height: 1.5; color: var(--ink); margin: 4px 0 6px; }
+.story__steps button > span:last-child { display: block; font-size: 0.88rem; line-height: 1.7; }
+.story__n { font-family: var(--dot); font-size: 1.3rem; line-height: 1; }
+.story__steps button[aria-current] { border-top-color: var(--orange); background: var(--surface); }
+.story__steps button[aria-current] .story__n { color: var(--orange-dark); }
+
 .tag { display: inline-block; margin-top: 14px; font-size: 0.8rem; font-weight: 700; border: 1px solid var(--ink); border-radius: 999px; padding: 2px 14px; }
-.log--call .tag { background: var(--orange-dark); border-color: var(--orange-dark); color: #fff; }
 
 /* ── 届き方 ── */
 .ways { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid #4A4539; }
@@ -316,8 +414,7 @@ h1, h2 {
 /* ── フッター ── */
 .foot { background: var(--ink); color: #C9C0AA; padding: 40px 0 48px; font-size: 0.86rem; }
 .foot__in { display: grid; grid-template-columns: 1fr auto; gap: 14px 24px; align-items: center; }
-.foot__brand { font-family: var(--mincho); font-weight: 800; font-size: 1.2rem; color: var(--paper); letter-spacing: 0.06em; }
-.foot__brand span { font-family: var(--dot); font-size: 0.76rem; font-weight: 400; color: #9C947F; margin-left: 8px; }
+.foot__brand { font-family: var(--logo); font-weight: 800; font-size: 1.36rem; color: var(--paper); letter-spacing: 0.01em; }
 .foot nav { display: flex; gap: 22px; }
 .foot nav a { text-decoration: none; }
 .foot nav a:hover { color: var(--paper); text-decoration: underline; }
@@ -344,7 +441,6 @@ h1, h2 {
 @media (max-width: 640px) {
   body { font-size: 15px; }
   .sp { display: inline; }
-  .brand__latin { display: none; }
   .top__in { height: 56px; gap: 12px; }
   .brand__mark { width: 32px; height: 32px; }
   .lcd-strip { font-size: 0.72rem; letter-spacing: 0.04em; padding: 8px 10px; gap: 8px; }
@@ -355,8 +451,20 @@ h1, h2 {
   .term { margin: 0 0 -40px; width: 100%; }
   .term__body { padding: 14px 16px 56px; font-size: 0.74rem; }
 
-  .log li { grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 24px 0; }
-  .log time { font-size: 1.5rem; }
+  /* 絵の半分だけを映し、人物を追って机→台所へ動かす */
+  .story__stage { max-width: 420px; }
+  .story__world { width: 200%; transition: transform .9s ease-in-out; }
+  .story:not([data-step="1"]) .story__world { transform: translateX(-50%); transition: transform var(--walk) cubic-bezier(.3, 0, .6, 1) var(--rise); }
+  .bub { font-size: 0.8rem; padding: 5px 10px; }
+  .bub--go { left: 5%; }
+  .bub--me { left: 52%; bottom: 78.7%; }
+  .bub--tel { right: 1.5%; bottom: 57.9%; }
+  .story__steps { grid-template-columns: minmax(0, 1fr); margin-top: 20px; }
+  .story__steps li + li { border-left: 0; border-top: 1px dashed var(--line); }
+  .story__steps button { display: grid; grid-template-columns: 28px minmax(0, 1fr); padding: 12px 10px 14px; border-top: 0; border-left: 4px solid transparent; margin-top: 0; }
+  .story__steps strong { margin: 0 0 2px; font-size: 1rem; }
+  .story__steps button > span:last-child { grid-column: 2; }
+  .story__steps button[aria-current] { border-left-color: var(--orange); }
 
   .way { grid-template-columns: minmax(0, 1fr); }
   .way__fig { grid-row: auto; height: auto; padding: 8px 0 20px; }

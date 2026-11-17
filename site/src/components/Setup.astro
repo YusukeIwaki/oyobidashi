@@ -10,8 +10,8 @@ const mcpConfig = JSON.stringify(
   <div class="wrap">
     <div class="sec__head">
       <span class="chip" aria-hidden="true">ｾｯﾄｱｯﾌﾟ</span>
-      <h2>認証して、つないで、<br>登録するだけ。</h2>
-      <p>呼び出してほしいツールにMCPサーバーを足せば、そのエージェントが電話機を持ちます。必要なのは <a href="https://bun.sh" rel="noopener">Bun</a> とスマホアプリ。</p>
+      <h2>準備は3つ。</h2>
+      <p>要るのは <a href="https://bun.sh" rel="noopener">Bun</a> とスマホアプリ。MCPサーバーを足したエージェントが、電話をかけられるようになります。</p>
     </div>
 
     <ol class="steps">
@@ -19,7 +19,7 @@ const mcpConfig = JSON.stringify(
         <div class="step__n" aria-hidden="true">1</div>
         <div class="step__body">
           <h3>MCPサーバーで認証する</h3>
-          <p>メールアドレスもパスワードも要りません。匿名ではじめて、あとからGoogle・Apple・GitHubを復旧用に登録できます。</p>
+          <p>メールアドレスもパスワードも聞きません。匿名ではじまり、Google・Apple・GitHubはあとから復旧用に足せます。</p>
           <div class="code"><button class="copy" type="button">コピー</button><pre><code>git clone https://github.com/YusukeIwaki/oyobidashi.git
 cd oyobidashi
 bun install --cwd mcp --frozen-lockfile
@@ -30,30 +30,30 @@ bun install --cwd mcp --frozen-lockfile
         <div class="step__n" aria-hidden="true">2</div>
         <div class="step__body">
           <h3>スマホアプリとペアリングする</h3>
-          <p>ターミナルに出たQRコードを、アプリの設定から読み取ります。URLとコードの手入力もできます。コードは10分・1回かぎり。</p>
+          <p>ターミナルに出るQRコードを、アプリの設定から読み取ります。URLとコードの手入力でも構いません。コードは10分、1回きりです。</p>
           <div class="code"><button class="copy" type="button">コピー</button><pre><code>./scripts/pair-cloud.sh</code></pre></div>
         </div>
       </li>
       <li class="step">
         <div class="step__n" aria-hidden="true">3</div>
         <div class="step__body">
-          <h3>呼び出してほしいツールに登録する</h3>
-          <p>Claude Code、Codexなど、MCPに対応したエージェントの設定に書き足します。</p>
+          <h3>ツールに登録する</h3>
+          <p>Claude CodeやCodexなど、MCP対応のエージェントの設定に書き足します。</p>
           <div class="code"><button class="copy" type="button">コピー</button><pre><code>{mcpConfig}</code></pre></div>
-          <p class="step__after">あとはひとこと。<q>困ったことがあったら、電話して。</q></p>
+          <p class="step__after">あとは頼むときに、ひとこと。<q>困ったら電話して。</q></p>
         </div>
       </li>
     </ol>
 
     <div class="tools">
-      <h3>エージェントが手にする道具</h3>
+      <h3>エージェントに増える道具</h3>
       <dl>
-        <div><dt>ask_human</dt><dd>質問する。選択肢・優先度・届け方(ボタン/文字/通話)を指定</dd></div>
-        <div><dt>wait_for_answer</dt><dd>回答を待つ。待っているあいだもエージェントは止まりません</dd></div>
-        <div><dt>notify_human</dt><dd>返事の要らないお知らせ。「長い作業が終わりました」など</dd></div>
-        <div><dt>get_human_status</dt><dd>いま電話してよいか、相手の状態を確かめる</dd></div>
-        <div><dt>update_request</dt><dd>待っている質問の優先度や届け方を変える</dd></div>
-        <div><dt>cancel_request</dt><dd>不要になった質問・お知らせを取り下げる</dd></div>
+        <div><dt>ask_human</dt><dd>質問する。選択肢、優先度、届け方(ボタン・文字・通話)を付けられる</dd></div>
+        <div><dt>wait_for_answer</dt><dd>答えが来るまで待つ</dd></div>
+        <div><dt>notify_human</dt><dd>返事の要らない知らせ。「長い作業が終わりました」など</dd></div>
+        <div><dt>get_human_status</dt><dd>電話してよいか、相手の状態を見る</dd></div>
+        <div><dt>update_request</dt><dd>出した質問の優先度や届け方を変える</dd></div>
+        <div><dt>cancel_request</dt><dd>要らなくなった質問や知らせを取り下げる</dd></div>
       </dl>
     </div>
   </div>
