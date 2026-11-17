@@ -10,6 +10,14 @@
 
 Claude Codeでは `.claude/settings.json` のSessionStartフックがこのファイルを読み込む。フック無効時もこのファイルを明示して開始する。指示の入口を増やす `CLAUDE.md` は作らない。
 
+## 製品サイト
+
+`site/` の製品サイト ([ai.oyobidashi.me](https://ai.oyobidashi.me)) の編集・表示確認・公開・デプロイ調査は、`oyobidashi-site` スキルを読む。
+
+- Codex: `.agents/skills/oyobidashi-site/SKILL.md`
+- Claude Code: `.claude/skills/oyobidashi-site/SKILL.md`
+- 共通の手順: `site/README.md`。どこまで確認なしで進めるか、デザインの決まり、`main` へのpushによるRailway自動デプロイ、定義変更の手順を記載。
+
 ## このプロジェクト
 
 Bun製LAN relay / stdio MCPと、SwiftUI iOS / Compose Material 3 Androidクライアント。既定のアプリIDは `io.github.yusukeiwaki.oyobidashi`。別のAppleチームでは利用者自身のBundle IDをローカル設定に使う。
@@ -26,4 +34,5 @@ Bun製LAN relay / stdio MCPと、SwiftUI iOS / Compose Material 3 Androidクラ�
 - サーバー: `bun test --cwd relay` / `bun test --cwd mcp` / `bun test --cwd integration`。
 - iOS: `swift test --package-path ios/OyobidashiKit`。ローカル署名設定生成後は `xcodegen generate --spec ios/project.local.yml`。
 - Android: JDK17で `android/gradlew -p android :core:test :app:testDebugUnitTest :app:assembleDebug`。
+- 製品サイト (`site/`、Astro): `bun run --cwd site build`、表示は `./site/scripts/screenshot.sh`。`main` へのpushで自動デプロイ。手順は `site/README.md`。
 - セットアップ補助: `bun test scripts/setup-local.test.ts`。変更に関係する検証を実行し、実測していないクラウド接続・Push・音声を成功扱いしない。

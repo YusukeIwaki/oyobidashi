@@ -1,0 +1,29 @@
+---
+import Base from "../layouts/Base.astro";
+import Header from "../components/Header.astro";
+import Hero from "../components/Hero.astro";
+import Scene from "../components/Scene.astro";
+import Delivery from "../components/Delivery.astro";
+import Setup from "../components/Setup.astro";
+import Pricing from "../components/Pricing.astro";
+import Faq from "../components/Faq.astro";
+import Download from "../components/Download.astro";
+import Footer from "../components/Footer.astro";
+---
+<Base
+  title="Oyobidashi(お呼び出し)— AIがあなたをお呼び出し"
+  ogTitle="Oyobidashi — AIから、電話です。"
+  description="AIエージェントが判断に迷ったら、あなたのスマホに電話をかける。声で答えれば作業は再開。Oyobidashiは、MCPでAIに持たせる電話機です。無料・iOS / Android対応。"
+>
+  <Header />
+  <main id="main">
+    <Hero />
+    <Scene />
+    <Delivery />
+    <Setup />
+    <Pricing />
+    <Faq />
+    <Download />
+  </main>
+  <Footer />
+</Base>

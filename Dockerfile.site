@@ -1,0 +1,17 @@
+# Build from the repository root: docker build -f Dockerfile.site .
+# The build context is allowlisted by .dockerignore.
+FROM oven/bun:1.4.4 AS build
+WORKDIR /app/site
+COPY site/package.json site/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY site/astro.config.mjs site/tsconfig.json ./
+COPY site/src ./src
+COPY site/public ./public
+RUN bun run build
+
+FROM caddy:2-alpine AS runtime
+COPY site/Caddyfile /etc/caddy/Caddyfile
+COPY --from=build /app/site/dist /srv
+ENV PORT=8080
+EXPOSE 8080
+CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

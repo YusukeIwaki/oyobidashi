@@ -1,0 +1,17 @@
+# 製品サイトの静的配信。TLSはRailwayの入口で終端するので、ここはHTTPのみ。
+{
+	admin off
+	auto_https off
+}
+
+:{$PORT:8080} {
+	root * /srv
+	encode zstd gzip
+
+	# Astroが出力するハッシュ付きアセットは長期キャッシュする。
+	@hashed path /_astro/*
+	header @hashed Cache-Control "public, max-age=31536000, immutable"
+	header X-Content-Type-Options nosniff
+
+	file_server
+}

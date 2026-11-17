@@ -7,6 +7,8 @@
 # Bun / Node
 node_modules/
 *.tsbuildinfo
+site/dist/
+site/.astro/
 
 # oyobidashi のローカル状態・資格情報 (絶対にコミットしない)
 .oyobidashi/

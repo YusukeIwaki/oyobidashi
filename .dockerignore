@@ -1,0 +1,40 @@
+# Allowlist the image build inputs. Everything else in the repository stays
+# outside the Docker build context.
+**
+!.dockerignore
+
+# Product site (Dockerfile.site). Same allowlist approach as the cloud image.
+!Dockerfile.site
+!site/
+!site/package.json
+!site/bun.lock
+!site/astro.config.mjs
+!site/tsconfig.json
+!site/Caddyfile
+!site/src/
+!site/src/**
+!site/public/
+!site/public/**
+
+# Keep explicit credential denials even if source allowlists are broadened later.
+**/.env
+**/.env.*
+**/.oyobidashi/**
+**/.secrets/**
+**/.credentials/**
+**/cloud-auth.json
+**/credentials.json
+**/*service-account*.json
+**/*service_account*.json
+**/*client_secret*.json
+**/google-services.json
+**/GoogleService-Info.plist
+**/*.p8
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.mobileprovision
+**/*.db
+**/*.sqlite
+**/*.log

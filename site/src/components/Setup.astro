@@ -1,0 +1,60 @@
+---
+// MCPクライアントへ書き足す設定。波かっこはAstroの式と衝突するので文字列で持つ。
+const mcpConfig = JSON.stringify(
+  { mcpServers: { oyobidashi: { command: "/absolute/path/to/oyobidashi/scripts/mcp.sh" } } },
+  null,
+  2,
+);
+---
+<section class="sec" id="setup">
+  <div class="wrap">
+    <div class="sec__head">
+      <span class="chip" aria-hidden="true">ｾｯﾄｱｯﾌﾟ</span>
+      <h2>認証して、つないで、<br>登録するだけ。</h2>
+      <p>呼び出してほしいツールにMCPサーバーを足せば、そのエージェントが電話機を持ちます。必要なのは <a href="https://bun.sh" rel="noopener">Bun</a> とスマホアプリ。</p>
+    </div>
+
+    <ol class="steps">
+      <li class="step">
+        <div class="step__n" aria-hidden="true">1</div>
+        <div class="step__body">
+          <h3>MCPサーバーで認証する</h3>
+          <p>メールアドレスもパスワードも要りません。匿名ではじめて、あとからGoogle・Apple・GitHubを復旧用に登録できます。</p>
+          <div class="code"><button class="copy" type="button">コピー</button><pre><code>git clone https://github.com/YusukeIwaki/oyobidashi.git
+cd oyobidashi
+bun install --cwd mcp --frozen-lockfile
+./scripts/login-cloud.sh --url https://api.oyobidashi.me</code></pre></div>
+        </div>
+      </li>
+      <li class="step">
+        <div class="step__n" aria-hidden="true">2</div>
+        <div class="step__body">
+          <h3>スマホアプリとペアリングする</h3>
+          <p>ターミナルに出たQRコードを、アプリで読み取ります。コードは10分・1回かぎり。</p>
+          <div class="code"><button class="copy" type="button">コピー</button><pre><code>./scripts/pair-cloud.sh</code></pre></div>
+        </div>
+      </li>
+      <li class="step">
+        <div class="step__n" aria-hidden="true">3</div>
+        <div class="step__body">
+          <h3>呼び出してほしいツールに登録する</h3>
+          <p>Claude Code、Codexなど、MCPに対応したエージェントの設定に書き足します。</p>
+          <div class="code"><button class="copy" type="button">コピー</button><pre><code>{mcpConfig}</code></pre></div>
+          <p class="step__after">あとはひとこと。<q>困ったことがあったら、電話して。</q></p>
+        </div>
+      </li>
+    </ol>
+
+    <div class="tools">
+      <h3>エージェントが手にする道具</h3>
+      <dl>
+        <div><dt>ask_human</dt><dd>質問する。選択肢・優先度・届け方(ボタン/文字/通話)を指定</dd></div>
+        <div><dt>wait_for_answer</dt><dd>回答を待つ。待っているあいだもエージェントは止まりません</dd></div>
+        <div><dt>notify_human</dt><dd>返事の要らないお知らせ。「長い作業が終わりました」など</dd></div>
+        <div><dt>get_human_status</dt><dd>いま電話してよいか、相手の状態を確かめる</dd></div>
+        <div><dt>update_request</dt><dd>待っている質問の優先度や届け方を変える</dd></div>
+        <div><dt>cancel_request</dt><dd>不要になった質問・お知らせを取り下げる</dd></div>
+      </dl>
+    </div>
+  </div>
+</section>
