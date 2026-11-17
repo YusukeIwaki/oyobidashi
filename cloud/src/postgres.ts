@@ -2,6 +2,7 @@ import { SQL } from "bun";
 import { unauthorized } from "./errors.ts";
 import {
   pushEndpointKey,
+  pushClientKey,
   scopedJobId,
   type Database,
   type Device,
@@ -53,6 +54,8 @@ CREATE TABLE IF NOT EXISTS cloud_owner_versions(uid text PRIMARY KEY,revision bi
 CREATE TABLE IF NOT EXISTS cloud_displaced_devices(uid text NOT NULL,device_id text NOT NULL,PRIMARY KEY(uid,device_id));
 ALTER TABLE cloud_displaced_devices ADD COLUMN IF NOT EXISTS generation bigint GENERATED ALWAYS AS IDENTITY;
 CREATE INDEX IF NOT EXISTS cloud_displaced_generation ON cloud_displaced_devices(uid,generation DESC);
+UPDATE cloud_records SET doc = jsonb_build_object('push_registered_at', doc->'lastSeen', 'voip_registered_at', doc->'lastSeen') || doc
+WHERE kind='device' AND (NOT doc ? 'push_registered_at' OR NOT doc ? 'voip_registered_at');
 `;
 
 type Query = Pick<SQL, "unsafe">;
@@ -199,8 +202,8 @@ class PgTransaction implements Transaction {
   ) {
     // A single globally owned endpoint prevents an old account's queued push
     // from being sent after the same installation pairs with another account.
-    for (const field of [...fields].sort()) {
-      const key = pushEndpointKey(d, field);
+    const keys = [pushClientKey(d), ...fields.map(field => pushEndpointKey(d, field))].filter((key): key is string => !!key).sort();
+    for (const key of keys) {
       if (!key) continue;
       await this.sql.unsafe(
         "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",

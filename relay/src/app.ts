@@ -5,6 +5,7 @@ import { toDeviceObject, toRequestObject, type DeviceRow, type RequestRow, type 
 import { newDeviceId, newDeviceToken, newRequestId, safeEqualHex, sha256Hex } from "./ids.ts";
 import { isLoopbackAddress, isPrivateAddress } from "./net.ts";
 import type { PushProviders } from "./push/types.ts";
+import { validPushClientId } from "./push/lifecycle.ts";
 import {
   INPUT_METHODS,
   KINDS,
@@ -329,9 +330,12 @@ export function createApp(opts: AppOptions): App {
   // ---- push ----
 
   function dispatchPush(request: RequestObject, devices: DeviceRow[], update = false): number {
+    store.prunePushRegistrations(clock.now());
     let attempted = 0;
     const fallbackAlert = update && request.status === "pending" && request.delivery_mode === "text" && request.call?.state === "ended" && ["declined","hangup","missed","failed"].includes(request.call.outcome ?? "");
-    for (const device of devices) {
+    for (const previous of devices) {
+      const device = store.getDevice(previous.id);
+      if (!device) continue;
       const provider = push[device.platform];
       const isVoip = !update && device.platform === "ios" && request.delivery_mode === "call" && request.call?.state === "ringing" && !!device.voip_token;
       const token = isVoip ? device.voip_token : device.push_token;
@@ -671,6 +675,12 @@ export function createApp(opts: AppOptions): App {
     return fresh;
   }
 
+  function pushClientId(body: Obj): string | undefined {
+    if (body.push_client_id == null) return undefined;
+    if (!validPushClientId(body.push_client_id)) throw invalid("invalid push_client_id");
+    return body.push_client_id;
+  }
+
   function pushTokenField(body: Obj): string | null | undefined {
     const v = body.push_token;
     if (v === undefined) return undefined;
@@ -687,6 +697,7 @@ export function createApp(opts: AppOptions): App {
     const platform: Platform | null = optEnum(body, "platform", PLATFORMS);
     if (!platform) throw invalid("platform is required");
     const pushToken = pushTokenField(body) ?? null;
+    const clientId = pushClientId(body);
     const env: PushEnvironment | null = optEnum(body, "push_environment", PUSH_ENVIRONMENTS);
 
     const now = clock.now();
@@ -707,16 +718,23 @@ export function createApp(opts: AppOptions): App {
       platform,
       token_hash: sha256Hex(deviceToken),
       push_token: pushToken,
+      push_client_id: clientId,
       push_environment: platform === "ios" ? (env ?? "production") : null,
       created_at: now,
     });
     if (pushToken) store.clearPushTokenFromOthers(platform, pushToken, device.id);
+    for (const id of store.retirePushClients(device)) closeDeviceSockets(id);
     return json(201, { device: toDeviceObject(device), device_token: deviceToken });
   }
 
   async function updateDevice(req: Request): Promise<Response> {
     const device = requireDevice(req);
     const body = await readJsonObject(req);
+    const clientId = pushClientId(body);
+    // Parsing can yield while a new pairing revokes or binds this device.
+    const current = store.getDevice(device.id);
+    if (!current) throw unauthorized();
+    if (clientId && current.push_client_id && clientId !== current.push_client_id) throw invalid("push_client_id cannot change within a pairing");
     const pushToken = pushTokenField(body);
     const voipToken = body.voip_token === null || body.voip_token === "" ? null : optString(body,"voip_token",4096);
     if (voipToken !== null && device.platform !== "ios") throw invalid("voip_token is only available on iOS");
@@ -725,11 +743,13 @@ export function createApp(opts: AppOptions): App {
     if (name !== null && name.length === 0) throw invalid("device_name must not be empty");
     const updated = store.updateDevice(device.id, {
       name: name ?? undefined,
+      push_client_id: clientId,
       push_token: pushToken,
       voip_token: body.voip_token === undefined ? undefined : voipToken,
       push_environment: env !== null && device.platform === "ios" ? env : undefined,
-    });
+    }, clock.now());
     if (!updated) throw unauthorized();
+    for (const id of store.retirePushClients(updated)) closeDeviceSockets(id);
     if (pushToken) store.clearPushTokenFromOthers(updated.platform, pushToken, updated.id);
     if (voipToken) store.clearVoipTokenFromOthers(voipToken, updated.id);
     return json(200, { device: toDeviceObject(updated) });
@@ -843,6 +863,7 @@ export function createApp(opts: AppOptions): App {
     },
 
     sweep() {
+      store.prunePushRegistrations(clock.now());
       expireDue();
       const now = clock.now();
       for (const row of store.liveCalls()) {

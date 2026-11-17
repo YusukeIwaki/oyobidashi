@@ -342,6 +342,7 @@ export class JobWorker {
         await this.done(tx, current);
         return null;
       }
+      await this.service.prunePush(tx, d);
       const token = voip ? d.voip_token : d.push_token;
       if (
         !token ||

@@ -77,6 +77,7 @@ class RelayClient(
                 is VoipTokenUpdate.Set -> put("voip_token", JsonPrimitive(voip.token))
             }
             update.deviceName?.let { put("device_name", JsonPrimitive(it)) }
+            update.pushClientId?.let { put("push_client_id", JsonPrimitive(it)) }
         }
         val request = newRequest(url("devices", "me")).put(jsonBody(json.toString())).build()
         return decode(DeviceEnvelope.serializer(), execute(request)).device

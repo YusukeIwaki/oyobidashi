@@ -111,3 +111,26 @@ public struct KeychainCredentialStore: CredentialStore {
         guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainError(status: status) }
     }
 }
+
+/// Separate from credentials so unpairing does not forget which old destinations to retire.
+public enum KeychainPushClientIdentity {
+    public static func loadOrCreate(service: String = "me.oyobidashi.ios") throws -> String {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: service,
+                                    kSecAttrAccount as String: "push-client-id"]
+        var lookup = query
+        lookup[kSecReturnData as String] = true
+        lookup[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(lookup as CFDictionary, &item)
+        if status == errSecSuccess, let data = item as? Data, let id = String(data: data, encoding: .utf8) { return id }
+        guard status == errSecItemNotFound else { throw KeychainError(status: status) }
+        let id = UUID().uuidString.lowercased()
+        var attributes = query
+        attributes[kSecValueData as String] = Data(id.utf8)
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        let added = SecItemAdd(attributes as CFDictionary, nil)
+        guard added == errSecSuccess else { throw KeychainError(status: added) }
+        return id
+    }
+}

@@ -124,6 +124,7 @@ relay は `/healthz` を含む全エンドポイントで、接続元がプラ�
   "push_token": "abcdef…", "push_environment": "development" }
 ```
 - `platform`: `ios` | `android`。`push_token` は省略可 (あとで PUT)。`push_environment` は iOS のみ `development` | `production` (既定 `production`)。
+- `push_client_id` は任意の不透明なアプリ・端末識別子 (英数字・`_`・`-`、32〜128文字)。Pushトークンが再インストールで変わっても、同じplatform・識別子の旧ペアリングを失効させ、通常Push・VoIP双方の旧送信先を止める。認証資格情報としては使わず、公開レスポンスやPushに含めない。未対応クライアントは省略可能。
 - コードは1回限り・発行から10分有効。失敗は 401 `pairing_code_invalid`。同一IPから1分に10回を超える失敗で 429。
 ```json
 { "device": { "id": "dev_01", "name": "iPhone 16", "platform": "ios", "created_at": "..." },
@@ -132,6 +133,8 @@ relay は `/healthz` を含む全エンドポイントで、接続元がプラ�
 
 ### PUT /v1/devices/me → 200 `{ "device": {...} }`
 `{ "push_token": "...", "push_environment": "development", "device_name": "..." }` (すべて任意、指定分のみ更新。`push_token: null` で解除)
+
+`push_client_id` は既存ペアリングへの初回登録にも使える。一度登録した値の変更は400。新しい識別子を使う場合は新規ペアリングする。同じトークンを再登録しても、その送信先の有効期限を更新する。
 
 ### DELETE /v1/devices/me → 204
 ペアリング解除。以後その device token は 401。
@@ -165,6 +168,10 @@ relay は `/healthz` を含む全エンドポイントで、接続元がプラ�
 ### GET /healthz (認証不要) → 200 `{ "ok": true, "version": "0.2.0" }`
 
 ## 6. Push 通知
+
+送信先は、端末がペアリングまたは`PUT /v1/devices/me`で該当トークンを登録してから30日間有効。通常PushとVoIPは独立して期限を持つ。期限に達した送信先は送信前に除外・削除し、APNs/FCMの成功、他のAPIへのアクセス、片方だけのトークン更新では延長しない。ペアリング自体は残し、端末による再登録で再開できる。既存DBの期限は移行前の最終接続時刻 (なければ作成時刻) から数え、サーバー再起動では更新しない。
+
+端末は起動・フォアグラウンド復帰・トークン変更時に再登録する (iOSの同一トークンの再登録は24時間間隔)。iOSは資格情報とは別のKeychain項目にランダムな`push_client_id`を保持する。Android 8+は署名鍵・OSユーザー・端末にスコープされた`ANDROID_ID`をアプリ固有の名前空間でSHA-256化し、生のOS識別子を送信しない。同じ署名での再インストールでは維持される ([Android公式](https://developer.android.com/about/versions/oreo/android-8.0-changes))。OSの初期化や識別子の喪失で旧登録を特定できない場合も30日で停止する。旧版から識別子を登録する前に削除されたアプリも同じ期限で扱う。
 
 relay は `~/.oyobidashi/config.json` に資格情報があるときだけ Push を送る。無ければ WebSocket 配信のみ (アプリ起動中だけ届く)。
 通知本文: `title` = `agent.name` があれば `"<name> からの質問"` (notification は `"<name> からのお知らせ"`)、無ければ `"エージェントからの質問"` / `"エージェントからのお知らせ"`。`body` = `question` の先頭 1000 文字。

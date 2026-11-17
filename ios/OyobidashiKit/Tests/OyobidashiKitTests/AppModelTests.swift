@@ -3,6 +3,37 @@ import XCTest
 
 @MainActor
 final class AppModelTests: XCTestCase {
+    private final class TestDate: @unchecked Sendable {
+        var value = Date(timeIntervalSince1970: 1_800_000_000)
+    }
+
+    func testSamePushAndVoipTokensRenewAfterOneDayWithStableClientIdentity() async throws {
+        let clock = TestDate()
+        let model = AppModel(credentialStore: credentialStore, transport: stub,
+                             configuration: AppModelConfiguration(deviceName: "phone", pushEnvironment: .development, pushClientID: "synthetic-stable-client-identity-00001"),
+                             now: { clock.value })
+        stub.on("POST", "/v1/pair", status: 201, body: Fixtures.data("pair_response.json"))
+        stub.on("PUT", "/v1/devices/me", status: 200, body: Data(#"{"device":{"id":"dev_01"}}"#.utf8))
+        await model.setPushToken("normal")
+        await model.setVoipToken("voip")
+        let paired = await model.pair(PairingInfo(endpoint: endpoint, code: "c"))
+        XCTAssertTrue(paired)
+        XCTAssertEqual(stub.requests("PUT", "/v1/devices/me").count, 1)
+        clock.value += 86399
+        await model.setPushToken("normal")
+        await model.setVoipToken("voip")
+        XCTAssertEqual(stub.requests("PUT", "/v1/devices/me").count, 1)
+        clock.value += 1
+        await model.setPushToken("normal")
+        await model.setVoipToken("voip")
+        let puts = stub.requests("PUT", "/v1/devices/me")
+        XCTAssertEqual(puts.count, 3)
+        for request in [stub.requests[0]] + puts {
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any])
+            XCTAssertEqual(body["push_client_id"] as? String, "synthetic-stable-client-identity-00001")
+        }
+    }
+
     private var stub: StubTransport!
     private var credentialStore: InMemoryCredentialStore!
     private var notifications: FakeNotifications!

@@ -1,5 +1,6 @@
 import {
   pushEndpointKey,
+  pushClientKey,
   scopedJobId,
   type Database,
   type Device,
@@ -145,8 +146,7 @@ export class MemoryDatabase implements Database {
       claimPush: async (d, fields = ["push_token", "voip_token"]) => {
         if (this.displaced.has(`${uid}:${d.id}`))
           throw new Error("superseded pairing");
-        for (const field of fields) {
-          const k = pushEndpointKey(d, field);
+        for (const k of [pushClientKey(d), ...fields.map(field => pushEndpointKey(d, field))]) {
           if (k) {
             const previous = claims.get(k) ?? this.pushOwners.get(k);
             if (

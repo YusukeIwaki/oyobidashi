@@ -654,6 +654,7 @@ public struct Device: Codable, Equatable, Sendable {
 
 /// `POST /v1/pair` のボディ。nil のフィールドは出力しない。
 public struct PairRequestBody: Codable, Equatable, Sendable {
+    public var pushClientID: String?
     public var code: String
     public var deviceName: String
     public var platform: DevicePlatform
@@ -662,12 +663,14 @@ public struct PairRequestBody: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case code, platform
+        case pushClientID = "push_client_id"
         case deviceName = "device_name"
         case pushToken = "push_token"
         case pushEnvironment = "push_environment"
     }
 
-    public init(code: String, deviceName: String, platform: DevicePlatform = .ios, pushToken: String? = nil, pushEnvironment: PushEnvironment? = nil) {
+    public init(code: String, deviceName: String, platform: DevicePlatform = .ios, pushToken: String? = nil, pushEnvironment: PushEnvironment? = nil, pushClientID: String? = nil) {
+        self.pushClientID = pushClientID
         self.code = code
         self.deviceName = deviceName
         self.platform = platform
@@ -695,19 +698,22 @@ public enum FieldUpdate<Value: Equatable & Sendable>: Equatable, Sendable {
 
 /// `PUT /v1/devices/me` のボディ。指定したフィールドだけ出力する。
 public struct DeviceUpdateBody: Encodable, Equatable, Sendable {
+    public var pushClientID: String?
     public var pushToken: FieldUpdate<String>
     public var voipToken: FieldUpdate<String>
     public var pushEnvironment: PushEnvironment?
     public var deviceName: String?
 
     enum CodingKeys: String, CodingKey {
+        case pushClientID = "push_client_id"
         case pushToken = "push_token"
         case voipToken = "voip_token"
         case pushEnvironment = "push_environment"
         case deviceName = "device_name"
     }
 
-    public init(pushToken: FieldUpdate<String> = .unchanged, voipToken: FieldUpdate<String> = .unchanged, pushEnvironment: PushEnvironment? = nil, deviceName: String? = nil) {
+    public init(pushToken: FieldUpdate<String> = .unchanged, voipToken: FieldUpdate<String> = .unchanged, pushEnvironment: PushEnvironment? = nil, deviceName: String? = nil, pushClientID: String? = nil) {
+        self.pushClientID = pushClientID
         self.pushToken = pushToken
         self.voipToken = voipToken
         self.pushEnvironment = pushEnvironment
@@ -716,6 +722,7 @@ public struct DeviceUpdateBody: Encodable, Equatable, Sendable {
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(pushClientID, forKey: .pushClientID)
         switch pushToken {
         case .unchanged: break
         case .clear: try c.encodeNil(forKey: .pushToken)

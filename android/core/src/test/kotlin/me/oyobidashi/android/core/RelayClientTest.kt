@@ -50,6 +50,19 @@ class RelayClientTest {
     // ---- 正常系: method / path / headers / body ----
 
     @Test
+    fun `stable push identity accompanies pairing and registration without altering default fixtures`() = runBlocking {
+        val id = "synthetic-stable-client-identity-00001"
+        server.enqueue(json(Fixtures.text("pair_response.json"), 201))
+        client().pair(PairRequest("code", "phone", "android", pushClientId = id))
+        assertEquals(JsonPrimitive(id), bodyJson(server.takeRequest())["push_client_id"])
+        server.enqueue(json("""{"device":{"id":"dev_01"}}"""))
+        client().updateDevice(DeviceUpdate(PushTokenUpdate.Set("new"), pushClientId = id))
+        val registration = bodyJson(server.takeRequest())
+        assertEquals(JsonPrimitive(id), registration["push_client_id"])
+        assertEquals(JsonPrimitive("new"), registration["push_token"])
+    }
+
+    @Test
     fun `pair posts the contract body without Authorization`() = runBlocking {
         server.enqueue(json(Fixtures.text("pair_response.json"), 201))
         val res = client().pair(PairRequest("code1", "Pixel 9", "android", pushToken = "fcm-token"))

@@ -165,6 +165,24 @@ recipient that differs from the current pairing; absent fields retain LAN
 compatibility. Push destinations have one global owner. A superseded pairing
 cannot reclaim its destination through an old in-flight registration.
 
+The optional `push_client_id` additionally owns the installation's pairing globally,
+scoped by platform. Re-pairing that identity displaces the previous device even if
+both APNs/FCM and VoIP tokens have changed, including across accounts. An old
+device cannot reclaim it through an in-flight registration. The identifier grants
+no API access and is never included in public device objects or push payloads.
+Changing an already bound identity within a pairing is rejected.
+The 32-device capacity limit is enforced when consuming the pairing code, allowing
+the same phone to replace its old pairing even when all slots are occupied.
+
+Each token's client registration expires after 30 days, independently for ordinary
+push and VoIP. Only an explicit registration of that token renews its timestamp;
+provider success and `lastSeen` updates do not. Both job creation and execution
+prune expired destinations, so queued jobs cannot bypass expiry. Legacy records
+are initialized once from their historical `lastSeen`; migration is repeatable
+without renewing them. Pairing credentials remain usable for re-registration.
+This also bounds delivery attempts for pre-upgrade or unidentifiable abandoned
+installations whose provider continues accepting sends.
+
 Remote Push contains generic text, without the question/context/choices. New VoIP
 call pushes also carry the optional short `subject` for immediate display in the
 system caller name; ordinary pushes and cancellation pushes omit it. Agent details

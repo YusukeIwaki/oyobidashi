@@ -64,11 +64,13 @@ public enum PairingState: Equatable, Sendable {
 }
 
 public struct AppModelConfiguration: Sendable {
+    public var pushClientID: String?
     public var deviceName: String
     public var pushEnvironment: PushEnvironment
     public var listLimit: Int
 
-    public init(deviceName: String, pushEnvironment: PushEnvironment, listLimit: Int = 100) {
+    public init(deviceName: String, pushEnvironment: PushEnvironment, listLimit: Int = 100, pushClientID: String? = nil) {
+        self.pushClientID = pushClientID
         self.deviceName = deviceName
         self.pushEnvironment = pushEnvironment
         self.listLimit = listLimit
@@ -111,6 +113,7 @@ public final class AppModel: AnswerSubmitting {
     @ObservationIgnored private let notifications: (any NotificationManaging)?
     @ObservationIgnored private let configuration: AppModelConfiguration
     @ObservationIgnored private let voiceTurnPolicy: VoiceTurnPolicy
+    @ObservationIgnored private let now: @Sendable () -> Date
 
     @ObservationIgnored private var stream: (any EventStreaming)?
     @ObservationIgnored private var streamGeneration = 0
@@ -118,6 +121,8 @@ public final class AppModel: AnswerSubmitting {
     @ObservationIgnored private var registeredPushToken: String?
     @ObservationIgnored private var voipToken: String?
     @ObservationIgnored private var registeredVoipToken: String?
+    @ObservationIgnored private var pushRegisteredAt: Date?
+    @ObservationIgnored private var voipRegisteredAt: Date?
 
     public init(
         credentialStore: any CredentialStore,
@@ -126,12 +131,14 @@ public final class AppModel: AnswerSubmitting {
         notifications: (any NotificationManaging)? = nil,
         draftPersistence: any DraftPersistence = InMemoryDraftPersistence(),
         streamFactory: StreamFactory? = nil,
-        voiceTurnPolicy: VoiceTurnPolicy = VoiceTurnPolicy()
+        voiceTurnPolicy: VoiceTurnPolicy = VoiceTurnPolicy(),
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.credentialStore = credentialStore
         self.transport = transport
         self.configuration = configuration
         self.voiceTurnPolicy = voiceTurnPolicy
+        self.now = now
         self.notifications = notifications
         self.streamFactory = streamFactory ?? { endpoint, token in
             EventStreamClient(endpoint: endpoint, deviceToken: token)
@@ -170,7 +177,7 @@ public final class AppModel: AnswerSubmitting {
         let tokenAtRequest = pushToken
         let body = PairRequestBody(
             code: info.code, deviceName: configuration.deviceName, platform: .ios,
-            pushToken: tokenAtRequest, pushEnvironment: configuration.pushEnvironment
+            pushToken: tokenAtRequest, pushEnvironment: configuration.pushEnvironment, pushClientID: configuration.pushClientID
         )
         do {
             let response = try await RelayClient(endpoint: info.endpoint, deviceToken: nil, transport: transport).pair(body)
@@ -189,9 +196,11 @@ public final class AppModel: AnswerSubmitting {
             signedOutReason = nil
             pairingState = .idle
             registeredPushToken = tokenAtRequest
+            pushRegisteredAt = tokenAtRequest == nil ? nil : now()
             // /pair includes the alert token, but VoIP registration belongs to
             // the old device credential and must be repeated after pairing.
             registeredVoipToken = nil
+            voipRegisteredAt = nil
             if let previous, previous.deviceToken != new.deviceToken {
                 try? await RelayClient(endpoint: previous.endpoint, deviceToken: previous.deviceToken, transport: transport).deleteDevice()
             }
@@ -225,6 +234,8 @@ public final class AppModel: AnswerSubmitting {
         signedOutReason = reason
         registeredPushToken = nil
         registeredVoipToken = nil
+        pushRegisteredAt = nil
+        voipRegisteredAt = nil
         callReconciler.reset()
         sendingVoiceRequests.removeAll()
         finishingVoiceRequests.removeAll()
@@ -247,13 +258,15 @@ public final class AppModel: AnswerSubmitting {
     }
 
     private func registerPushTokenIfNeeded() async {
-        guard let client, let credentials, let pushToken, pushToken != registeredPushToken else { return }
+        guard let client, let credentials, let pushToken,
+              pushToken != registeredPushToken || pushRegisteredAt.map({ now().timeIntervalSince($0) >= 86400 || now() < $0 }) != false else { return }
         do {
             _ = try await client.updateDevice(
-                DeviceUpdateBody(pushToken: .set(pushToken), pushEnvironment: configuration.pushEnvironment)
+                DeviceUpdateBody(pushToken: .set(pushToken), pushEnvironment: configuration.pushEnvironment, pushClientID: configuration.pushClientID)
             )
             guard self.credentials == credentials else { return }
             registeredPushToken = pushToken
+            pushRegisteredAt = now()
         } catch {
             guard self.credentials == credentials else { return }
             let relayError = RelayError.wrap(error)
@@ -282,13 +295,15 @@ public final class AppModel: AnswerSubmitting {
     }
 
     private func registerVoipTokenIfNeeded() async {
-        guard let client, let credentials, let voipToken, voipToken != registeredVoipToken else { return }
+        guard let client, let credentials, let voipToken,
+              voipToken != registeredVoipToken || voipRegisteredAt.map({ now().timeIntervalSince($0) >= 86400 || now() < $0 }) != false else { return }
         do {
             _ = try await client.updateDevice(
-                DeviceUpdateBody(voipToken: .set(voipToken), pushEnvironment: configuration.pushEnvironment)
+                DeviceUpdateBody(voipToken: .set(voipToken), pushEnvironment: configuration.pushEnvironment, pushClientID: configuration.pushClientID)
             )
             guard self.credentials == credentials else { return }
             registeredVoipToken = voipToken
+            voipRegisteredAt = now()
         } catch {
             guard self.credentials == credentials else { return }
             let relayError = RelayError.wrap(error)

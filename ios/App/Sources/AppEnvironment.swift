@@ -26,7 +26,7 @@ final class AppEnvironment {
         self.callKit = callKit
         model = AppModel(
             credentialStore: KeychainCredentialStore(),
-            configuration: AppModelConfiguration(deviceName: UIDevice.current.name, pushEnvironment: pushEnvironment),
+            configuration: AppModelConfiguration(deviceName: UIDevice.current.name, pushEnvironment: pushEnvironment, pushClientID: try? KeychainPushClientIdentity.loadOrCreate()),
             notifications: notifications,
             draftPersistence: UserDefaultsDraftPersistence()
         )

@@ -78,6 +78,7 @@ class AppGraph(private val app: Application) {
 
     val notifier = AndroidNotifier(app)
     val pushTokens = PushTokens(app)
+    private val pushClientId = me.oyobidashi.android.push.PushClientIdentity.current(app)
     private val credentialStore: CredentialStore = EncryptedCredentialStore.create(app)
     private val draftStore = PrefsDraftStore(app)
     private val presenceStore = PrefsPresenceStore(app)
@@ -179,7 +180,7 @@ class AppGraph(private val app: Application) {
     suspend fun pair(info: PairingInfo) {
         val pushToken = pushTokens.current()
         val response = RelayClient(http, info.url).pair(
-            PairRequest(code = info.code, deviceName = deviceName(), platform = "android", pushToken = pushToken)
+            PairRequest(code = info.code, deviceName = deviceName(), platform = "android", pushToken = pushToken, pushClientId = pushClientId)
         )
         _session.value?.let { old ->
             endSessionLocally()
@@ -213,7 +214,7 @@ class AppGraph(private val app: Application) {
             val current = _session.value ?: return@launch
             val token = knownToken ?: pushTokens.current() ?: return@launch
             try {
-                current.api.updateDevice(DeviceUpdate(PushTokenUpdate.Set(token)))
+                current.api.updateDevice(DeviceUpdate(PushTokenUpdate.Set(token), pushClientId = pushClientId))
             } catch (e: RelayException) {
                 if (e.isUnauthorized) current.repository.handleUnauthorized()
                 // LAN 外などで失敗した場合は次回の起動/フォアグラウンド復帰で再試行する

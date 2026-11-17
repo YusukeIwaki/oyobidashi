@@ -1,4 +1,5 @@
 import { Database, type Statement } from "bun:sqlite";
+import { freshPushRegistration } from "./push/lifecycle.ts";
 import type {
   Call,
   Presence,
@@ -43,6 +44,9 @@ export interface RequestRow {
 }
 
 export interface DeviceRow {
+  push_client_id?: string | null;
+  push_registered_at?: number | null;
+  voip_registered_at?: number | null;
   voip_token?: string | null;
   id: string;
   name: string;
@@ -181,6 +185,11 @@ export class Store {
     if (!deviceColumns.has("voip_token")) this.db.exec("ALTER TABLE devices ADD COLUMN voip_token TEXT");
     this.db.exec(`CREATE TABLE IF NOT EXISTS presence (device_id TEXT PRIMARY KEY, availability TEXT NOT NULL, until_ms INTEGER, note TEXT, updated_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS feedback (seq INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT NOT NULL, device_id TEXT, event TEXT NOT NULL, at INTEGER NOT NULL);`);
+    for (const name of ["push_client_id", "push_registered_at", "voip_registered_at"]) {
+      if (deviceColumns.has(name)) continue;
+      this.db.exec(`ALTER TABLE devices ADD COLUMN ${name} ${name === "push_client_id" ? "TEXT" : "INTEGER"}`);
+      if (name !== "push_client_id") this.db.exec(`UPDATE devices SET ${name} = COALESCE((SELECT last_seen_at FROM presence WHERE device_id = devices.id), created_at)`);
+    }
   }
 
   close(): void {
@@ -310,10 +319,10 @@ export class Store {
 
   insertDevice(d: DeviceRow): DeviceRow {
     this.q(
-      `INSERT INTO devices (id, name, platform, token_hash, push_token, push_environment, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(d.id, d.name, d.platform, d.token_hash, d.push_token, d.push_environment, d.created_at);
-    return d;
+      `INSERT INTO devices (id, name, platform, token_hash, push_token, push_environment, created_at, push_client_id, push_registered_at, voip_token, voip_registered_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(d.id, d.name, d.platform, d.token_hash, d.push_token, d.push_environment, d.created_at, d.push_client_id ?? null, d.push_token ? d.created_at : null, d.voip_token ?? null, d.voip_token ? d.created_at : null);
+    return this.getDevice(d.id)!;
   }
 
   getDevice(id: string): DeviceRow | null {
@@ -334,7 +343,8 @@ export class Store {
 
   updateDevice(
     id: string,
-    patch: { name?: string; push_token?: string | null; voip_token?: string | null; push_environment?: PushEnvironment | null },
+    patch: { name?: string; push_token?: string | null; voip_token?: string | null; push_environment?: PushEnvironment | null; push_client_id?: string },
+    now = Date.now(),
   ): DeviceRow | null {
     const cur = this.getDevice(id);
     if (!cur) return null;
@@ -345,11 +355,17 @@ export class Store {
       push_token: patch.push_token !== undefined ? patch.push_token : cur.push_token,
       push_environment: patch.push_environment !== undefined ? patch.push_environment : cur.push_environment,
     };
-    this.q("UPDATE devices SET name = ?, push_token = ?, push_environment = ?, voip_token = ? WHERE id = ?").run(
+    next.push_client_id = patch.push_client_id ?? cur.push_client_id;
+    next.push_registered_at = patch.push_token !== undefined ? (patch.push_token ? now : null) : cur.push_registered_at;
+    next.voip_registered_at = patch.voip_token !== undefined ? (patch.voip_token ? now : null) : cur.voip_registered_at;
+    this.q("UPDATE devices SET name = ?, push_token = ?, push_environment = ?, voip_token = ?, push_client_id = ?, push_registered_at = ?, voip_registered_at = ? WHERE id = ?").run(
       next.name,
       next.push_token,
       next.push_environment,
       next.voip_token ?? null,
+      next.push_client_id ?? null,
+      next.push_registered_at ?? null,
+      next.voip_registered_at ?? null,
       id,
     );
     return next;
@@ -357,6 +373,21 @@ export class Store {
 
   clearVoipToken(id: string, token: string): void {
     this.q("UPDATE devices SET voip_token = NULL WHERE id = ? AND voip_token = ?").run(id, token);
+  }
+
+  /** Reinstallation can rotate both tokens; the stable client ID revokes the whole old pairing. */
+  retirePushClients(device: DeviceRow): string[] {
+    if (!device.push_client_id) return [];
+    const old = this.listDevices().filter(d => d.id !== device.id && d.platform === device.platform && d.push_client_id === device.push_client_id);
+    for (const d of old) this.deleteDevice(d.id);
+    return old.map(d => d.id);
+  }
+
+  prunePushRegistrations(now: number): void {
+    for (const d of this.listDevices()) {
+      if (d.push_token && !freshPushRegistration(d.push_registered_at ?? d.created_at, now)) this.clearPushToken(d.id, d.push_token);
+      if (d.voip_token && !freshPushRegistration(d.voip_registered_at ?? d.created_at, now)) this.clearVoipToken(d.id, d.voip_token);
+    }
   }
 
   clearVoipTokenFromOthers(token: string, exceptId: string): void {

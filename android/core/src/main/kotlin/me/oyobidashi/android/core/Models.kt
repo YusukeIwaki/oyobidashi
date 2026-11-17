@@ -248,6 +248,7 @@ data class PairRequest(
     val platform: String,
     @SerialName("push_token") val pushToken: String? = null,
     @SerialName("push_environment") val pushEnvironment: String? = null,
+    @SerialName("push_client_id") val pushClientId: String? = null,
 )
 
 @Serializable
@@ -281,6 +282,7 @@ data class DeviceUpdate(
     val pushToken: PushTokenUpdate = PushTokenUpdate.Keep,
     val voipToken: VoipTokenUpdate = VoipTokenUpdate.Keep,
     val deviceName: String? = null,
+    val pushClientId: String? = null,
 )
 
 /** PUT /v1/presence の until/note: 触らない / 解除 (null を送る) / 設定。availability は常に送る。 */

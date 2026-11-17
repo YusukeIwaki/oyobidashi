@@ -28,6 +28,32 @@ afterAll(async () => {
 });
 
 suite("real PostgreSQL concurrency and forced failure", () => {
+  test("reinstallation rotates both tokens and fences an in-flight registration from the old account", async () => {
+    const { h, db } = await setup();
+    const clientId = "synthetic-device-stable-identity-0001";
+    const a = await h.pair();
+    await h.call("PUT", "/v1/devices/me", a.device_token, { push_client_id: clientId, push_token: "old-normal", voip_token: "old-voip" });
+    const code = (await h.call("POST", "/v1/pairing-codes", "agent-bob")).body.code;
+    await expect(db.transaction("alice", async tx => {
+      const old = (await tx.get("device", a.device.id))!;
+      const next = await h.call("POST", "/v1/pair", null, { code, platform: "ios", device_name: "reinstalled", push_client_id: clientId, push_token: "new-normal" });
+      expect(next.status).toBe(201);
+      await tx.claimPush(old);
+    })).rejects.toThrow();
+    expect((await h.call("GET", "/v1/requests", a.device_token)).status).toBe(401);
+    expect(await db.transaction("alice", tx => tx.list("device"))).toEqual([]);
+  });
+
+  test("legacy timestamp migration is repeatable without renewing expired registrations", async () => {
+    const { h, db } = await setup(), d = await h.pair();
+    await db.sql.unsafe("UPDATE cloud_records SET doc=(doc - 'push_registered_at' - 'voip_registered_at') || jsonb_build_object('lastSeen',1234,'push_token','legacy') WHERE kind='device'");
+    await db.migrate();
+    await db.migrate();
+    expect(await db.transaction("alice", tx => tx.get("device", d.device.id))).toMatchObject({ push_registered_at: 1234, voip_registered_at: 1234 });
+    await h.call("POST", "/v1/requests", "agent-alice", { question: "expired" });
+    expect((await db.transaction("alice", tx => tx.get("device", d.device.id)))!.push_token).toBeNull();
+  });
+
   test("a displaced device cannot reclaim a shared endpoint through an already in-flight registration", async () => {
     const { h, db } = await setup(),
       a = await h.pair();

@@ -21,6 +21,9 @@ export interface CloudRequest extends RequestObject {
   call: CloudCall | null;
 }
 export interface Device extends DeviceObject {
+  push_client_id?: string | null;
+  push_registered_at?: number | null;
+  voip_registered_at?: number | null;
   tokenHash: string;
   push_token: string | null;
   voip_token: string | null;
@@ -156,6 +159,9 @@ export function pushEndpointKey(d: Device, field: "push_token" | "voip_token") {
   return new Bun.CryptoHasher("sha256")
     .update(JSON.stringify([d.platform, d.push_environment, field, d[field]]))
     .digest("hex");
+}
+export function pushClientKey(d: Device) {
+  return d.push_client_id ? `client:${new Bun.CryptoHasher("sha256").update(JSON.stringify([d.platform, d.push_client_id])).digest("hex")}` : null;
 }
 export const scopedJobId = (uid: string, id: string) =>
   `${new Bun.CryptoHasher("sha256").update(uid).digest("hex")}:${id}`;

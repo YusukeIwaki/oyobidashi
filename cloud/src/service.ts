@@ -1,4 +1,5 @@
 import { deliveryMode } from "../../relay/src/policy.ts";
+import { PUSH_FIELDS, registrationField, freshPushRegistration, validPushClientId } from "../../relay/src/push/lifecycle.ts";
 import type { Priority, RequestedMode } from "../../relay/src/types.ts";
 import {
   CloudError,
@@ -53,6 +54,7 @@ export class CloudService {
       if (p.role === "device") {
         const device = await tx.get("device", p.deviceId);
         if (!device || device.tokenHash !== p.tokenHash) throw unauthorized();
+        await this.prunePush(tx, device);
         if (this.now() - device.lastSeen > 30_000) {
           device.lastSeen = this.now();
           await tx.put("device", device.id, device);
@@ -118,6 +120,7 @@ export class CloudService {
     await tx.put("request", r.id, r, this.due(r));
     if (notify !== "none")
       for (const d of await tx.list("device", {}, 33)) {
+        await this.prunePush(tx, d);
         const target =
           notify === "update"
             ? d.push_token
@@ -627,8 +630,8 @@ export class CloudService {
   }
   async issuePairing(tx: Transaction) {
     await this.quota(tx, "pairing", 20);
-    if ((await tx.list("device", {}, 33)).length >= 32)
-      throw new CloudError(429, "device_limit", "paired device limit reached");
+    // Capacity is checked when consuming the code: a reinstall may replace a
+    // registered phone even when all device slots are occupied.
     const code = secret(),
       expires = this.now() + 600_000;
     await tx.put("pairing", hash(code), { expires, used: false }, expires);
@@ -645,6 +648,7 @@ export class CloudService {
     );
     if (!b.platform) throw invalid("platform is required");
     const token = string(b, "push_token", 4096);
+    const clientId = this.pushClientId(b);
     const environment = enumeration(
       b,
       "push_environment",
@@ -664,7 +668,7 @@ export class CloudService {
       const pairing = await tx.get("pairing", key);
       if (!pairing || pairing.used || pairing.expires <= this.now())
         throw bad();
-      if ((await tx.list("device", {}, 33)).length >= 32)
+      if ((await tx.list("device", {}, 33)).filter(d => !(clientId && d.platform === platform && d.push_client_id === clientId)).length >= 32)
         throw new CloudError(
           429,
           "device_limit",
@@ -680,6 +684,9 @@ export class CloudService {
         created_at: iso(this.now()),
         tokenHash: hash(deviceToken),
         push_token: token,
+        push_client_id: clientId,
+        push_registered_at: token ? this.now() : null,
+        voip_registered_at: null,
         voip_token: null,
         push_environment: platform === "ios" ? environment : null,
         lastSeen: this.now(),
@@ -716,13 +723,19 @@ export class CloudService {
   ) {
     const d = await tx.get("device", deviceId);
     if (!d) throw unauthorized();
+    const clientId = this.pushClientId(b);
+    if (clientId && d.push_client_id && d.push_client_id !== clientId) throw invalid("push_client_id cannot change within a pairing");
+    if (clientId) d.push_client_id = clientId;
     await this.quota(tx, "device_update", 120);
     if (b.device_name !== undefined)
       d.name = string(b, "device_name", 200, true)!;
-    if (b.push_token !== undefined)
+    if (b.push_token !== undefined) {
       d.push_token = string(b, "push_token", 4096) || null;
+      d.push_registered_at = d.push_token ? this.now() : null;
+    }
     if (b.voip_token !== undefined) {
       d.voip_token = string(b, "voip_token", 4096) || null;
+      d.voip_registered_at = d.voip_token ? this.now() : null;
       if (d.voip_token && d.platform !== "ios")
         throw invalid("VoIP token is only supported on iOS");
     }
@@ -740,6 +753,29 @@ export class CloudService {
     await tx.claimPush(d, fields);
     await tx.put("device", d.id, d);
     return { device: publicDevice(d) };
+  }
+
+  private pushClientId(b: Record<string, unknown>): string | undefined {
+    if (b.push_client_id == null) return undefined;
+    if (!validPushClientId(b.push_client_id)) throw invalid("invalid push_client_id");
+    return b.push_client_id;
+  }
+
+  async prunePush(tx: Transaction, d: Device) {
+    let changed = false;
+    for (const field of PUSH_FIELDS) {
+      const timestamp = registrationField(field);
+      if (d[field] && d[timestamp] == null) {
+        d[timestamp] = d.lastSeen ?? Date.parse(d.created_at);
+        changed = true;
+      }
+      if (d[field] && !freshPushRegistration(d[timestamp]!, this.now())) {
+        d[field] = null;
+        d[timestamp] = null;
+        changed = true;
+      }
+    }
+    if (changed) await tx.put("device", d.id, d);
   }
   async presence(tx: Transaction, p: Principal) {
     const devices = await tx.list("device", {}, 33);
