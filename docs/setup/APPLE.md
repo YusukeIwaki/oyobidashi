@@ -6,7 +6,7 @@
 
 1. [Apple Developer Account](https://developer.apple.com/account/)を開き、ログイン/2FAは本人に入力してもらいます。Membership details等で選択チーム・10文字のTeam IDを確認します。チームが複数なら既存指定を優先し、不明なら本人に選んでもらいます。
 2. 最新契約への同意が必要で操作できない場合、該当画面を本人へ引き継ぎます。完了後に同じ画面から再開します。
-3. 既定のBundle ID `io.github.yusukeiwaki.oyobidashi` は作者のチームで登録済みです。別チームでは同じIDを取得できないため、本人が所有する名前空間のIDを使います。指定がなければ例として `dev.oyobidashi.team<小文字のTeam ID>` を候補にし、空きをコンソールで確認します。作者のIDを取得するために既存登録を削除したりしません。
+3. 既定のBundle IDは `me.oyobidashi.ios` です。別チームでこのIDを取得できない場合は、本人が所有する名前空間のIDを使います。指定がなければ例として `dev.oyobidashi.team<小文字のTeam ID>` を候補にし、空きをコンソールで確認します。作者のIDを取得するために既存登録を削除したりしません。
 4. 本体を `BUNDLE_ID`、通知拡張を `BUNDLE_ID.NotificationService` とします。両方をチェックポイントに記録します。
 
 ## 2. IdentifiersとCapabilities

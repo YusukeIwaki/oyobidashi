@@ -1,4 +1,5 @@
 import { ConfigError } from "./config.ts";
+import { CloudAuthError } from "./cloud-auth.ts";
 import { RelayError, type RelayPresence, type RelayPresenceEvent, type RelayRequest } from "./relay-client.ts";
 
 /** `structuredContent` of every tool result (PROTOCOL.md section 9, plus `error_code` on failures). */
@@ -238,12 +239,24 @@ export function errorResult(error: unknown, ctx: { requestId?: string | undefine
         ? ` Once that is fixed, call wait_for_answer with request_id "${id}" again.`
         : "";
 
+  if (error instanceof CloudAuthError) return result(error.message, out(error.code), true);
+
   if (error instanceof ConfigError) {
     return result(`oyobidashi is not configured: ${error.message}`, out(error.code), true);
   }
 
   if (error instanceof RelayError) {
     const where = error.baseUrl;
+    if (error.cloud) {
+      if (error.status === 401) return result("Cloud sign-in was rejected after refreshing. Run the cloud login command in your terminal, then reconnect this MCP server.", out(error.code ?? "unauthorized"), true);
+      if (error.status === 403) return result("Your cloud account is not permitted to perform this action. Check the account and resource permissions.", out(error.code ?? "forbidden"), true);
+      if (error.kind === "network" || error.kind === "timeout" || (error.status !== undefined && error.status >= 500)) {
+        return result(`The cloud service is temporarily unreachable or unavailable. Check connectivity and retry later.${resume}`, out(error.kind === "timeout" ? "relay_timeout" : error.code ?? "relay_unreachable"), true);
+      }
+      if (error.status === 404) return result(`The request is unavailable to this cloud account. Use the request_id returned by ask_human and the same account.${resume}`, out(error.code ?? "not_found"), true);
+      if (error.status === 429) return result(`The cloud service is busy. Wait briefly before retrying.${resume}`, out(error.code ?? "rate_limited"), true);
+      return result(`The cloud service rejected the operation (HTTP ${error.status ?? "unknown"}). Check the arguments and current request state.${resume}`, out(error.code ?? "bad_response"), true);
+    }
     if (error.kind === "network") {
       return result(
         `Cannot reach the oyobidashi relay at ${where} (${causeText(error)}). The relay is probably not running: ask the user to ${START_RELAY}, then retry. ` +

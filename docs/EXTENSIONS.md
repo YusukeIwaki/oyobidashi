@@ -1,5 +1,7 @@
 # Oyobidashi v0.2 native/relay contract
 
+Cloud deployments additionally use [CLOUD_PROTOCOL.md](CLOUD_PROTOCOL.md) for per-user authentication, durable asynchronous turns, and restart recovery. Native clients accept both LAN synchronous responses and cloud asynchronous responses.
+
 Keep the existing v1 protocol; the following fields and endpoints extend it.
 
 Request JSON adds `priority: low|normal|high|urgent` (default normal), `delivery_mode: actions|text|call` (effective mode), `requested_mode: auto|actions|text|call`, `call: Call|null`. Absent fields must decode with defaults for old fixtures. Existing urgency remains normal/high for compatibility.
@@ -13,7 +15,9 @@ POST /v1/requests/{id}/call authenticated as device, body {event: answer|decline
 
 Call changes are sent through existing `request.updated` events with the full request. `hello.pending` includes live calls. Clients must reconcile incoming calls, answered on other devices, remote ended calls, missed fallback, and remove notifications on terminal states.
 
-PUT /v1/devices/me accepts `voip_token: string|null` independently of normal push_token (iOS PushKit). Environment reuses push_environment. APNs VoIP pushes include request_id, call_id, question; they are ONLY used for a new ringing call and must immediately report CallKit. Call cancellation travels via authenticated websocket, never VoIP push.
+PUT /v1/devices/me accepts `voip_token: string|null` independently of normal push_token (iOS PushKit). Environment reuses push_environment. APNs VoIP pushes include request_id, call_id, question, optional subject and agent_name; they are ONLY used for a new ringing call and must immediately report CallKit. Call cancellation travels via authenticated websocket, never VoIP push.
+
+Requests and POST /v1/requests accept optional `subject: string|null` (at most 40 Unicode code points before whitespace normalization). Whitespace is collapsed to one line; blank means absent. MCP ask_human accepts the same optional subject. iOS appends it to the caller name (`Codex：本番デプロイの承認`), including the initial PushKit report without waiting for a network request. Android shows it above the question in the call screen. Older requests and pushes without a subject retain their existing display. Subjects are intended to be visible on the lock screen; keep sensitive details in question/context.
 
 PUT /v1/presence (device auth) body {availability: available|busy|away, until?:ISO8601|null, note?:string|null}; GET /v1/presence (agent: all devices and feedback; device: own presence only) => {devices:[{device_id,availability,until,note,updated_at,last_seen_at}],recent_events:[{request_id,device_id,event,at}], now}. Default available; expired busy/away becomes available. User-controlled availability UI in settings/home. Agent feedback includes call declined/hangup/missed/failed; no inference of private OS activity.
 
@@ -23,7 +27,7 @@ Notifications: actions mode has choice buttons that POST answer(choice_index), t
 
 Conversation implementation on relay: OYOBIDASHI_CONVERSATION_PROVIDER=claude (automated tests inject a provider; no fake production fallback). A trusted fixed executable receives user data via stdin without shell interpolation, no tools, constrained structured output {reply:string,resolved:boolean,answer:string|null}. Native speech APIs require mic/speech permission. Never auto-resolve merely from a partial transcript. Structured result must explicitly resolve and have a nonempty answer. Provider failure returns error, allowing retry or text fallback.
 
-For integration use real relay and native UI pairing deep links. Do not add fake request data/screens to production. Bundle/application ID io.github.yusukeiwaki.oyobidashi. UI Japanese, pager theme: warm cream, dark ink, orange accent and tiny green LCD motif. Icons native/vector: pager with three keys and small AI sparkle; Android adaptive foreground/background/monochrome.
+For integration use real relay and native UI pairing deep links. Do not add fake request data/screens to production. iOS Bundle ID me.oyobidashi.ios; Android application ID and Kotlin package me.oyobidashi.android. UI Japanese, pager theme: warm cream, dark ink, orange accent and tiny green LCD motif. Icons native/vector: pager with three keys and small AI sparkle; Android adaptive foreground/background/monochrome.
 
 
 Remote device access: default is private LAN. An explicit `serve --public-url https://YOUR_HOST --host 127.0.0.1` trusts a TLS reverse proxy on loopback only when X-Forwarded-Host exactly matches YOUR_HOST and X-Forwarded-Proto=https. Forwarded agent-token traffic is rejected for every agent endpoint. This requires the owner to configure DNS, a trusted TLS certificate and proxy (docs/Caddyfile.example); the repository does not publish a public endpoint automatically. Native apps support HTTPS/WSS. Pairing is still one-time-code + per-device token. Never bypass TLS validation.

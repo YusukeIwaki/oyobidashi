@@ -5,11 +5,13 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { loadOrCreateConfig, readConfig } from "../relay/src/config.ts";
+import { ANDROID_APP_ID } from "../relay/src/types.ts";
+
+export { ANDROID_APP_ID } from "../relay/src/types.ts";
 
 class SetupError extends Error {}
 type ObjectValue = Record<string, any>;
 export interface Context { root: string; home: string }
-export const APP_ID = "io.github.yusukeiwaki.oyobidashi";
 
 function objectJSON(path: string): ObjectValue {
   try {
@@ -97,7 +99,7 @@ export function configureFirebase(ctx: Context, androidFile: string, serviceFile
   const metadata = objectJSON(androidFile);
   const project = metadata.project_info?.project_id;
   const sender = metadata.project_info?.project_number;
-  const client = Array.isArray(metadata.client) && metadata.client.find((c: ObjectValue) => c.client_info?.android_client_info?.package_name === APP_ID);
+  const client = Array.isArray(metadata.client) && metadata.client.find((c: ObjectValue) => c.client_info?.android_client_info?.package_name === ANDROID_APP_ID);
   const application = client?.client_info?.mobilesdk_app_id;
   const apiKey = client?.api_key?.[0]?.current_key;
   if (typeof project !== "string" || !/^[a-z0-9][a-z0-9-]{2,62}$/.test(project) ||

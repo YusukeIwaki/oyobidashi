@@ -7,6 +7,7 @@
 # Bun / Node
 node_modules/
 *.tsbuildinfo
+cloud/public/auth.js
 site/dist/
 site/.astro/
 
@@ -25,6 +26,8 @@ site/.astro/
 *service_account*.json
 *client_secret*.json
 credentials.json
+cloud-auth.json
+cloud-auth.json.*.tmp
 google-services.json
 GoogleService-Info.plist
 .env
@@ -59,6 +62,13 @@ android/captures/
 # Claude Code のローカル設定
 .claude/settings.local.json
 .xcodebuildmcp/
+
+# Local captures and reference packs (keep out of main)
+docs/product-reference/
+docs/evidence/
+*.xcactivitylog
+*.trace
+*.memgraph
 
 # クローン先ごとの署名チーム・MCPの絶対パス
 ios/project.local.yml

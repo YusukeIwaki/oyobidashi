@@ -1,5 +1,20 @@
 import Foundation
 
+public enum CallPresentation {
+    /// CallKit has a caller name, but no separate subject/body field.
+    public static func callerName(agentName: String?, subject: String?, fallbackName: String = "お呼び出し") -> String {
+        let name = singleLine(agentName) ?? fallbackName
+        guard let subject = singleLine(subject) else { return name }
+        return "\(name)：\(subject)"
+    }
+
+    public static func singleLine(_ value: String?) -> String? {
+        let text = value?.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        return text?.isEmpty == false ? text : nil
+    }
+}
+
 public enum CallEndReason: String, Equatable, Sendable {
     case remoteEnded
     case answeredElsewhere
@@ -14,6 +29,8 @@ public enum CallEndReason: String, Equatable, Sendable {
 
 public enum CallReconcileAction: Equatable, Sendable {
     case reportRinging(call: CallSession, request: AgentRequest)
+    /// Restore local UI after interruption; never report a new OS incoming call.
+    case restoreActive(call: CallSession, request: AgentRequest)
     case endCall(callID: String, requestID: String, reason: CallEndReason)
     case none
 }
@@ -93,6 +110,10 @@ public final class CallReconciler: @unchecked Sendable {
                 guard isReported(callID: call.id) else { return .none }
                 markEnded(callID: call.id)
                 return .endCall(callID: call.id, requestID: request.id, reason: .answeredElsewhere)
+            }
+            if let owner = call.deviceID, let me = myDeviceID, !me.isEmpty, owner == me,
+               !isReported(callID: call.id), !hasEnded(callID: call.id) {
+                return .restoreActive(call: call, request: request)
             }
             return .none
         case .ringing:

@@ -10,12 +10,25 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("ペアリング") {
-                    LabeledContent("接続先", value: model.credentials?.endpoint.description ?? "-")
-                        .textSelection(.enabled)
+                Section {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("接続先")
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Text(model.credentials?.endpoint.description ?? "-")
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                            Spacer(minLength: 0)
+                            Button("変更") { showingPairing = true }
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel("接続先を変更")
+                        }
+                    }
                     LabeledContent("接続状態", value: connectionText)
-                    Button("ペアリングし直す") { showingPairing = true }
                     Button("ペアリングを解除", role: .destructive) { confirmingUnpair = true }
+                } header: {
+                    Text("ペアリング")
+                } footer: {
+                    Text("接続先の変更が完了するまでは、現在のペアリングを維持します。")
                 }
                 PermissionSettingsView()
                 Section {

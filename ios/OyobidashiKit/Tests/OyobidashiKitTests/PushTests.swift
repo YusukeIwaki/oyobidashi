@@ -74,6 +74,32 @@ final class PushTests: XCTestCase {
         XCTAssertTrue(hex.hasPrefix("0008101820"))
     }
 
+    func testRecipientScopeRequiresExactCurrentDeviceAndLegacyRemainsCompatible() {
+        let scoped = PushRecipient(userInfo: ["recipient_device_id": "dev_current"])
+        XCTAssertTrue(scoped.matches(currentDeviceID: "dev_current"))
+        XCTAssertFalse(scoped.matches(currentDeviceID: "dev_other"))
+        XCTAssertFalse(scoped.matches(currentDeviceID: nil))
+        XCTAssertFalse(scoped.matches(currentDeviceID: ""))
+        XCTAssertTrue(PushRecipient(userInfo: [:]).matches(currentDeviceID: nil))
+        XCTAssertTrue(PushRecipient(userInfo: [:]).matches(currentDeviceID: "legacy-device"))
+    }
+
+    func testMalformedRecipientScopeNeverFallsBackToLegacy() {
+        for value: Any in ["", "  ", 42, NSNull(), ["dev_current"], String(repeating: "x", count: 201)] {
+            let scope = PushRecipient(userInfo: ["recipient_device_id": value])
+            XCTAssertEqual(scope, .invalid)
+            XCTAssertFalse(scope.matches(currentDeviceID: "dev_current"))
+        }
+    }
+
+    func testAPNsAndVoIPPayloadsKeepRecipientForHandlerFiltering() throws {
+        let info: [AnyHashable: Any] = ["recipient_device_id": "dev_current", "request_id": "r", "call_id": "c"]
+        XCTAssertEqual(try XCTUnwrap(PushPayload(userInfo: info)).recipient, .device("dev_current"))
+        XCTAssertEqual(try XCTUnwrap(VoIPPayload(userInfo: info)).recipient, .device("dev_current"))
+        XCTAssertFalse(try XCTUnwrap(VoIPPayload(userInfo: info)).recipient.matches(currentDeviceID: "new-account-device"))
+        XCTAssertEqual(VoIPPayload(userInfo: ["request_id": "r", "call_id": "c"])?.recipient, .legacy)
+    }
+
     func testNotificationTextFollowsContract() {
         XCTAssertEqual(NotificationText.title(for: Fixtures.request("request_pending.json")), "claude-code からの質問")
         XCTAssertEqual(NotificationText.title(for: Fixtures.request("request_notification.json")), "codex からのお知らせ")

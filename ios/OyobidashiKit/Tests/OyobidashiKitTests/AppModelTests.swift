@@ -147,6 +147,65 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(credentialStore.current, paired)
     }
 
+    func testRePairingRegistersTheSameVoipTokenWithTheNewDevice() async throws {
+        for newEndpoint in [endpoint, try RelayEndpoint("https://cloud.example")] {
+            stub = StubTransport()
+            let model = makeModel()
+            stub.on("PUT", "/v1/devices/me", status: 200, body: Data(#"{"device":{"id":"dev_01"}}"#.utf8))
+            stub.on("POST", "/v1/pair", status: 201, body: Fixtures.data("pair_response.json"))
+            stub.on("DELETE", "/v1/devices/me", status: 204)
+            await model.setVoipToken("voip-test-token")
+            XCTAssertEqual(stub.requests("PUT", "/v1/devices/me").count, 1)
+
+            let success = await model.pair(PairingInfo(endpoint: newEndpoint, code: "test-code"))
+
+            XCTAssertTrue(success)
+            let puts = stub.requests("PUT", "/v1/devices/me")
+            XCTAssertEqual(puts.count, 2, "VoIP registration belongs to a device credential, not just a token string")
+            let last = try XCTUnwrap(puts.last)
+            XCTAssertEqual(last.url?.host, newEndpoint.baseURL.host)
+            XCTAssertEqual(last.value(forHTTPHeaderField: "Authorization"), "Bearer test-device-token")
+            assertJSONEqual(last.httpBody, Data(#"{"voip_token":"voip-test-token","push_environment":"development"}"#.utf8))
+        }
+    }
+
+    func testFailedRePairingKeepsTheExistingVoipRegistration() async {
+        let model = makeModel()
+        stub.on("PUT", "/v1/devices/me", status: 200, body: Data(#"{"device":{"id":"dev_01"}}"#.utf8))
+        stub.on("POST", "/v1/pair", status: 401, body: errorBody("pairing_code_invalid"))
+        await model.setVoipToken("voip-test-token")
+        let success = await model.pair(PairingInfo(endpoint: endpoint, code: "bad"))
+        XCTAssertFalse(success)
+        await model.setVoipToken("voip-test-token")
+        XCTAssertEqual(stub.requests("PUT", "/v1/devices/me").count, 1)
+        XCTAssertEqual(model.credentials, paired)
+    }
+
+    func testVoipRegistrationFailureAfterPairingRetriesWithTheNewCredential() async throws {
+        let model = makeModel()
+        var failNewRegistration = true
+        stub.on("PUT", "/v1/devices/me") { request in
+            if request.value(forHTTPHeaderField: "Authorization") == "Bearer test-device-token", failNewRegistration {
+                failNewRegistration = false
+                throw URLError(.networkConnectionLost)
+            }
+            return .init(200, Data(#"{"device":{"id":"dev_01"}}"#.utf8))
+        }
+        stub.on("POST", "/v1/pair", status: 201, body: Fixtures.data("pair_response.json"))
+        stub.on("DELETE", "/v1/devices/me", status: 204)
+        await model.setVoipToken("voip-test-token")
+        let success = await model.pair(PairingInfo(endpoint: try RelayEndpoint("https://cloud.example"), code: "test-code"))
+        XCTAssertTrue(success, "A VoIP registration outage must not discard successful pairing")
+        XCTAssertTrue(model.isPaired)
+        XCTAssertNil(model.signedOutReason)
+        XCTAssertEqual(stub.requests("PUT", "/v1/devices/me").count, 2)
+        await model.setVoipToken("voip-test-token")
+        let puts = stub.requests("PUT", "/v1/devices/me")
+        XCTAssertEqual(puts.count, 3)
+        XCTAssertEqual(puts.last?.value(forHTTPHeaderField: "Authorization"), "Bearer test-device-token")
+        XCTAssertEqual(puts.last?.url?.host, "cloud.example")
+    }
+
     // MARK: Unpair
 
     func testUnpairDeletesDeviceAndClearsEverything() async {
@@ -426,6 +485,7 @@ final class AppModelTests: XCTestCase {
         stub.on("POST", path, status: 400, body: errorBody("invalid_request", "choice_index out of range"))
         outcome = await model.submitAnswer(requestID: pending.id, body: body)
         XCTAssertEqual(outcome, .failed(.invalidRequest(message: "choice_index out of range")))
+        XCTAssertNil(model.lastAnswerSubmission)
 
         stub.on("POST", path, status: 200, body: requestEnvelope(answered))
         outcome = await model.submitAnswer(requestID: pending.id, body: body)
@@ -433,6 +493,15 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.store.pending, [])
         XCTAssertEqual(model.store.history, [answered])
         XCTAssertEqual(notifications.removed, [pending.id])
+        XCTAssertEqual(model.lastAnswerSubmission?.requestID, pending.id)
+        let submission = model.lastAnswerSubmission
+
+        // A live update / failed retry is not another successful submission.
+        stub.on("POST", path, status: 409, body: errorBody("already_resolved"))
+        _ = await model.submitAnswer(requestID: pending.id, body: body)
+        XCTAssertEqual(model.lastAnswerSubmission, submission)
+        await model.unpair()
+        XCTAssertNil(model.lastAnswerSubmission)
     }
 
     func testSubmitAnswerNotFoundRemovesRequest() async {

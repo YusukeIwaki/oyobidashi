@@ -6,7 +6,7 @@
 
 1. [Firebase Console](https://console.firebase.google.com/)を開き、ログインが必要なら本人へ引き継ぎます。選択アカウント・組織を確認します。
 2. ユーザー指定またはチェックポイントのプロジェクトを再利用します。指定がなく既存の用途も判断できない場合は、開発用 `oyobidashi-dev` などの新規プロジェクトを作ります。表示名とProject IDは別で、IDの衝突時は短い一意の接尾辞を付け、実際のIDを記録します。Google Analyticsや有料プランはこの用途では追加しません。既存Google Cloudプロジェクトを利用する場合はそこへFirebaseを追加します。
-3. Project settings → General → Your appsでAndroidアプリを探し、なければ登録します。package nameは **`io.github.yusukeiwaki.oyobidashi`**。表示名は任意、FCMのみならSHA証明書の登録は不要です。
+3. Project settings → General → Your appsでAndroidアプリを探し、なければ登録します。package nameは **`me.oyobidashi.android`**。表示名は任意、FCMのみならSHA証明書の登録は不要です。
 4. `google-services.json` をダウンロードします。ビルドへ直接置かず補助スクリプトへ渡します。このアプリはgoogle-services Gradleプラグインを使わず、4つの値をlocal.propertiesから読む実装です。コンソールの一般的なSDK追加例をそのままGradleへコピーしません。
 5. Project settings → Cloud Messagingで **Firebase Cloud Messaging API (HTTP v1)** を確認します。無効ならManage API in Google Cloudから有効にします。サービス名は `fcm.googleapis.com`。Legacy APIや古いサーバーキーは使いません。
 

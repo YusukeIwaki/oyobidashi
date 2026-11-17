@@ -2,7 +2,9 @@
 
 AIエージェントがMCPで人間に質問し、スマートフォンの選択ボタン・テキスト・音声通話で回答を受け取るアプリです。iOSはSwiftUI / CallKit / PushKit、AndroidはCompose / self-managed Telecom、Macの中継はBun / SQLiteです。
 
-アプリID: **`io.github.yusukeiwaki.oyobidashi`**。参考実装: [kainushi](https://github.com/YusukeIwaki/kainushi)。
+アプリID: iOS **`me.oyobidashi.ios`** / Android **`me.oyobidashi.android`**。参考実装: [kainushi](https://github.com/YusukeIwaki/kainushi)。
+
+複数人向けの[クラウド構成](cloud/README.md)も利用できます。RailwayのAPI／共有ワーカー、PostgreSQL、Redis、Firebase Authenticationで構成し、無言の間は会話ワーカーを使いません。以下はLAN版の説明です。クラウド版の音声判断には明示的に設定したLLM APIを使います。
 
 ## clone後のセットアップをAIに任せる
 

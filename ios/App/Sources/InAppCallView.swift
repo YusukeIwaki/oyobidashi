@@ -31,6 +31,13 @@ struct InAppCallView: View {
                     .foregroundStyle(.orange)
             }
 
+            if let subject = CallPresentation.singleLine(request.subject) {
+                Text(subject)
+                    .font(.headline)
+                    .foregroundStyle(PagerTheme.orange)
+                    .multilineTextAlignment(.center)
+            }
+
             Text(request.question)
                 .font(.title3.bold())
                 .foregroundStyle(PagerTheme.ink)
@@ -145,6 +152,22 @@ struct InAppCallView: View {
             }
         } else {
             VStack(spacing: 12) {
+                if voice.phase == .idle || voice.phase == .ended {
+                    Text("通話が中断されました。再開するか、終了して文字で返信できます")
+                        .font(.caption)
+                        .foregroundStyle(PagerTheme.inkSoft)
+                    Button {
+                        Task {
+                            let reply = request.call?.transcript.last(where: { $0.role == .assistant })?.text ?? request.question
+                            await callKit.startFallbackConversation(request: request, initialReply: reply)
+                        }
+                    } label: {
+                        Label("通話を再開", systemImage: "mic.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(PagerTheme.orange)
+                }
                 if voice.phase == .listening {
                     Button {
                         voice.submitCurrentTranscript()
@@ -157,6 +180,16 @@ struct InAppCallView: View {
                     .disabled(voice.liveTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 if case .failed = voice.phase {
+                    if voice.canRetryLastTurn {
+                        Button {
+                            voice.retryLastTurn()
+                        } label: {
+                            Label("前の発話を確認・再送信", systemImage: "arrow.clockwise")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(PagerTheme.orange)
+                    }
                     Button {
                         voice.listenAgain()
                     } label: {

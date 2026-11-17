@@ -41,6 +41,8 @@ export function buildFcmData(request: RequestObject): Record<string, string> {
   const { title, body } = notificationText(request);
   return {
     request_id: request.id,
+    ...(request.recipient_device_id ? {recipient_device_id:request.recipient_device_id} : {}),
+    ...(request.preview_url&&request.preview_token?{preview_url:request.preview_url,preview_token:request.preview_token}:{}),
     kind: request.kind,
     title:pushPreview(title,180),
     body:pushPreview(body,1400),

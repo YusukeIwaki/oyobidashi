@@ -70,7 +70,7 @@ public struct KeychainCredentialStore: CredentialStore {
     private let service: String
     private let account: String
 
-    public init(service: String = "io.github.yusukeiwaki.oyobidashi", account: String = "relay-credentials") {
+    public init(service: String = "me.oyobidashi.ios", account: String = "relay-credentials") {
         self.service = service
         self.account = account
     }

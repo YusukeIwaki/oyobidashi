@@ -57,19 +57,21 @@ afterAll(async () => {
 });
 
 async function scenario(label: string, cmd: string[], cwd: string, expectedAnswer: string) {
+  const subject = `${label} 呼び出しの用件`;
   const created = await agent("/v1/requests", {
     method: "POST",
-    body: JSON.stringify({ question: `${label} クライアントへの質問`, choices: ["はい", "いいえ"], agent: { name: "apps-e2e" } }),
+    body: JSON.stringify({ question: `${label} クライアントへの質問`, subject, choices: ["はい", "いいえ"], agent: { name: "apps-e2e" } }),
   });
   const id = created.request.id as string;
   const uri = await newPairingUri();
   const waiting = agent(`/v1/requests/${id}?wait=280`);
-  const result = await run(cmd, cwd, { OYOBIDASHI_LIVE_PAIRING_URI: uri, OYOBIDASHI_LIVE_REQUEST_ID: id });
+  const result = await run(cmd, cwd, { OYOBIDASHI_LIVE_PAIRING_URI: uri, OYOBIDASHI_LIVE_REQUEST_ID: id, OYOBIDASHI_LIVE_SUBJECT: subject });
   if (result.code !== 0) console.error(result.output.slice(-4000));
   expect(result.code).toBe(0);
   // スキップされていないこと (環境変数が届いて実際に走ったこと) は、エージェント側に回答が届くことで確認する
   const final = (await waiting).request;
   expect(final.status).toBe("answered");
+  expect(final.subject).toBe(subject);
   expect(final.answer.text).toBe(expectedAnswer);
   expect(final.answer.input_method).toBe("voice");
   // クライアントが最後にペアリング解除しているので、デバイスは残っていない

@@ -26,6 +26,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
         Task { @MainActor in
             let environment = AppEnvironment.shared
+            guard PushRecipient(userInfo: userInfo).matches(currentDeviceID: environment.model.credentials?.deviceID) else {
+                if let id = userInfo["request_id"] as? String { environment.notifications.removeDelivered(requestIDs: [id]) }
+                completionHandler(.noData)
+                return
+            }
             if let id = userInfo["request_id"] as? String {
                 #if DEBUG
                 print("[oyobidashi.push] background request=\(id) status=\(userInfo["status"] as? String ?? "unknown")")

@@ -45,9 +45,24 @@ final class Router {
     /// ディープリンクで受け取り、ユーザーの確認待ちのペアリング情報。
     var pendingPairing: PairingInfo?
     var deepLinkError: String?
+    var answerCompletion: AnswerSubmission?
 
     func open(requestID: String) {
+        answerCompletion = nil
         path = [requestID]
+    }
+
+    func showAnswerCompletion(_ submission: AnswerSubmission) {
+        guard path.last == submission.requestID else { return }
+        answerCompletion = submission
+    }
+
+    func finishAnswerCompletion(_ submission: AnswerSubmission) {
+        guard answerCompletion?.id == submission.id else { return }
+        answerCompletion = nil
+        // A newly opened notification must not be dismissed by an older send.
+        guard path.last == submission.requestID else { return }
+        path = []
     }
 
     func handleDeepLink(_ url: URL) {

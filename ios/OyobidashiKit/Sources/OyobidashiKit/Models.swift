@@ -455,16 +455,18 @@ public struct CallSession: Codable, Equatable, Sendable, Identifiable {
     public var startedAt: Date
     public var updatedAt: Date
     public var transcript: [CallTranscriptEntry]
+    /// Latest durable turn, also available after a WebSocket reconnect.
+    public var turn: CallTurn?
 
     enum CodingKeys: String, CodingKey {
-        case id, state, outcome, transcript
+        case id, state, outcome, transcript, turn
         case requestID = "request_id"
         case deviceID = "device_id"
         case startedAt = "started_at"
         case updatedAt = "updated_at"
     }
 
-    public init(id: String, requestID: String, state: CallState, outcome: CallOutcome? = nil, deviceID: String? = nil, startedAt: Date, updatedAt: Date? = nil, transcript: [CallTranscriptEntry] = []) {
+    public init(id: String, requestID: String, state: CallState, outcome: CallOutcome? = nil, deviceID: String? = nil, startedAt: Date, updatedAt: Date? = nil, transcript: [CallTranscriptEntry] = [], turn: CallTurn? = nil) {
         self.id = id
         self.requestID = requestID
         self.state = state
@@ -473,6 +475,7 @@ public struct CallSession: Codable, Equatable, Sendable, Identifiable {
         self.startedAt = startedAt
         self.updatedAt = updatedAt ?? startedAt
         self.transcript = transcript
+        self.turn = turn
     }
 
     public init(from decoder: Decoder) throws {
@@ -488,6 +491,7 @@ public struct CallSession: Codable, Equatable, Sendable, Identifiable {
         startedAt = startedOpt ?? updatedOpt ?? Date(timeIntervalSince1970: 0)
         updatedAt = (try? c.decodeIfPresent(Date.self, forKey: .updatedAt)) ?? startedAt
         transcript = (try? c.decodeLossyArray(CallTranscriptEntry.self, forKey: .transcript)) ?? []
+        turn = try c.decodeIfPresent(CallTurn.self, forKey: .turn)
     }
 
     public var isRinging: Bool { state == .ringing }
@@ -505,6 +509,7 @@ public struct AgentRequest: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var kind: RequestKind
     public var question: String
+    public var subject: String?
     public var context: String?
     public var choices: [String]?
     public var urgency: Urgency
@@ -520,7 +525,7 @@ public struct AgentRequest: Codable, Equatable, Identifiable, Sendable {
     public var expiresAt: Date?
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, question, context, choices, urgency, status, answer, agent, priority, call
+        case id, kind, question, subject, context, choices, urgency, status, answer, agent, priority, call
         case deliveryMode = "delivery_mode"
         case requestedMode = "requested_mode"
         case createdAt = "created_at"
@@ -532,11 +537,13 @@ public struct AgentRequest: Codable, Equatable, Identifiable, Sendable {
         id: String, kind: RequestKind = .question, question: String, context: String? = nil,
         choices: [String]? = nil, urgency: Urgency = .normal, status: RequestStatus = .pending,
         answer: Answer? = nil, agent: AgentInfo? = nil, createdAt: Date, updatedAt: Date? = nil, expiresAt: Date? = nil,
-        priority: RequestPriority = .normal, deliveryMode: DeliveryMode = .text, requestedMode: RequestedMode = .auto, call: CallSession? = nil
+        priority: RequestPriority = .normal, deliveryMode: DeliveryMode = .text, requestedMode: RequestedMode = .auto, call: CallSession? = nil,
+        subject: String? = nil
     ) {
         self.id = id
         self.kind = kind
         self.question = question
+        self.subject = subject
         self.context = context
         self.choices = choices
         self.urgency = urgency
@@ -557,6 +564,7 @@ public struct AgentRequest: Codable, Equatable, Identifiable, Sendable {
         id = try c.decode(String.self, forKey: .id)
         kind = try c.decodeIfPresent(RequestKind.self, forKey: .kind) ?? .question
         question = try c.decode(String.self, forKey: .question)
+        subject = try? c.decodeIfPresent(String.self, forKey: .subject)
         context = try? c.decodeIfPresent(String.self, forKey: .context)
         choices = try? c.decodeIfPresent([String].self, forKey: .choices)
         urgency = (try? c.decodeIfPresent(Urgency.self, forKey: .urgency)) ?? .normal
@@ -577,6 +585,7 @@ public struct AgentRequest: Codable, Equatable, Identifiable, Sendable {
         try c.encode(id, forKey: .id)
         try c.encode(kind, forKey: .kind)
         try c.encode(question, forKey: .question)
+        try c.encodeIfPresent(subject, forKey: .subject)
         try c.encodeIfPresent(context, forKey: .context)
         try c.encodeIfPresent(choices, forKey: .choices)
         try c.encode(urgency, forKey: .urgency)
@@ -594,6 +603,10 @@ public struct AgentRequest: Codable, Equatable, Identifiable, Sendable {
 
     /// 回答を送れるか (question かつ pending)。未知の kind / status は回答不可とする。
     public var isAnswerable: Bool { kind == .question && status == .pending }
+
+    public var incomingCallerName: String {
+        CallPresentation.callerName(agentName: agent?.name, subject: subject, fallbackName: "エージェント")
+    }
 
     /// 空でない選択肢。
     public var effectiveChoices: [String] { choices ?? [] }
@@ -857,18 +870,49 @@ public struct PresenceResponse: Decodable, Equatable, Sendable {
 
 // MARK: - Call API
 
+/// Turn states are closed: an unknown state must never be interpreted as success.
+public enum CallTurnState: String, Codable, Equatable, Sendable {
+    case queued, running, completed, failed, cancelled
+}
+
+public struct CallTurnFailure: Codable, Equatable, Sendable {
+    public var code: String
+    public var message: String
+    public init(code: String, message: String) { self.code = code; self.message = message }
+}
+
+public struct CallTurn: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var state: CallTurnState
+    public var reply: String?
+    public var resolved: Bool
+    public var error: CallTurnFailure?
+    public init(id: String, state: CallTurnState, reply: String? = nil, resolved: Bool = false, error: CallTurnFailure? = nil) {
+        self.id = id; self.state = state; self.reply = reply; self.resolved = resolved; self.error = error
+    }
+}
+
 public struct CallEventBody: Encodable, Equatable, Sendable {
     public var event: CallEventType
     public var text: String?
-    enum CodingKeys: String, CodingKey { case event, text }
-    public init(event: CallEventType, text: String? = nil) {
+    public var turnID: String?
+    public var asynchronous: Bool?
+    /// Local recovery hint; deliberately not encoded on the wire.
+    public var recoveringTurn: Bool
+    enum CodingKeys: String, CodingKey { case event, text; case turnID = "turn_id"; case asynchronous = "async" }
+    public init(event: CallEventType, text: String? = nil, turnID: String? = nil, asynchronous: Bool? = nil, recoveringTurn: Bool = false) {
         self.event = event
         self.text = text
+        self.turnID = turnID
+        self.asynchronous = asynchronous
+        self.recoveringTurn = recoveringTurn
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(event, forKey: .event)
         try c.encodeIfPresent(text, forKey: .text)
+        try c.encodeIfPresent(turnID, forKey: .turnID)
+        try c.encodeIfPresent(asynchronous, forKey: .asynchronous)
     }
 }
 
@@ -877,12 +921,14 @@ public struct CallActionResponse: Decodable, Equatable, Sendable {
     public var call: CallSession?
     public var reply: String?
     public var resolved: Bool?
-    enum CodingKeys: String, CodingKey { case request, call, reply, resolved }
-    public init(request: AgentRequest, call: CallSession? = nil, reply: String? = nil, resolved: Bool? = nil) {
+    public var turn: CallTurn?
+    enum CodingKeys: String, CodingKey { case request, call, reply, resolved, turn }
+    public init(request: AgentRequest, call: CallSession? = nil, reply: String? = nil, resolved: Bool? = nil, turn: CallTurn? = nil) {
         self.request = request
         self.call = call
         self.reply = reply
         self.resolved = resolved
+        self.turn = turn
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -890,6 +936,7 @@ public struct CallActionResponse: Decodable, Equatable, Sendable {
         call = try? c.decodeIfPresent(CallSession.self, forKey: .call)
         reply = try? c.decodeIfPresent(String.self, forKey: .reply)
         resolved = try? c.decodeIfPresent(Bool.self, forKey: .resolved)
+        turn = try c.decodeIfPresent(CallTurn.self, forKey: .turn)
     }
 }
 
@@ -898,6 +945,7 @@ struct CallEnvelope: Decodable {
     var call: CallSession?
     var reply: String?
     var resolved: Bool?
+    var turn: CallTurn?
 }
 
 struct RequestEnvelope: Decodable {
@@ -925,6 +973,13 @@ struct DeviceEnvelope: Decodable {
 public struct HealthResponse: Decodable, Equatable, Sendable {
     public var ok: Bool
     public var version: String?
+    public var capabilities: CloudCapabilities? = nil
+}
+
+public struct CloudCapabilities: Decodable, Equatable, Sendable {
+    public var asyncTurns: Bool?
+    public var turnIdempotency: Bool?
+    enum CodingKeys: String, CodingKey { case asyncTurns = "async_turns"; case turnIdempotency = "turn_idempotency" }
 }
 
 /// `{ "error": { "code": ..., "message": ... } }`

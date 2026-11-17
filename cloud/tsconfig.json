@@ -1,0 +1,13 @@
+{
+  "extends": "../relay/tsconfig.json",
+  "exclude": ["src/auth-browser.ts"],
+  "include": [
+    ".railway/railway.ts",
+    "src",
+    "test",
+    "../relay/src/types.ts",
+    "../relay/src/policy.ts",
+    "../relay/src/conversation.ts",
+    "../relay/src/push"
+  ]
+}

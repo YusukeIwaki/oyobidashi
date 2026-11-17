@@ -25,6 +25,7 @@ export interface RequestRow {
   id: string;
   kind: Kind;
   question: string;
+  subject: string | null;
   context: string | null;
   choices: string | null;
   urgency: Urgency;
@@ -59,6 +60,7 @@ export interface NewRequest {
   id: string;
   kind: Kind;
   question: string;
+  subject?: string | null;
   context: string | null;
   choices: string[] | null;
   urgency: Urgency;
@@ -87,6 +89,7 @@ export function toRequestObject(row: RequestRow): RequestObject {
     call: row.call_json ? JSON.parse(row.call_json) as Call : null,
     kind: row.kind,
     question: row.question,
+    ...(row.subject ? { subject: row.subject } : {}),
     context: row.context,
     choices: row.choices === null ? null : (JSON.parse(row.choices) as string[]),
     urgency: row.urgency,
@@ -171,7 +174,7 @@ export class Store {
     this.db.exec(SCHEMA);
     // Additive migrations also cover databases created by the reference app.
     const columns = new Set((this.db.query("PRAGMA table_info(requests)").all() as { name: string }[]).map(x => x.name));
-    for (const [name, definition] of Object.entries({ priority: "TEXT NOT NULL DEFAULT 'normal'", delivery_mode: "TEXT NOT NULL DEFAULT 'text'", requested_mode: "TEXT NOT NULL DEFAULT 'auto'", call_json: "TEXT" })) {
+    for (const [name, definition] of Object.entries({ priority: "TEXT NOT NULL DEFAULT 'normal'", delivery_mode: "TEXT NOT NULL DEFAULT 'text'", requested_mode: "TEXT NOT NULL DEFAULT 'auto'", call_json: "TEXT", subject: "TEXT" })) {
       if (!columns.has(name)) this.db.exec(`ALTER TABLE requests ADD COLUMN ${name} ${definition}`);
     }
     const deviceColumns = new Set((this.db.query("PRAGMA table_info(devices)").all() as { name: string }[]).map(x => x.name));
@@ -198,12 +201,13 @@ export class Store {
 
   insertRequest(r: NewRequest): RequestRow {
     const row = this.q(
-      `INSERT INTO requests (id, kind, question, context, choices, urgency, status, agent_name, agent_cwd, created_at, updated_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+      `INSERT INTO requests (id, kind, question, subject, context, choices, urgency, status, agent_name, agent_cwd, created_at, updated_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     ).get(
       r.id,
       r.kind,
       r.question,
+      r.subject ?? null,
       r.context,
       r.choices === null ? null : JSON.stringify(r.choices),
       r.urgency,

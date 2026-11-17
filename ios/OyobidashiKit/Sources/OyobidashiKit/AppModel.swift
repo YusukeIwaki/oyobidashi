@@ -13,6 +13,12 @@ public enum AnswerOutcome: Equatable, Sendable {
     case failed(RelayError)
 }
 
+/// Acknowledgement of this device's submission, separate from live updates by other devices.
+public struct AnswerSubmission: Equatable, Sendable, Identifiable {
+    public let id = UUID()
+    public let requestID: String
+}
+
 @MainActor
 public protocol AnswerSubmitting: AnyObject {
     func submitAnswer(requestID: String, body: AnswerBody) async -> AnswerOutcome
@@ -82,6 +88,7 @@ public final class AppModel: AnswerSubmitting {
 
     public private(set) var phase: Phase = .unpaired
     public private(set) var signedOutReason: SignedOutReason?
+    public private(set) var lastAnswerSubmission: AnswerSubmission?
     public private(set) var pairingState: PairingState = .idle
     public let store: RequestListStore
     public let drafts: DraftStore
@@ -103,6 +110,7 @@ public final class AppModel: AnswerSubmitting {
     @ObservationIgnored private let streamFactory: StreamFactory
     @ObservationIgnored private let notifications: (any NotificationManaging)?
     @ObservationIgnored private let configuration: AppModelConfiguration
+    @ObservationIgnored private let voiceTurnPolicy: VoiceTurnPolicy
 
     @ObservationIgnored private var stream: (any EventStreaming)?
     @ObservationIgnored private var streamGeneration = 0
@@ -117,11 +125,13 @@ public final class AppModel: AnswerSubmitting {
         configuration: AppModelConfiguration,
         notifications: (any NotificationManaging)? = nil,
         draftPersistence: any DraftPersistence = InMemoryDraftPersistence(),
-        streamFactory: StreamFactory? = nil
+        streamFactory: StreamFactory? = nil,
+        voiceTurnPolicy: VoiceTurnPolicy = VoiceTurnPolicy()
     ) {
         self.credentialStore = credentialStore
         self.transport = transport
         self.configuration = configuration
+        self.voiceTurnPolicy = voiceTurnPolicy
         self.notifications = notifications
         self.streamFactory = streamFactory ?? { endpoint, token in
             EventStreamClient(endpoint: endpoint, deviceToken: token)
@@ -145,7 +155,7 @@ public final class AppModel: AnswerSubmitting {
     public var isStreaming: Bool { stream != nil }
 
     private var client: RelayClient? {
-        credentials.map { RelayClient(endpoint: $0.endpoint, deviceToken: $0.deviceToken, transport: transport) }
+        credentials.map { RelayClient(endpoint: $0.endpoint, deviceToken: $0.deviceToken, transport: transport, voiceTurnPolicy: voiceTurnPolicy) }
     }
 
     // MARK: Pairing
@@ -173,10 +183,15 @@ public final class AppModel: AnswerSubmitting {
             let wasStreaming = stream != nil
             stopStream()
             store.reset()
+            if previous != new { drafts.removeAll() }
             phase = .paired(new)
+            lastAnswerSubmission = nil
             signedOutReason = nil
             pairingState = .idle
             registeredPushToken = tokenAtRequest
+            // /pair includes the alert token, but VoIP registration belongs to
+            // the old device credential and must be repeated after pairing.
+            registeredVoipToken = nil
             if let previous, previous.deviceToken != new.deviceToken {
                 try? await RelayClient(endpoint: previous.endpoint, deviceToken: previous.deviceToken, transport: transport).deleteDevice()
             }
@@ -206,10 +221,13 @@ public final class AppModel: AnswerSubmitting {
         stopStream()
         try? credentialStore.clear()
         phase = .unpaired
+        lastAnswerSubmission = nil
         signedOutReason = reason
         registeredPushToken = nil
         registeredVoipToken = nil
         callReconciler.reset()
+        sendingVoiceRequests.removeAll()
+        finishingVoiceRequests.removeAll()
         fallbackCallRequest = nil
         presenceAvailability = .available
         presenceUntil = nil
@@ -229,13 +247,15 @@ public final class AppModel: AnswerSubmitting {
     }
 
     private func registerPushTokenIfNeeded() async {
-        guard let client, let pushToken, pushToken != registeredPushToken else { return }
+        guard let client, let credentials, let pushToken, pushToken != registeredPushToken else { return }
         do {
             _ = try await client.updateDevice(
                 DeviceUpdateBody(pushToken: .set(pushToken), pushEnvironment: configuration.pushEnvironment)
             )
+            guard self.credentials == credentials else { return }
             registeredPushToken = pushToken
         } catch {
+            guard self.credentials == credentials else { return }
             let relayError = RelayError.wrap(error)
             noteFailure(relayError)
             if relayError == .unauthorized { signOut(reason: .unauthorized) }
@@ -251,9 +271,10 @@ public final class AppModel: AnswerSubmitting {
 
     public func clearVoipToken() async {
         voipToken = nil
-        guard let client, registeredVoipToken != nil else { registeredVoipToken = nil; return }
+        guard let client, let credentials, registeredVoipToken != nil else { registeredVoipToken = nil; return }
         do {
             _ = try await client.updateDevice(DeviceUpdateBody(voipToken: .clear, pushEnvironment: configuration.pushEnvironment))
+            guard self.credentials == credentials else { return }
             registeredVoipToken = nil
         } catch {
             // ベストエフォート
@@ -261,13 +282,15 @@ public final class AppModel: AnswerSubmitting {
     }
 
     private func registerVoipTokenIfNeeded() async {
-        guard let client, let voipToken, voipToken != registeredVoipToken else { return }
+        guard let client, let credentials, let voipToken, voipToken != registeredVoipToken else { return }
         do {
             _ = try await client.updateDevice(
                 DeviceUpdateBody(voipToken: .set(voipToken), pushEnvironment: configuration.pushEnvironment)
             )
+            guard self.credentials == credentials else { return }
             registeredVoipToken = voipToken
         } catch {
+            guard self.credentials == credentials else { return }
             let relayError = RelayError.wrap(error)
             noteFailure(relayError)
             if relayError == .unauthorized { signOut(reason: .unauthorized) }
@@ -341,6 +364,9 @@ public final class AppModel: AnswerSubmitting {
             return speaking
         }, myDeviceID: myDeviceID) {
             switch action {
+            case .restoreActive(let call, let req):
+                callReconciler.markReported(callID: call.id, requestID: req.id)
+                fallbackCallRequest = req
             case .reportRinging(let call, let req):
                 callReconciler.markReported(callID: call.id, requestID: req.id)
                 if let handler = incomingCallHandler {
@@ -359,6 +385,9 @@ public final class AppModel: AnswerSubmitting {
 
     private func applyCallAction(_ action: CallReconcileAction, request: AgentRequest) {
         switch action {
+        case .restoreActive(let call, let req):
+            callReconciler.markReported(callID: call.id, requestID: req.id)
+            fallbackCallRequest = req
         case .reportRinging(let call, let req):
             callReconciler.markReported(callID: call.id, requestID: req.id)
             if let handler = incomingCallHandler {
@@ -385,9 +414,10 @@ public final class AppModel: AnswerSubmitting {
     }
 
     public func performCallAction(requestID: String, body: CallEventBody) async -> CallActionOutcome {
-        guard let client else { return .unauthorized }
+        guard let client, let credentials else { return .unauthorized }
         do {
             let resp = try await client.callAction(requestID: requestID, body: body)
+            guard self.credentials == credentials else { return .failed(.cancelled) }
             if isPaired {
                 store.upsert(resp.request)
                 reconcileCalls(for: resp.request)
@@ -395,6 +425,7 @@ public final class AppModel: AnswerSubmitting {
             noteReachable()
             return .success(resp)
         } catch {
+            guard self.credentials == credentials else { return .failed(.cancelled) }
             let relayError = RelayError.wrap(error)
             noteFailure(relayError)
             switch relayError {
@@ -417,14 +448,30 @@ public final class AppModel: AnswerSubmitting {
         await performCallAction(requestID: requestID, body: CallEventBody(event: .hangup))
     }
     public func sendCallTurn(requestID: String, text: String) async -> CallActionOutcome {
+        guard !sendingVoiceRequests.contains(requestID) else { return .failed(.turnInProgress) }
+        guard isPaired else { return .unauthorized }
         sendingVoiceRequests.insert(requestID)
         defer { sendingVoiceRequests.remove(requestID) }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .failed(.invalidRequest(message: "empty turn")) }
-        let outcome = await performCallAction(requestID: requestID, body: CallEventBody(event: .turn, text: trimmed))
-        if case .success = outcome { return outcome }
+        let callID = store.request(id: requestID)?.call?.id
+        let previous = drafts.draft(for: requestID)
+        let recovering = previous?.text == trimmed && previous?.voiceCallID == callID && previous?.voiceTurnID != nil
+        let turnID = recovering ? previous!.voiceTurnID! : UUID().uuidString.lowercased()
+        drafts.set(AnswerDraft(text: trimmed, usedVoice: true, voiceTurnID: turnID, voiceCallID: callID), for: requestID)
+        let outcome = await performCallAction(requestID: requestID, body: CallEventBody(event: .turn, text: trimmed, turnID: turnID, recoveringTurn: recovering))
+        if case .success = outcome {
+            if drafts.draft(for: requestID)?.voiceTurnID == turnID { drafts.remove(requestID) }
+            return outcome
+        }
         if store.request(id: requestID)?.isAnswerable == true {
-            drafts.set(AnswerDraft(text: trimmed, usedVoice: true), for: requestID)
+            // A definitive failed/cancelled turn can be retried explicitly with a new ID.
+            // Uncertain delivery retains its ID for GET recovery rather than duplicate POST.
+            switch outcome {
+            case .failed(.turnFailed), .failed(.turnCancelled), .failed(.idempotencyConflict):
+                drafts.set(AnswerDraft(text: trimmed, usedVoice: true), for: requestID)
+            default: break
+            }
         }
         return outcome
     }
@@ -579,16 +626,17 @@ public final class AppModel: AnswerSubmitting {
 
     /// `GET /v1/requests` で一覧を再取得する。
     public func refresh() async {
-        guard let client else { return }
+        guard let client, let credentials else { return }
         store.loadState = .loading
         do {
             let list = try await client.listRequests(limit: configuration.listLimit)
-            guard isPaired else { return }
+            guard self.credentials == credentials else { return }
             store.merge(list)
             reconcileCalls(for: list)
             store.loadState = .idle
             noteReachable()
         } catch {
+            guard self.credentials == credentials else { return }
             let relayError = RelayError.wrap(error)
             noteFailure(relayError)
             if relayError == .unauthorized {
@@ -603,15 +651,16 @@ public final class AppModel: AnswerSubmitting {
     /// 1件だけ取得して反映する (Push 受信時・通知タップ時)。
     @discardableResult
     public func refreshRequest(id: String) async -> AgentRequest? {
-        guard let client else { return nil }
+        guard let client, let credentials else { return nil }
         do {
             let request = try await client.getRequest(id: id)
-            guard isPaired else { return nil }
+            guard self.credentials == credentials else { return nil }
             store.upsert(request)
             reconcileCalls(for: request)
             noteReachable()
             return store.request(id: id)
         } catch {
+            guard self.credentials == credentials else { return nil }
             let relayError = RelayError.wrap(error)
             noteFailure(relayError)
             switch relayError {
@@ -624,13 +673,16 @@ public final class AppModel: AnswerSubmitting {
     }
 
     public func submitAnswer(requestID: String, body: AnswerBody) async -> AnswerOutcome {
-        guard let client else { return .unauthorized }
+        guard let client, let credentials else { return .unauthorized }
         do {
             let request = try await client.answer(requestID: requestID, body: body)
-            if isPaired { store.upsert(request) }
+            guard self.credentials == credentials else { return .failed(.cancelled) }
+            store.upsert(request)
             noteReachable()
+            lastAnswerSubmission = AnswerSubmission(requestID: requestID)
             return .answered(request)
         } catch {
+            guard self.credentials == credentials else { return .failed(.cancelled) }
             let relayError = RelayError.wrap(error)
             noteFailure(relayError)
             switch relayError {
@@ -663,7 +715,15 @@ public final class AppModel: AnswerSubmitting {
             notifications?.presentReplyFailure(requestID: requestID, reason: .signedOut)
             return .unauthorized
         }
+        let expectedCredentials = credentials
         let outcome = await submitAnswer(requestID: requestID, body: AnswerBody(text: trimmed, choiceIndex: nil, inputMethod: .text))
+        guard credentials == expectedCredentials else {
+            if outcome == .unauthorized, credentials == nil, signedOutReason == .unauthorized {
+                notifications?.presentReplyFailure(requestID: requestID, reason: .signedOut)
+                return .unauthorized
+            }
+            return .failed(.cancelled)
+        }
         switch outcome {
         case .answered:
             break

@@ -33,7 +33,7 @@ describe("resolveConnection", () => {
     writeConfig({
       port: 9911,
       agent_token: "ka_from_file",
-      apns: { key_path: "/x.p8", key_id: "K", team_id: "T", bundle_id: "io.github.yusukeiwaki.oyobidashi" },
+      apns: { key_path: "/x.p8", key_id: "K", team_id: "T", bundle_id: "me.oyobidashi.ios" },
       some_future_field: true,
     });
     const c = resolveConnection({ OYOBIDASHI_HOME: home });

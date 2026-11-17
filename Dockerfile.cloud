@@ -1,0 +1,31 @@
+# Build from the repository root: docker build -f Dockerfile.cloud .
+# The build context is allowlisted by .dockerignore; credentials never enter it.
+FROM oven/bun:1.4.4 AS dependencies
+WORKDIR /app/cloud
+COPY cloud/package.json cloud/bun.lock ./
+RUN bun install --frozen-lockfile --production
+
+FROM oven/bun:1.4.4 AS browser
+WORKDIR /app/cloud
+COPY cloud/package.json cloud/bun.lock ./
+RUN bun install --frozen-lockfile
+WORKDIR /app
+COPY cloud/src ./cloud/src
+COPY relay/src ./relay/src
+RUN bun build cloud/src/auth-browser.ts --target browser --minify --outfile /app/auth.js
+
+FROM oven/bun:1.4.4 AS runtime
+WORKDIR /app
+ENV NODE_ENV=production \
+    CLOUD_ROLE=api \
+    PORT=8787
+COPY --from=dependencies /app/cloud/node_modules ./cloud/node_modules
+COPY cloud/package.json ./cloud/package.json
+COPY cloud/src ./cloud/src
+COPY relay/src ./relay/src
+COPY --from=browser /app/auth.js ./cloud/public/auth.js
+USER bun
+EXPOSE 8787
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD ["bun", "-e", "const r = await fetch('http://127.0.0.1:' + (process.env.PORT || '8787') + '/readyz', {signal: AbortSignal.timeout(4000)}); process.exit(r.ok ? 0 : 1)"]
+CMD ["bun", "run", "cloud/src/main.ts"]

@@ -19,12 +19,17 @@ fun firebaseValue(key: String): String {
     return "\"" + value.trim().replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 }
 
+fun releaseSigningValue(key: String): String? {
+    val name = "oyobidashi.release.$key"
+    return (localProps.getProperty(name) ?: providers.gradleProperty(name).orNull)?.trim()?.takeIf { it.isNotEmpty() }
+}
+
 android {
-    namespace = "io.github.yusukeiwaki.oyobidashi"
+    namespace = "me.oyobidashi.android"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "io.github.yusukeiwaki.oyobidashi"
+        applicationId = "me.oyobidashi.android"
         minSdk = 26
         targetSdk = 35
         versionCode = 2
@@ -36,9 +41,24 @@ android {
         buildConfigField("String", "FIREBASE_SENDER_ID", firebaseValue("senderId"))
     }
 
+    // リリース署名も local.properties (または -P / gradle.properties) から任意で受け取る。
+    // 未設定なら release は未署名のままビルドされる。鍵とパスワードはgitに載せない。
+    val releaseStoreFile = releaseSigningValue("storeFile")
+    val releaseSigning = if (releaseStoreFile != null) {
+        signingConfigs.create("release") {
+            storeFile = rootProject.file(releaseStoreFile)
+            storePassword = releaseSigningValue("storePassword")
+            keyAlias = releaseSigningValue("keyAlias")
+            keyPassword = releaseSigningValue("keyPassword")
+        }
+    } else {
+        null
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = releaseSigning
         }
     }
 

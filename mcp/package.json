@@ -9,7 +9,9 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "login:cloud": "bun run src/login.ts",
+    "pair:cloud": "bun run src/pair-cloud.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

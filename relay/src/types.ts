@@ -1,5 +1,6 @@
 export const VERSION = "0.2.0";
-export const APP_ID = "io.github.yusukeiwaki.oyobidashi";
+export const IOS_APP_ID = "me.oyobidashi.ios";
+export const ANDROID_APP_ID = "me.oyobidashi.android";
 
 export type Kind = "question" | "notification";
 export type Urgency = "normal" | "high";
@@ -52,6 +53,10 @@ export interface Presence {
 export interface FeedbackEvent { request_id: string; device_id: string | null; event: string; at: string }
 
 export interface RequestObject {
+  /** Cloud only: lets native clients reject stale pushes from a former pairing. */
+  recipient_device_id?: string;
+  preview_url?:string;
+  preview_token?:string;
   priority?: Priority;
   delivery_mode?: DeliveryMode;
   requested_mode?: RequestedMode;
@@ -59,6 +64,8 @@ export interface RequestObject {
   id: string;
   kind: Kind;
   question: string;
+  /** Short, optional call subject (at most 40 characters). */
+  subject?: string | null;
   context: string | null;
   choices: string[] | null;
   urgency: Urgency;

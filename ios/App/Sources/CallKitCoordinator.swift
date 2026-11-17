@@ -92,7 +92,7 @@ final class CallKitCoordinator: NSObject, IncomingCallHandling {
         activeRequestID = request.id
         let update = CXCallUpdate()
         update.remoteHandle = CXHandle(type: .generic, value: request.agent?.name ?? "エージェント")
-        update.localizedCallerName = request.agent?.name ?? "エージェント"
+        update.localizedCallerName = request.incomingCallerName
         update.hasVideo = false
         update.supportsDTMF = false
         update.supportsHolding = false
@@ -326,10 +326,29 @@ extension CallKitCoordinator: PKPushRegistryDelegate {
         print("[oyobidashi.callkit] voip_received")
         #endif
         let payload = VoIPPayload(userInfo: dict)
+        let expectedCredentials = model?.credentials
+        let accepted = expectedCredentials != nil && PushRecipient(userInfo: dict).matches(currentDeviceID: expectedCredentials?.deviceID)
+        if !accepted {
+            // PushKit requires reporting every VoIP push to CallKit. Report a fresh
+            // generic call and end it without associating it with the active user.
+            // Never reuse a stale payload's UUID, which could end a current call.
+            guard Self.isCallKitAvailable else { completion(); return }
+            let rejectedID = UUID()
+            let rejected = CXCallUpdate()
+            rejected.remoteHandle = CXHandle(type: .generic, value: "お呼び出し")
+            rejected.localizedCallerName = "お呼び出し"
+            provider.reportNewIncomingCall(with: rejectedID, update: rejected) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.provider.reportCall(with: rejectedID, endedAt: Date(), reason: .remoteEnded)
+                    completion()
+                }
+            }
+            return
+        }
         let callUUID = payload.flatMap { UUID(uuidString: $0.callID) } ?? UUID()
         let update = CXCallUpdate()
-        update.remoteHandle = CXHandle(type: .generic, value: "お呼び出し")
-        update.localizedCallerName = "お呼び出し"
+        update.remoteHandle = CXHandle(type: .generic, value: payload?.agentName ?? "お呼び出し")
+        update.localizedCallerName = payload?.incomingCallerName ?? "お呼び出し"
         update.hasVideo = false
         update.supportsHolding = false
         update.supportsGrouping = false
@@ -348,6 +367,10 @@ extension CallKitCoordinator: PKPushRegistryDelegate {
                 completion()
                 Task { @MainActor [weak self] in
                     guard let self else { return }
+                    guard self.model?.credentials == expectedCredentials else {
+                        self.provider.reportCall(with: callUUID, endedAt: Date(), reason: .remoteEnded)
+                        return
+                    }
                     guard let payload else {
                         self.provider.reportCall(with: callUUID, endedAt: Date(), reason: .failed)
                         return
@@ -362,6 +385,12 @@ extension CallKitCoordinator: PKPushRegistryDelegate {
                         }
                     } else {
                         self.lastReportError = nil
+                        if self.activeCallUUID == callUUID,
+                           let request = self.model?.store.request(id: payload.requestID), request.hasLiveCall {
+                            let refreshed = CXCallUpdate()
+                            refreshed.localizedCallerName = CallPresentation.callerName(agentName: request.agent?.name, subject: request.subject)
+                            self.provider.reportCall(with: callUUID, updated: refreshed)
+                        }
                     }
                 }
             }

@@ -6,10 +6,15 @@ public struct AnswerDraft: Codable, Equatable, Sendable {
     public var text: String
     /// 音声入力に由来するか (送信時の `input_method` 判定に使う)。
     public var usedVoice: Bool
+    /// Retain the ID before sending so an uncertain delivery can be recovered after restart.
+    public var voiceTurnID: String?
+    public var voiceCallID: String?
 
-    public init(text: String, usedVoice: Bool = false) {
+    public init(text: String, usedVoice: Bool = false, voiceTurnID: String? = nil, voiceCallID: String? = nil) {
         self.text = text
         self.usedVoice = usedVoice
+        self.voiceTurnID = voiceTurnID
+        self.voiceCallID = voiceCallID
     }
 }
 

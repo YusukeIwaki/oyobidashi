@@ -4,6 +4,7 @@ import SwiftUI
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(Router.self) private var router
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         @Bindable var router = router
@@ -23,6 +24,27 @@ struct RootView: View {
             }
         }
         .background(PagerTheme.cream.ignoresSafeArea())
+        .onChange(of: model.lastAnswerSubmission) { _, submission in
+            guard let submission else { return }
+            router.showAnswerCompletion(submission)
+            if scenePhase != .active { router.finishAnswerCompletion(submission) }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active, let submission = router.answerCompletion {
+                router.finishAnswerCompletion(submission)
+            }
+        }
+        .onChange(of: router.path) { _, path in
+            if let submission = router.answerCompletion, path.last != submission.requestID {
+                router.answerCompletion = nil
+            }
+        }
+        .onChange(of: model.isPaired) { _, paired in
+            if !paired {
+                router.answerCompletion = nil
+                router.path = []
+            }
+        }
         // 応答後の通話画面、またはCallKitが使えない場合の着信画面。
         .fullScreenCover(item: Binding(
             get: { model.fallbackCallRequest.map { FallbackItem(request: $0) } },

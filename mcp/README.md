@@ -4,7 +4,7 @@
 
 AI コーディングエージェント (Claude Code / Codex) が、お呼び出し (人間) のスマホを鳴らして質問し、テキスト・音声・選択肢による回答を受け取るための **stdio MCP サーバー** です。
 
-- 状態を持たない薄いクライアントで、`relay/` の Agent API (`docs/PROTOCOL.md` 4章) を叩くだけです。
+- ローカルの`relay/`またはクラウドの`cloud/`へ接続する薄いstdioブリッジです。クラウドの認証・ペアリングは[クラウドへの接続](#クラウドへの接続)を参照してください。
 - 通信仕様は [`docs/PROTOCOL.md`](../docs/PROTOCOL.md) が正です (ツール仕様は 9章)。
 
 ```
@@ -14,7 +14,7 @@ Claude Code / Codex ──stdio(MCP)──▶ mcp/ ──HTTP 127.0.0.1──▶
 ## 必要なもの
 
 - [Bun](https://bun.sh) 1.4 以降
-- 起動済みの relay (`cd /path/to/oyobidashi/relay && bun run serve`)。relay が初回起動時に `~/.oyobidashi/config.json` を生成し、MCP サーバーはそこからポートと agent token を読みます。
+- LAN版では起動済みのrelay (`cd /path/to/oyobidashi/relay && bun run serve`)。初回起動で`~/.oyobidashi/config.json`を生成し、MCPはポートとagent tokenを読みます。クラウド版ではローカルrelayの起動は不要です。
 - relay とペアリング済みのスマホ (未ペアリングでも質問は作成されますが、結果に `warning` が付きます)
 
 ## セットアップ
@@ -91,18 +91,19 @@ OYOBIDASHI_DEFAULT_WAIT_SECONDS = "100"
 
 | 変数 | 既定 | 説明 |
 |---|---|---|
-| `OYOBIDASHI_RELAY_URL` | (config.json の `port` から `http://127.0.0.1:<port>`) | relay のベース URL。ngrok などの公開 URL は指定しないこと (agent API はトンネル経由だと 403) |
+| `OYOBIDASHI_RELAY_URL` | (config.json の `port` から `http://127.0.0.1:<port>`) | LAN版relayのURL。LAN版agent APIはトンネル経由だと403。クラウド版では資格情報ファイルのURLを使うため指定不要 |
 | `OYOBIDASHI_AGENT_TOKEN` | (config.json の `agent_token`) | relay の agent token (`ka_…`) |
-| `OYOBIDASHI_HOME` | `~/.oyobidashi` | `config.json` を探すディレクトリ |
+| `OYOBIDASHI_HOME` | `~/.oyobidashi` | `config.json`・`cloud-auth.json`の保存先。ルートの補助スクリプト経由ではリポジトリの`.oyobidashi/` |
+| `OYOBIDASHI_CLOUD_AUTH_FILE` | `$OYOBIDASHI_HOME/cloud-auth.json` | クラウド資格情報ファイルを明示する場合のパス |
 | `OYOBIDASHI_DEFAULT_WAIT_SECONDS` | `50` | `wait_seconds` を省略したときの待ち時間 (0〜3600 に丸める。数値でなければ 50) |
 
-接続先は **ツール呼び出しのたびに** 解決します (環境変数 → `$OYOBIDASHI_HOME/config.json` の順、URL と token は個別に解決)。そのため MCP サーバーを先に起動し、あとから relay を起動しても、エージェントの再起動なしで動きます。普通に relay と同じマシン・同じユーザーで使うなら、環境変数は何も設定しなくて構いません。
+接続先はツール呼び出しのたびに解決します。`OYOBIDASHI_RELAY_URL`または`OYOBIDASHI_AGENT_TOKEN`の明示指定があればLAN用設定を優先し、URLとtokenを環境変数・`config.json`から個別に解決します。明示指定がなければクラウド資格情報ファイルを使い、それもなければ従来の`config.json`を使います。LAN版はMCPを先に起動し、あとからrelayを起動しても動きます。
 
 ## ツール
 
 | ツール | 引数 | 動作 |
 |---|---|---|
-| `ask_human` | `question` (必須, 1〜4000文字), `context?` (≤8000), `choices?` (≤8個, 各1〜200文字), `priority?` (`low`/`normal`/`high`/`urgent`, 既定 `normal`), `delivery_mode?` (`auto`/`actions`/`text`/`call`, 既定 `auto`), `urgency?` (`normal`/`high`, 旧来の別名), `expires_in_seconds?` (10〜86400), `wait_seconds?` | 質問を作ってスマホへの通知を試み、回答を待つ (配信は保証されない) |
+| `ask_human` | `question` (必須, 1〜4000文字), `subject?` (用件, ≤40文字, 着信画面に表示), `context?` (≤8000), `choices?` (≤8個, 各1〜200文字), `priority?` (`low`/`normal`/`high`/`urgent`, 既定 `normal`), `delivery_mode?` (`auto`/`actions`/`text`/`call`, 既定 `auto`), `urgency?` (`normal`/`high`, 旧来の別名), `expires_in_seconds?` (10〜86400), `wait_seconds?` | 質問を作ってスマホへの通知を試み、回答を待つ (配信は保証されない) |
 | `wait_for_answer` | `request_id` (必須), `wait_seconds?` | `pending` で返ってきた質問の回答を待ち続ける (通知は再送しない)。`pending` 時は `priority` / `delivery_mode` / `call` のテレメトリも返す |
 | `get_human_status` | (引数なし) | 人間の在席 (`available`/`busy`/`away`) と直近のフィードバック (回答・通話の declined/hangup など) を読む。エスカレーション前に呼ぶ |
 | `update_request` | `request_id` (必須), `priority?`, `delivery_mode?` (少なくとも一方は必須) | `pending` の質問の優先度・配信方法を変える。現在の実効モード・通話状態・フィードバックを返す |
@@ -171,10 +172,13 @@ MCP ツール `ask_human` (oyobidashi) でスマホに質問すること。
 |---|---|
 | `relay_unreachable` | relay が起動していない。`cd /path/to/oyobidashi/relay && bun run serve`。別ポート・別ホストなら `OYOBIDASHI_RELAY_URL` |
 | `config_missing` / `config_invalid` | `~/.oyobidashi/config.json` が無い・壊れている。relay を一度起動して生成させるか、`OYOBIDASHI_RELAY_URL` と `OYOBIDASHI_AGENT_TOKEN` を設定 |
-| `unauthorized` (401) | token 不一致。`OYOBIDASHI_AGENT_TOKEN` を設定しているなら config.json の `agent_token` と揃える (または外す)。`OYOBIDASHI_HOME` が relay と同じか確認 |
-| `forbidden` (403) | トンネル (ngrok) の URL やプロキシ経由で叩いている。`http://127.0.0.1:<port>` を直接指定する |
+| `unauthorized` (401) | LAN版ではtoken不一致。`OYOBIDASHI_AGENT_TOKEN` を設定しているなら config.json の `agent_token` と揃える (または外す)。`OYOBIDASHI_HOME` が relay と同じか確認 |
+| `forbidden` (403) | LAN版ではトンネル (ngrok) のURLやプロキシ経由で叩いている。`http://127.0.0.1:<port>` を直接指定する |
 | `not_found` (404) | `request_id` が違う、または relay の DB が初期化された |
-| `bad_response` | そのポートで relay 以外の何かが動いている、またはバージョン不一致 |
+| `bad_response` | そのポートでrelay以外の何かが動いている、またはバージョン不一致 |
+| `cloud_auth_required` / クラウドの401 | 保存したアカウントの認証を確認。新しい匿名UIDで置き換えず、登録済みの復旧方法と下記の`--recover`を使う |
+| `cloud_auth_invalid` | 資格情報の形式・権限600・クラウド接続先・Firebaseプロジェクトを確認。元ファイルを保存したまま再試行 |
+| `cloud_auth_unavailable` | 一時的な通信障害またはクラウド認証設定の不足。接続・管理者の設定を確認して再試行 |
 | いつも `pending` で返る | 仕様どおりです (既定 50 秒)。エージェントが `wait_for_answer` を呼び続けます |
 | `warning` (ペアリング済みデバイスなし) | relay の CLI でペアリング用 QR を表示し、アプリで読み取る |
 
@@ -206,3 +210,59 @@ test/*.test.ts       config / relay-client / tools / tools-errors / extensions (
 ## 人間の状態リソース
 
 `resources/list`で`human://status`を公開します。`resources/read`は在席・期限・最終接続・直近の拒否/切断などをJSONで返します。`resources/subscribe`を実装するクライアントには、変化時に`notifications/resources/updated`を送ります (5秒間隔で検知)。通知後に再読み込みしてください。購読解除・接続終了時に監視を停止します。購読しないクライアントは`get_human_status`を利用できます。
+
+## クラウドへの接続
+
+クラウド版でもMCPはローカルのstdioブリッジを使い、Firebase IDトークンでAPIへ接続します。公開環境のメインURLは[api.oyobidashi.me](https://api.oyobidashi.me)です。既存の[oyobidashi.up.railway.app](https://oyobidashi.up.railway.app)も引き続き利用できます。MCP登録は既存の`scripts/mcp.sh`のままで、ローカルrelayの起動は不要です。URLだけで接続する汎用リモートMCPのOAuth認可サーバーは提供しません。
+
+リポジトリルートから、通常のターミナルで実行します。
+
+```sh
+bun install --cwd mcp --frozen-lockfile
+./scripts/login-cloud.sh --url https://api.oyobidashi.me
+./scripts/pair-cloud.sh
+```
+
+初回はメールアドレスやパスワードを求めず、匿名のFirebaseアカウントを作ります。同じコマンドを再実行すると保存済みアカウントを再利用し、UIDとペアリングを維持します。Firebaseの公開設定はAPIから取得するため、通常は`--api-key`不要です。
+
+既存の資格情報に旧URLが保存されている場合は、ログイン・`--link`・`--recover`にも保存済みの旧URLを指定します。ログイン補助は別の接続先による資格情報の上書きを拒否します。旧URLも引き続き利用できるため、ドメイン追加に伴う再ペアリングは不要です。
+
+### 復旧用アカウントの登録
+
+匿名アカウントを使い始めたら、Googleなどを復旧用に登録してください。
+
+```sh
+./scripts/login-cloud.sh --url https://api.oyobidashi.me --link google
+```
+
+ブラウザが開き、現在のUIDへGoogleアカウントをリンクします。UIDを変更せず、質問・スマホのペアリングを保ちます。指定したGoogleアカウントが別のUIDへ登録済みならリンクを拒否します。別アカウントへ自動で切り替えたり、ペアリングを統合したりしません。
+
+現在の公開環境ではGoogle・Apple・GitHubをFirebaseで設定済みです。旧URLでは3つとも既存UIDを保つリンクと、保存済み資格情報を使わない独立した再ログインでもペアリングを復旧できることを実ブラウザで確認しています。新しいメインURLではGoogleの再ログイン・同じUIDと端末一覧の取得を確認し、Apple・GitHubのコールバック設定は維持しています。`--link apple`・`--link github`でも同じUIDへ追加できます。自分の環境で利用する場合は、[各プロバイダーの設定](../cloud/README.md#applegithubのプロバイダー設定)を先に完了してください。
+
+### 登録済みアカウントへの復旧
+
+PCの変更や資格情報の喪失時には、以前リンクしたアカウントで復旧します。
+
+```sh
+./scripts/login-cloud.sh --url https://api.oyobidashi.me --recover google
+```
+
+復旧先UIDの質問・ペアリングへ戻ります。別UIDの資格情報が既に保存されていれば、上書き前に`cloud-auth.json.before-recovery-<時刻>-<UUID>.json`を権限600で保存します。元のUIDのデータを復旧先へ移動・統合する処理ではありません。ファイルがない場合や同UIDの場合は、この別UID用バックアップを作りません。
+
+**復旧方法を登録せずに匿名アカウントの資格情報を失うと、同じUIDへは戻れません。** 新しく匿名で開始しても以前の質問・ペアリングは復元されません。Firebase側の匿名アカウント自動クリーンアップも有効にしないでください。
+
+`--provider google`はブラウザでの明示的なログイン、`--provider password`は従来のメール・パスワード入力です。既存ファイルと異なるUIDへの切り替えは`--recover`で明示する必要があります。`--provider`・`--link`・`--recover`は同時指定できません。
+
+### 資格情報と通信
+
+ルートの補助スクリプトは`scripts/mcp.sh`と同じ`OYOBIDASHI_HOME`（既定はリポジトリの`.oyobidashi/`）を使います。`bun run --cwd mcp login:cloud`を直接使う場合の既定は`~/.oyobidashi/`です。MCP・ログイン・ペアリングで保存先を揃えてください。`--auth-file PATH`または`OYOBIDASHI_CLOUD_AUTH_FILE`で明示できます。
+
+資格情報は`cloud-auth.json`へ原子的に保存し、権限を600にします。復旧時のバックアップも秘密情報です。ファイルをチャット・git・共有ドライブへ載せないでください。既存の`config.json`や他プロバイダーの認証は変更しません。破損したファイルや別のクラウド用ファイルは上書きせず、保全したうえで別の`--auth-file`へ復旧してください。
+
+`OYOBIDASHI_RELAY_URL`または`OYOBIDASHI_AGENT_TOKEN`が明示されているとLAN用設定を優先します。クラウドを使うMCP設定からこれらの上書きを外し、アカウントを切り替えたらMCPを再接続してください。IDトークンは期限前に更新し、同時リクエストの更新を共有します。更新は10秒で打ち切り、401時は1回だけ強制更新します。失敗時も既存資格情報を保持します。
+
+ブラウザ認証は対話デスクトップ端末から開始します。現在のUIDとのリンク、使い捨てstate、ループバックのHost・Originを検証し、トークンはURLクエリへ入れません。Google等の秘密鍵やサービスアカウントJSONをCLIへ渡す必要はありません。Firebase Web APIキーは公開設定値ですが、IDトークン・refresh token・認証ハンドオフURLは秘密として扱います。
+
+質問作成では`Idempotency-Key`を付けます。クラウドで応答が失われた場合だけ、同じキーで1回再試行します。LAN relayへの作成や、任意の5xx応答を受けた更新は自動で繰り返しません。MCPの結果・エラーへトークンやペアリングコードを含めず、ペアリングURLは`pair-cloud.sh`を実行した対話ターミナルにだけ表示します。
+
+クラウド運用のFirebase設定・署名鍵・音声APIの制限は[cloud/README.md](../cloud/README.md)を参照してください。現在のMeta標準モデル設定は`MODEL_API_KEY`・`META_MODEL=muse-spark-1.2`です。米国西部のRailway workerと実iPhoneを使い、通知からの返信、音声の確認質問と再回答、お礼の読み上げと自動終話、MCPへの解決済み回答の返却まで確認しました。[検証記録](../docs/VALIDATION.md)

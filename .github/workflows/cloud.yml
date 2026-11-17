@@ -1,0 +1,89 @@
+name: Cloud checks
+
+on:
+  pull_request:
+    paths:
+      - cloud/**
+      - relay/src/**
+      - mcp/**
+      - docs/fixtures/**
+      - Dockerfile.cloud
+      - .dockerignore
+      - compose.cloud.yml
+      - scripts/test-cloud.sh
+      - .github/workflows/cloud.yml
+  push:
+    paths:
+      - cloud/**
+      - relay/src/**
+      - mcp/**
+      - docs/fixtures/**
+      - Dockerfile.cloud
+      - .dockerignore
+      - compose.cloud.yml
+      - scripts/test-cloud.sh
+      - .github/workflows/cloud.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cloud:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: oyobidashi
+          POSTGRES_PASSWORD: local-ci-test-only
+          POSTGRES_DB: oyobidashi_test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U oyobidashi -d oyobidashi_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379/tcp
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      CLOUD_TEST_DATABASE_URL: postgres://oyobidashi:local-ci-test-only@127.0.0.1:${{ job.services.postgres.ports[5432] }}/oyobidashi_test
+      CLOUD_TEST_REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports[6379] }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Install frozen dependencies
+        run: |
+          bun install --cwd cloud --frozen-lockfile
+          bun install --cwd mcp --frozen-lockfile
+      - name: Typecheck
+        run: |
+          bun run --cwd cloud typecheck
+          bun run --cwd mcp typecheck
+      - name: Unit and infrastructure recovery tests
+        run: |
+          bun test --cwd cloud
+          bun test --cwd mcp --timeout 15000
+      - name: Validate local stack configuration
+        env:
+          FIREBASE_PROJECT_ID: ci-config-validation
+        run: |
+          bash -n scripts/test-cloud.sh
+          docker compose -f compose.cloud.yml config --quiet
+      - name: Build cloud runtime image
+        run: docker build --file Dockerfile.cloud --tag oyobidashi-cloud:ci .

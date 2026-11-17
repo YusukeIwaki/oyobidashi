@@ -27,6 +27,7 @@ import {
   type ToolResult,
 } from "./results.ts";
 import { waitForResolution } from "./wait.ts";
+import { CloudTokenProvider } from "./cloud-auth.ts";
 
 export const SERVER_NAME = "oyobidashi";
 export const SERVER_VERSION = "0.1.0";
@@ -159,12 +160,23 @@ export function createServer(deps: ServerDeps = {}): McpServer {
     },
   );
 
+  const cloudProviders = new Map<string, CloudTokenProvider>();
+
   /** Resolved on every call so that a relay (and its config.json) started later is picked up. */
   function connect(): RelayClient {
     const connection = resolveConnection(env, deps.homedir);
+    let cloud: CloudTokenProvider | undefined;
+    if (connection.cloudAuthFile) {
+      cloud = cloudProviders.get(connection.cloudAuthFile);
+      if (!cloud) {
+        cloud = new CloudTokenProvider(connection.cloudAuthFile, {clock, ...(deps.fetch ? {fetch:deps.fetch} : {})});
+        cloudProviders.set(connection.cloudAuthFile, cloud);
+      }
+    }
     return new RelayClient({
-      baseUrl: connection.baseUrl,
+      baseUrl: cloud?.baseUrl ?? connection.baseUrl,
       agentToken: connection.agentToken,
+      ...(cloud ? {tokenProvider:(force: boolean, signal?: AbortSignal) => cloud.getToken(force, signal)} : {}),
       ...(deps.fetch ? { fetch: deps.fetch } : {}),
       clock,
       ...(deps.requestTimeoutMs !== undefined ? { requestTimeoutMs: deps.requestTimeoutMs } : {}),
@@ -296,6 +308,11 @@ export function createServer(deps: ServerDeps = {}): McpServer {
           .string()
           .max(4000)
           .describe("The question, self-contained and concise (1-4000 characters). It is the body of the phone notification, so lead with the decision you need."),
+        subject: z
+          .string()
+          .refine((value) => Array.from(value).length <= 40, "subject must be at most 40 characters")
+          .optional()
+          .describe("Optional short subject for the call (max 40 characters, one line), e.g. 'Production deployment approval'. Include it for calls: iPhone appends it to the caller name and Android shows it above the question. Visible on the lock screen; keep sensitive details in the question/context."),
         context: z
           .string()
           .max(8000)
@@ -336,6 +353,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
         return inputErrorResult("\"question\" must not be empty. Pass the question you want to ask the human (1-4000 characters).");
       }
       const context = args.context?.trim() || undefined;
+      const subject = args.subject?.trim().replace(/\s+/gu, " ") || undefined;
       const choices = args.choices?.map((c) => c.trim());
       if (choices?.some((c) => c === "")) {
         return inputErrorResult("\"choices\" must not contain blank entries. Each choice needs 1-200 characters.");
@@ -355,6 +373,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
           {
             kind: "question",
             question,
+            subject,
             context,
             choices,
             urgency,

@@ -5,6 +5,8 @@
 
 > v0.2では優先度・在席・通話・通知取り消し・任意のHTTPSプロキシを追加しています。以下の旧来の挙動と相違する部分は [EXTENSIONS.md](EXTENSIONS.md) を優先してください。
 
+> クラウド版のユーザー認証・非同期音声・障害復旧契約は [CLOUD_PROTOCOL.md](CLOUD_PROTOCOL.md) を参照してください。LAN版の認証・接続制限は維持します。
+
 ## 1. 構成
 
 ```
@@ -27,7 +29,7 @@ ios/ , android/ … アプリ。通知を鳴らし、テキスト/音声/選択�
 | `ios/` | Swift / SwiftUI, iOS 17+ | アプリ + `OyobidashiKit` (SwiftPM, ロジック) |
 | `android/` | Kotlin / Jetpack Compose, minSdk 26 | アプリ |
 
-アプリID: `io.github.yusukeiwaki.oyobidashi` (iOS bundle id / Android applicationId 共通)
+アプリID: iOS Bundle ID `me.oyobidashi.ios` / Android applicationId・Kotlin package `me.oyobidashi.android`
 
 ## 2. 共通ルール
 
@@ -61,6 +63,7 @@ ios/ , android/ … アプリ。通知を鳴らし、テキスト/音声/選択�
   "id": "req_01JCXYZ",
   "kind": "question",
   "question": "本番DBのマイグレーションを実行してよいですか?",
+  "subject": "本番DBの変更承認",
   "context": "users テーブルに列を追加します",
   "choices": ["はい", "いいえ"],
   "urgency": "normal",
@@ -74,6 +77,7 @@ ios/ , android/ … アプリ。通知を鳴らし、テキスト/音声/選択�
 ```
 
 - `kind`: `question` | `notification` (一方向。作成時点で `status: "notified"`、回答不可)
+- `subject`: 任意の短い用件 (40文字以内)。前後の空白を除去し、改行・連続する空白は半角スペースにまとめる。欠落・null・空白だけの場合は用件なし。iPhoneの着信では発信者名に添え、Androidの着信画面では質問本文の上に表示する。
 - `urgency`: `normal` | `high`
 - `status`: `pending` → `answered` | `cancelled` | `expired` (終端)。`notified` は notification 専用の終端。
 - `answer` (answered のときのみ非null):
@@ -92,7 +96,7 @@ agent token 必須。**接続元がループバック (127.0.0.0/8, ::1) でな�
 
 ### POST /v1/requests → 201
 ```json
-{ "kind": "question", "question": "...", "context": null, "choices": null, "urgency": "normal",
+{ "kind": "question", "question": "...", "subject": "変更の承認", "context": null, "choices": null, "urgency": "normal",
   "expires_in_seconds": 3600, "agent": { "name": "claude-code", "cwd": "/x" } }
 ```
 `kind` 省略時は `question`。レスポンス:
@@ -203,7 +207,7 @@ oyobidashi://pair?url=<URLエンコードしたベースURL>&code=<pairing code>
 ```json
 { "port": 8787, "agent_token": "ka_...",
   "apns": { "key_path": "/path/AuthKey_XXXX.p8", "key_id": "XXXX", "team_id": "YYYY",
-            "bundle_id": "io.github.yusukeiwaki.oyobidashi" },
+            "bundle_id": "me.oyobidashi.ios" },
   "fcm": { "service_account_path": "/path/service-account.json" } }
 ```
 `apns` / `fcm` は任意。DB は `$OYOBIDASHI_HOME/oyobidashi.db`。relay は既定で `0.0.0.0:8787` にバインド (`--host` で変更可)。LAN内のスマホから届く必要があるため。アクセス制御は上記の接続元アドレス検査とトークンで行う。
@@ -214,7 +218,7 @@ mcp の接続先解決順: 環境変数 `OYOBIDASHI_RELAY_URL` / `OYOBIDASHI_AGE
 
 | ツール | 引数 | 動作 |
 |---|---|---|
-| `ask_human` | `question` (必須), `context?`, `choices?`, `urgency?`, `wait_seconds?` | request を作り、回答を待つ |
+| `ask_human` | `question` (必須), `subject?` (用件, ≤40文字), `context?`, `choices?`, `urgency?`, `wait_seconds?` | request を作り、回答を待つ |
 | `wait_for_answer` | `request_id` (必須), `wait_seconds?` | 既存 request の回答を待ち続ける |
 | `notify_human` | `message` (必須) | 一方向通知 (`kind: notification`) |
 | `cancel_request` | `request_id` (必須) | 質問を取り消す |

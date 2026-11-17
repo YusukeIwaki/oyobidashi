@@ -1,5 +1,26 @@
 import Foundation
 
+/// Missing scope preserves LAN compatibility; malformed scope fails closed.
+public enum PushRecipient: Equatable, Sendable {
+    case legacy
+    case device(String)
+    case invalid
+
+    public init(userInfo: [AnyHashable: Any]) {
+        guard let raw = userInfo["recipient_device_id"] else { self = .legacy; return }
+        guard let id = raw as? String, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, id.count <= 200 else { self = .invalid; return }
+        self = .device(id)
+    }
+
+    public func matches(currentDeviceID: String?) -> Bool {
+        switch self {
+        case .legacy: return true
+        case .device(let expected): return currentDeviceID == expected
+        case .invalid: return false
+        }
+    }
+}
+
 public enum PushCategory {
     public static let question = "OYOBIDASHI_QUESTION"
     public static let notification = "OYOBIDASHI_NOTIFICATION"
@@ -21,10 +42,16 @@ public struct VoIPPayload: Equatable, Sendable {
     public var requestID: String
     public var callID: String
     public var question: String?
-    public init(requestID: String, callID: String, question: String? = nil) {
+    public var subject: String?
+    public var agentName: String?
+    public var recipient: PushRecipient
+    public init(requestID: String, callID: String, question: String? = nil, recipient: PushRecipient = .legacy, subject: String? = nil, agentName: String? = nil) {
         self.requestID = requestID
         self.callID = callID
         self.question = question
+        self.subject = subject
+        self.agentName = agentName
+        self.recipient = recipient
     }
     public init?(userInfo: [AnyHashable: Any]) {
         guard let rid = userInfo["request_id"] as? String, !rid.isEmpty,
@@ -32,6 +59,13 @@ public struct VoIPPayload: Equatable, Sendable {
         requestID = rid
         callID = cid
         question = userInfo["question"] as? String
+        subject = userInfo["subject"] as? String
+        agentName = userInfo["agent_name"] as? String
+        recipient = PushRecipient(userInfo: userInfo)
+    }
+
+    public var incomingCallerName: String {
+        CallPresentation.callerName(agentName: agentName, subject: subject)
     }
 }
 
@@ -44,8 +78,9 @@ public struct PushPayload: Equatable, Sendable {
     public var category: String?
     public var callID: String?
     public var question: String?
+    public var recipient: PushRecipient
 
-    public init(requestID: String, kind: RequestKind, title: String? = nil, body: String? = nil, category: String? = nil, callID: String? = nil, question: String? = nil) {
+    public init(requestID: String, kind: RequestKind, title: String? = nil, body: String? = nil, category: String? = nil, callID: String? = nil, question: String? = nil, recipient: PushRecipient = .legacy) {
         self.requestID = requestID
         self.kind = kind
         self.title = title
@@ -53,6 +88,7 @@ public struct PushPayload: Equatable, Sendable {
         self.category = category
         self.callID = callID
         self.question = question
+        self.recipient = recipient
     }
 
     /// `request_id` (空でない文字列) が無ければ nil。それ以外の欠落・型不一致は許容する。
@@ -83,6 +119,7 @@ public struct PushPayload: Equatable, Sendable {
         }
         callID = userInfo["call_id"] as? String
         question = userInfo["question"] as? String
+        recipient = PushRecipient(userInfo: userInfo)
     }
 
     /// ローカル通知に載せる userInfo (APNs と同じキー)。

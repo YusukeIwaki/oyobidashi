@@ -78,7 +78,7 @@ bun run status             # 設定・起動状態・Push 設定・デバイス�
     "key_path": "/Users/me/keys/AuthKey_XXXXXXXXXX.p8",
     "key_id": "XXXXXXXXXX",
     "team_id": "YYYYYYYYYY",
-    "bundle_id": "io.github.yusukeiwaki.oyobidashi"
+    "bundle_id": "me.oyobidashi.ios"
   },
   "fcm": {
     "service_account_path": "/Users/me/keys/service-account.json"
@@ -90,7 +90,7 @@ bun run status             # 設定・起動状態・Push 設定・デバイス�
 
 1. Apple Developer の Certificates, Identifiers & Profiles → Keys で、Apple Push Notifications service (APNs) を有効にしたキーを作り、`.p8` をダウンロードします。
 2. `key_path` に `.p8` のパス、`key_id` にキー ID、`team_id` に Team ID を書きます。
-3. `bundle_id` はアプリの Bundle ID です (省略時 `io.github.yusukeiwaki.oyobidashi`)。
+3. `bundle_id` はアプリの Bundle ID です (省略時 `me.oyobidashi.ios`)。
 
 Xcode から実機に入れた開発ビルドは sandbox、TestFlight / App Store ビルドは production の APNs を使います。
 どちらに送るかはアプリがペアリング時に `push_environment` で申告するので、relay 側の設定は共通です。

@@ -161,9 +161,10 @@ describe("oyobidashi e2e (relay + mcp + phone)", () => {
   });
 
   test("質問 → スマホが音声で回答 → エージェントに回答が返る", async () => {
-    const pending = call("ask_human", { question: "次は何をしますか?", context: "テスト中", wait_seconds: 20 });
+    const pending = call("ask_human", { question: "次は何をしますか?", subject: "次の作業の確認", context: "テスト中", wait_seconds: 20 });
     const created = await phone.waitEvent((e) => e.type === "request.created");
     expect(created.request.question).toBe("次は何をしますか?");
+    expect(created.request.subject).toBe("次の作業の確認");
     expect(created.request.context).toBe("テスト中");
     expect(created.request.status).toBe("pending");
     expect(created.request.agent.name).toBe("e2e-agent");
@@ -178,6 +179,7 @@ describe("oyobidashi e2e (relay + mcp + phone)", () => {
     expect(r.text).toContain("ログイン画面を直して");
     const upd = await phone.waitEvent((e) => e.type === "request.updated" && e.request.id === created.request.id);
     expect(upd.request.status).toBe("answered");
+    expect(upd.request.subject).toBe("次の作業の確認");
     expect(upd.request.answer.device_id).toBe(phone.deviceId);
     // 二重回答は 409
     const again = await phone.answer(created.request.id, { text: "やっぱり別の", input_method: "text" });

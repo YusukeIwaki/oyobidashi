@@ -374,6 +374,7 @@ export function createApp(opts: AppOptions): App {
     const body = await readJsonObject(req);
     const kind: Kind = optEnum(body, "kind", KINDS) ?? "question";
     const question = reqString(body, "question", 4000);
+    const subject = optString(body, "subject", 40)?.trim().replace(/\s+/gu, " ") || null;
     const context = optString(body, "context", 8000);
     const urgency: Urgency = optEnum(body, "urgency", URGENCIES) ?? "normal";
     const priority: Priority = optEnum(body, "priority", priorities) ?? (urgency === "high" ? "high" : "normal");
@@ -407,6 +408,7 @@ export function createApp(opts: AppOptions): App {
       id: newRequestId(now),
       kind,
       question,
+      subject,
       context,
       choices,
       urgency,

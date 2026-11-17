@@ -46,6 +46,8 @@ export function buildApnsPayload(request: RequestObject): Record<string, unknown
       "thread-id": "oyobidashi",
     },
     request_id: request.id,
+    ...(request.recipient_device_id ? {recipient_device_id:request.recipient_device_id} : {}),
+    ...(request.preview_url&&request.preview_token?{preview_url:request.preview_url,preview_token:request.preview_token}:{}),
     kind: request.kind,
     ...(request.priority ? {priority:request.priority,delivery_mode:request.delivery_mode,status:request.status,choices:actionChoices} : {}),
   };
@@ -96,8 +98,17 @@ export function createApnsProvider(opts: ApnsOptions): ApnsProvider {
     const jwt = await providerToken();
     const voip = target.type === "voip";
     const update = target.type === "update";
-    const payload = voip ? { aps: { "content-available": 1 }, request_id: request.id, call_id: request.call?.id, question: pushPreview(request.question,1400) }
-      : update ? { aps: { "content-available": 1 }, request_id: request.id, kind:request.kind,status:request.status }
+    const recipient={...(request.recipient_device_id?{recipient_device_id:request.recipient_device_id}:{}),...(request.preview_url&&request.preview_token?{preview_url:request.preview_url,preview_token:request.preview_token}:{})};
+    const payload = voip ? {
+      aps: { "content-available": 1 },
+      request_id: request.id,
+      call_id: request.call?.id,
+      question: pushPreview(request.question,1400),
+      ...(request.subject ? { subject: request.subject } : {}),
+      ...(request.agent?.name ? { agent_name: pushPreview(request.agent.name,180) } : {}),
+      ...recipient,
+    }
+      : update ? { aps: { "content-available": 1 }, request_id: request.id, kind:request.kind,status:request.status,...recipient }
       : buildApnsPayload(request);
     return opts.transport({
       origin: target.environment === "development" ? APNS_SANDBOX_ORIGIN : APNS_PRODUCTION_ORIGIN,

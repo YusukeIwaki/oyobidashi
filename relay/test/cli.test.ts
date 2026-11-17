@@ -85,7 +85,7 @@ describe("config", () => {
     const raw = {
       port: 9000,
       agent_token: "ka_existing",
-      apns: { key_path: "/path/AuthKey_XXXX.p8", key_id: "XXXX", team_id: "YYYY", bundle_id: "io.github.yusukeiwaki.oyobidashi" },
+      apns: { key_path: "/path/AuthKey_XXXX.p8", key_id: "XXXX", team_id: "YYYY", bundle_id: "me.oyobidashi.ios" },
       fcm: { service_account_path: "/path/service-account.json" },
       future: { keep: true },
     };

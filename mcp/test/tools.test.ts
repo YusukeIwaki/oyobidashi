@@ -52,7 +52,7 @@ describe("tool listing", () => {
 
     const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
     expect(Object.keys(byName.ask_human!.inputSchema.properties!).sort()).toEqual(
-      ["choices", "context", "delivery_mode", "expires_in_seconds", "priority", "question", "urgency", "wait_seconds"].sort(),
+      ["choices", "context", "delivery_mode", "expires_in_seconds", "priority", "question", "subject", "urgency", "wait_seconds"].sort(),
     );
     expect(byName.ask_human!.inputSchema.required).toEqual(["question"]);
     expect(Object.keys(byName.wait_for_answer!.inputSchema.properties!).sort()).toEqual(["request_id", "wait_seconds"]);
@@ -138,6 +138,20 @@ describe("ask_human", () => {
     expect(text).toContain("choice #1");
     expect(text).toContain("req_01JCXYZ");
     expect(clock.pendingTimers).toBe(0);
+  });
+
+  test("forwards a one-line call subject and omits blank subjects", async () => {
+    const { relay, call } = await setup();
+    await call("ask_human", { question: "実行してよいですか？", subject: " 本番デプロイ\nの承認 ", wait_seconds: 0 });
+    expect(relay.creates[0]!.body.subject).toBe("本番デプロイ の承認");
+    await call("ask_human", { question: "q", subject: " \n\t ", wait_seconds: 0 });
+    expect(relay.creates[1]!.body.subject).toBeUndefined();
+    const invalid = await call("ask_human", { question: "q", subject: "用".repeat(41), wait_seconds: 0 });
+    expect(invalid.isError).toBe(true);
+    expect(relay.creates).toHaveLength(2);
+    const unicode = await call("ask_human", { question: "q", subject: "😀".repeat(40), wait_seconds: 0 });
+    expect(unicode.isError).toBeFalsy();
+    expect(relay.creates[2]!.body.subject).toBe("😀".repeat(40));
   });
 
   test("optional arguments are forwarded; blank context and empty choices are omitted", async () => {

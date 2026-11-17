@@ -138,6 +138,17 @@ final class ExtensionsTests: XCTestCase {
         XCTAssertEqual(rec.reconcile(request: callRequest(state: "active", deviceID: "dev_01"), myDeviceID: "dev_01"), .none)
     }
 
+    func testOwnActiveSnapshotAfterRestartRestoresWithoutIncomingRing() {
+        let rec = CallReconciler()
+        let request = callRequest(state: "active", deviceID: "dev_01")
+        guard case .restoreActive(let call, _) = rec.reconcile(request: request, myDeviceID: "dev_01") else { return XCTFail("expected restore") }
+        rec.markReported(callID: call.id, requestID: request.id)
+        XCTAssertEqual(rec.reconcile(request: request, myDeviceID: "dev_01"), .none)
+        let fresh = CallReconciler()
+        XCTAssertEqual(fresh.reconcile(request: request, myDeviceID: "dev_other"), .none)
+        XCTAssertEqual(fresh.reconcile(request: request, myDeviceID: nil), .none)
+    }
+
     func testTerminalStatusEndsRinging() {
         let rec = CallReconciler()
         rec.markReported(callID: "call-1", requestID: "req1")

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Config } from "../config.ts";
-import { APP_ID } from "../types.ts";
+import { IOS_APP_ID } from "../types.ts";
 import { createApnsProvider, createHttp2ApnsTransport, type ApnsTransport } from "./apns.ts";
 import { createFcmProvider, gcloudTokenProvider, parseServiceAccount, type FetchLike } from "./fcm.ts";
 import type { PushProviders } from "./types.ts";
@@ -40,7 +40,7 @@ export async function createPushFromConfig(config: Config, deps: PushSetupDeps =
         keyPem: readFileSync(key_path, "utf8"),
         keyId: key_id,
         teamId: team_id,
-        bundleId: config.apns.bundle_id || APP_ID,
+        bundleId: config.apns.bundle_id || IOS_APP_ID,
         transport,
         now: deps.now,
       });

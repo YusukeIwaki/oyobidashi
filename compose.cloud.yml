@@ -1,0 +1,74 @@
+# Local development only. Cloud credentials and model selection are supplied by
+# your environment; no real account/project or provider secret is included here.
+x-cloud: &cloud
+  image: oyobidashi-cloud:local
+  build:
+    context: .
+    dockerfile: Dockerfile.cloud
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 15s
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  environment: &cloud-environment
+    DATABASE_URL: postgres://oyobidashi:local-development-only@postgres:5432/oyobidashi
+    REDIS_URL: redis://redis:6379
+    FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:?Set your Firebase project ID before starting the cloud stack}
+    PORT: "8787"
+    DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+    TURN_CONCURRENCY: ${TURN_CONCURRENCY:-8}
+    PUSH_CONCURRENCY: ${PUSH_CONCURRENCY:-4}
+    MAX_SOCKETS: ${MAX_SOCKETS:-10000}
+    # Optional HTTPS public origin for device-scoped notification previews.
+    PUBLIC_URL: ${PUBLIC_URL:-}
+
+services:
+  api:
+    <<: *cloud
+    command: ["bun", "run", "cloud/src/main.ts", "api"]
+    ports:
+      - "127.0.0.1:${OYOBIDASHI_CLOUD_PORT:-8787}:8787"
+  worker:
+    <<: *cloud
+    command: ["bun", "run", "cloud/src/main.ts", "worker"]
+    environment:
+      <<: *cloud-environment
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      VOICE_PROVIDER: ${VOICE_PROVIDER:-anthropic}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+      META_MODEL: ${META_MODEL:-}
+      FCM_SERVICE_ACCOUNT_JSON: ${FCM_SERVICE_ACCOUNT_JSON:-}
+      APNS_KEY_PEM: ${APNS_KEY_PEM:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-}
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: oyobidashi
+      POSTGRES_PASSWORD: local-development-only
+      POSTGRES_DB: oyobidashi
+    volumes:
+      - cloud-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oyobidashi -d oyobidashi"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+volumes:
+  cloud-postgres:

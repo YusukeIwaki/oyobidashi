@@ -53,6 +53,10 @@ final class LiveRelayTests: XCTestCase {
         let target = try XCTUnwrap(pending.first { $0.id == requestID })
         XCTAssertEqual(target.status, .pending)
         XCTAssertEqual(target.kind, .question)
+        if let subject = env["OYOBIDASHI_LIVE_SUBJECT"] {
+            XCTAssertEqual(target.subject, subject)
+            XCTAssertEqual(target.incomingCallerName, "apps-e2e：\(subject)")
+        }
 
         // WebSocket: hello に同じ質問が入っている
         let signals = Signals()
@@ -63,6 +67,9 @@ final class LiveRelayTests: XCTestCase {
         let hello = await waitFor(signals) { if case .hello = $0 { return true } else { return false } }
         guard case .hello(let helloPending)? = hello else { return XCTFail("hello must arrive") }
         XCTAssertTrue(helloPending.contains { $0.id == requestID })
+        if let subject = env["OYOBIDASHI_LIVE_SUBJECT"] {
+            XCTAssertEqual(helloPending.first { $0.id == requestID }?.subject, subject)
+        }
 
         // 音声で回答 → answered、WebSocket に updated
         let answered = try await client.answer(requestID: requestID, body: AnswerBody(text: "iOSから回答", inputMethod: .voice))
@@ -85,6 +92,9 @@ final class LiveRelayTests: XCTestCase {
         }
         let fetched = try await client.getRequest(id: requestID)
         XCTAssertEqual(fetched.status, .answered)
+        if let subject = env["OYOBIDASHI_LIVE_SUBJECT"] {
+            XCTAssertEqual(fetched.subject, subject)
+        }
 
         // 存在しない id は notFound
         do {

@@ -20,11 +20,13 @@ Claude Codeでは `.claude/settings.json` のSessionStartフックがこのフ�
 
 ## このプロジェクト
 
-Bun製LAN relay / stdio MCPと、SwiftUI iOS / Compose Material 3 Androidクライアント。既定のアプリIDは `io.github.yusukeiwaki.oyobidashi`。別のAppleチームでは利用者自身のBundle IDをローカル設定に使う。
+Bun製LAN relay / stdio MCPと、SwiftUI iOS / Compose Material 3 Androidクライアント。既定のアプリIDはiOSが `me.oyobidashi.ios`、Androidが `me.oyobidashi.android`。別のAppleチームでは利用者自身のBundle IDをローカル設定に使う。
 
 ルートから `./scripts/setup.sh doctor` → `./scripts/dev.sh` → 別ターミナルで `./scripts/pair.sh`。各スクリプトの既定の状態ディレクトリはリポジトリの `.oyobidashi/`。直接relay CLIを使う場合の既定 `~/.oyobidashi/` と混同しない。
 
-音声の会話判断は現在 **ログイン済みClaude Code CLIのみ**。Codexでもセットアップ・MCP・通知・テキスト返信は利用できるが、Codexの契約だけで音声中継が使えるとは案内しない。APIキーやCLIのOAuthトークンを抽出しない。
+LAN版の音声の会話判断は **ログイン済みClaude Code CLIのみ**。Codexでもセットアップ・MCP・通知・テキスト返信は利用できるが、Codexの契約だけで音声中継が使えるとは案内しない。APIキーやCLIのOAuthトークンを抽出しない。
+
+クラウド版は `cloud/README.md` と `docs/CLOUD_PROTOCOL.md` を参照する。上記CLI方式はLAN版であり、クラウド版の会話ワーカーは明示設定したLLM APIを使う。Firebase IDトークンでユーザーを識別し、PostgreSQLが状態・ジョブの正本、Redisは更新通知。無言の通話はワーカーを占有しない。
 
 ## 変更・検証
 
@@ -32,6 +34,7 @@ Bun製LAN relay / stdio MCPと、SwiftUI iOS / Compose Material 3 Androidクラ�
 - ユーザーのアカウント・既存リソースを確認し、再開時にFirebaseプロジェクトやAPNs鍵を重複作成しない。作者のプロジェクト・Team IDを使わない。
 - プロトコル変更前は `docs/PROTOCOL.md` と `docs/EXTENSIONS.md` を読む。実機検証記録は `docs/VALIDATION.md` にある。
 - サーバー: `bun test --cwd relay` / `bun test --cwd mcp` / `bun test --cwd integration`。
+- クラウド: `bun test --cwd cloud` / `bun run --cwd cloud typecheck`。実PostgreSQL・Redisの強制断を含む検証は `./scripts/test-cloud.sh` (専用の一時コンテナのみ使用)。
 - iOS: `swift test --package-path ios/OyobidashiKit`。ローカル署名設定生成後は `xcodegen generate --spec ios/project.local.yml`。
 - Android: JDK17で `android/gradlew -p android :core:test :app:testDebugUnitTest :app:assembleDebug`。
 - 製品サイト (`site/`、Astro): `bun run --cwd site build`、表示は `./site/scripts/screenshot.sh`。`main` へのpushで自動デプロイ。手順は `site/README.md`。

@@ -4,11 +4,14 @@ import SwiftUI
 struct RequestDetailView: View {
     let requestID: String
     @Environment(AppModel.self) private var model
+    @Environment(Router.self) private var router
     @State private var loaded = false
 
     var body: some View {
         Group {
-            if let request = model.store.request(id: requestID) {
+            if let submission = router.answerCompletion, submission.requestID == requestID {
+                AnswerSentView(submission: submission)
+            } else if let request = model.store.request(id: requestID) {
                 content(request)
             } else if loaded {
                 ContentUnavailableView(
@@ -230,6 +233,41 @@ struct RequestDetailView: View {
                 .foregroundStyle(PagerTheme.inkSoft)
         }
         // 終端では送信 UI を出さない (stale detail disabled)。
+    }
+}
+
+private struct AnswerSentView: View {
+    let submission: AnswerSubmission
+    @Environment(Router.self) private var router
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 56))
+                .foregroundStyle(.green)
+                .accessibilityHidden(true)
+            Text("回答を送信しました")
+                .font(.title2.bold())
+                .accessibilityAddTraits(.isHeader)
+            Text("未回答一覧に戻ります")
+                .font(.body)
+                .foregroundStyle(.secondary)
+            Button("未回答一覧へ") { router.finishAnswerCompletion(submission) }
+                .buttonStyle(.borderedProminent)
+                .padding(.top, 8)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(uiColor: .systemBackground))
+        .navigationTitle("回答完了")
+        .navigationBarBackButtonHidden()
+        .task(id: submission.id) {
+            UIAccessibility.post(notification: .announcement, argument: "回答を送信しました。未回答一覧に戻ります")
+            do {
+                try await Task.sleep(for: .seconds(UIAccessibility.isVoiceOverRunning ? 3 : 1.2))
+            } catch { return }
+            router.finishAnswerCompletion(submission)
+        }
     }
 }
 

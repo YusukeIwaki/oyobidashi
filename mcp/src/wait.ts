@@ -1,3 +1,4 @@
+import { CloudAuthError } from "./cloud-auth.ts";
 import type { Clock } from "./clock.ts";
 import { RelayError, type RelayClient, type RelayRequest } from "./relay-client.ts";
 
@@ -43,7 +44,7 @@ export async function waitForResolution(client: RelayClient, requestId: string, 
   if (latest && latest.status !== "pending") return latest;
 
   let failures = 0;
-  let lastError: RelayError | undefined;
+  let lastError: RelayError | CloudAuthError | undefined;
 
   for (;;) {
     const remainingMs = deadline - clock.now();
@@ -56,7 +57,7 @@ export async function waitForResolution(client: RelayClient, requestId: string, 
       failures = 0;
       lastError = undefined;
     } catch (e) {
-      if (!(e instanceof RelayError) || !e.transient || !latest) throw e;
+      if (!(e instanceof RelayError || e instanceof CloudAuthError) || !e.transient || !latest) throw e;
       lastError = e;
       const delay = backoff[failures];
       failures += 1;

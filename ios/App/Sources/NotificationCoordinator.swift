@@ -122,6 +122,8 @@ final class NotificationCoordinator: NSObject, NotificationManaging {
     }
 
     func presentIncoming(_ request: AgentRequest) {
+        let expectedCredentials = model?.credentials
+        guard expectedCredentials != nil else { return }
         // 終端は提示しない。通話は CallKit/アプリ内画面が担うので通常通知は出さない。
         guard NotificationPolicy.shouldPresent(request: request) else { return }
         if request.deliveryMode == .call && request.hasLiveCall { return }
@@ -136,6 +138,7 @@ final class NotificationCoordinator: NSObject, NotificationManaging {
         content.sound = .default
         content.threadIdentifier = PushCategory.threadID
         content.userInfo = PushPayload.userInfo(for: request)
+        if let id = expectedCredentials?.deviceID { content.userInfo["recipient_device_id"] = id }
         switch NotificationPolicy.interruption(for: request) {
         case .passive: content.interruptionLevel = .passive
         case .active: content.interruptionLevel = .active
@@ -153,11 +156,13 @@ final class NotificationCoordinator: NSObject, NotificationManaging {
         let requestID = request.id
         Task { @MainActor [weak self] in
             guard let self else { return }
+            guard self.model?.credentials == expectedCredentials else { return }
             // 非同期レース対策: 追加直前に終端/削除済みでないか再確認する。
             if self.terminalRemovedIDs.contains(requestID) { return }
             if let current = self.model?.store.request(id: requestID), current.status.isTerminal { return }
             if let current = self.model?.store.request(id: requestID), !NotificationPolicy.shouldPresent(request: current) { return }
             let delivered = await center.deliveredNotifications()
+            guard self.model?.credentials == expectedCredentials else { return }
             // userInfo.request_id で二重提示を防ぐ (APNs identifier は任意)。
             let pairs: [(identifier: String, userInfo: [AnyHashable: Any])] = delivered.map { ($0.request.identifier, $0.request.content.userInfo) }
             if !NotificationPolicy.matchingIdentifiers(delivered: pairs, requestIDs: [requestID]).isEmpty { return }
@@ -166,7 +171,7 @@ final class NotificationCoordinator: NSObject, NotificationManaging {
             if let current = self.model?.store.request(id: requestID), current.status.isTerminal { return }
             try? await center.add(UNNotificationRequest(identifier: requestID, content: content, trigger: nil))
             // 追加後に終端になっていたら即座に消す (競合ウィンドウを閉じる)。
-            if self.terminalRemovedIDs.contains(requestID) {
+            if self.terminalRemovedIDs.contains(requestID) || self.model?.credentials != expectedCredentials {
                 center.removeDeliveredNotifications(withIdentifiers: [requestID])
                 center.removePendingNotificationRequests(withIdentifiers: [requestID])
             }
@@ -197,8 +202,12 @@ final class NotificationCoordinator: NSObject, NotificationManaging {
 
     // MARK: Delegate callbacks (メインスレッドで呼ばれる)
 
-    fileprivate func presentationOptions(payload: PushPayload?, isRemote: Bool) -> UNNotificationPresentationOptions {
+    fileprivate func presentationOptions(payload: PushPayload?, isRemote: Bool, recipient: PushRecipient) -> UNNotificationPresentationOptions {
         let show: UNNotificationPresentationOptions = [.banner, .list, .sound]
+        guard recipient.matches(currentDeviceID: model?.credentials?.deviceID) else {
+            if let payload { removeDelivered(requestIDs: [payload.requestID]) }
+            return []
+        }
         guard let payload, isRemote else { return show }
         // フォアグラウンドで Push が届いた: 一覧を更新する。WebSocket 経由ですでに通知済みなら重ねて出さない。
         let alreadyPresented = locallyPresented.contains(payload.requestID)
@@ -208,6 +217,10 @@ final class NotificationCoordinator: NSObject, NotificationManaging {
 
     fileprivate func handleResponse(payload: PushPayload?, actionIdentifier: String, replyText: String?) async {
         guard let payload, let model else { return }
+        guard payload.recipient.matches(currentDeviceID: model.credentials?.deviceID) else {
+            removeDelivered(requestIDs: [payload.requestID])
+            return
+        }
         if let choiceIndex = PushCategory.choiceIndex(fromActionIdentifier: actionIdentifier) {
             // actions モード: 正確な choice_index で回答する。失敗時は通常の回答失敗導線に乗せるため
             // 結果に応じて処理する (圏外でもリクエストは pending のまま残る)。
@@ -241,9 +254,10 @@ final class NotificationDelegateProxy: NSObject, UNUserNotificationCenterDelegat
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         let payload = PushPayload(userInfo: notification.request.content.userInfo)
+        let recipient = PushRecipient(userInfo: notification.request.content.userInfo)
         let isRemote = notification.request.trigger is UNPushNotificationTrigger
         DispatchQueue.main.async { [coordinator] in
-            completionHandler(coordinator?.presentationOptions(payload: payload, isRemote: isRemote) ?? [.banner, .list, .sound])
+            completionHandler(coordinator?.presentationOptions(payload: payload, isRemote: isRemote, recipient: recipient) ?? [])
         }
     }
 

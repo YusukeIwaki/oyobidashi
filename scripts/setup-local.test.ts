@@ -3,7 +3,7 @@ import { createPrivateKey, generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { APP_ID, configureApple, configureFirebase, configureMCP, doctor, initialize, iosSpec, mergeProperties, type Context } from "./setup-local.ts";
+import { ANDROID_APP_ID, configureApple, configureFirebase, configureMCP, doctor, initialize, iosSpec, mergeProperties, type Context } from "./setup-local.ts";
 
 const roots: string[] = [];
 let rsa: string, ec: string;
@@ -24,7 +24,7 @@ function firebaseFiles(ctx: Context, project = "example-dev", accountProject = p
   const meta = join(ctx.root, "google-services.json"), sa = join(ctx.root, "download.json");
   writeFileSync(meta, JSON.stringify({ project_info: { project_id: project, project_number: "123456" }, client: [
     { client_info: { android_client_info: { package_name: "other.app" } } },
-    { client_info: { android_client_info: { package_name: APP_ID }, mobilesdk_app_id: "1:123456:android:abcdef" }, api_key: [{ current_key: "TEST_ONLY_VALUE" }] },
+    { client_info: { android_client_info: { package_name: ANDROID_APP_ID }, mobilesdk_app_id: "1:123456:android:abcdef" }, api_key: [{ current_key: "TEST_ONLY_VALUE" }] },
   ] }));
   writeFileSync(sa, JSON.stringify({ type: "service_account", project_id: accountProject, client_email: `relay@${accountProject}.iam.gserviceaccount.com`, private_key: rsa, token_uri: "https://oauth2.googleapis.com/token" }));
   return [meta, sa];

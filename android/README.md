@@ -8,8 +8,16 @@
 AI コーディングエージェント (Claude Code / Codex) からの質問をスマホで受け取り、テキスト・音声・選択肢で回答するアプリです。
 通信仕様は [`../docs/PROTOCOL.md`](../docs/PROTOCOL.md) に従います。
 
-- applicationId: `io.github.yusukeiwaki.oyobidashi` / minSdk 26 / targetSdk 35
+クラウド中継にも同じペアリング操作で接続できます。HTTPS/WSSで接続し、端末トークンで自分の質問だけにアクセスします。[クラウドの通信・復旧契約](../docs/CLOUD_PROTOCOL.md)に従い、発話ごとにUUIDを付けて送信し、202応答後は結果を非同期に取得します。無言・読み上げ中は会話ジョブを実行しません。従来のLAN relayによる200応答も利用できます。
+
+クラウドPushの本文は汎用のお知らせです。端末認証を使って最大3秒で質問を取得し、同じ通知を本文・選択肢付きに更新します (再度の通知音は鳴らしません)。取得できない場合は汎用通知を残し、未取得の質問への回答ボタンは表示しません。回答済みなら通知を取り消し、別のアカウント宛ての遅延Pushや取得結果は破棄します。
+
+送信結果を失った場合は同じUUIDの結果を先に取得し、対応サーバーでのみ同じUUIDを再送します。待機は250ms〜2秒のバックオフ、全体95秒、連続通信失敗とPOST再試行は最大3回に制限します。確定した発話とUUIDを送信前に下書きへ永続化し、失敗・プロセス再起動後も復旧します。最終応答の読み上げが終わるまで通話を保持し、自動再発信はしません。
+
+- applicationId・namespace・Kotlinのルートpackage: `me.oyobidashi.android` / minSdk 26 / targetSdk 35
 - Kotlin + Jetpack Compose (Material 3)
+
+ソースとテストは`src/*/kotlin/me/oyobidashi/android/`に配置します。applicationIdを変更すると旧版とは別アプリになります。Firebaseでは新しいpackage nameでAndroidアプリを追加し、そのApp IDをローカル設定へ反映して、新アプリでペアリングし直してください。旧Firebase登録や旧アプリのデータは削除する必要がありません。
 
 ## 構成
 
@@ -52,14 +60,14 @@ cd android
 
 - 接続は平文の `http://<MacのプライベートIP>:8787` / `ws://…` です。そのため **debug / release の両方で cleartext 通信を許可**しています (`usesCleartextTraffic` と `res/xml/network_security_config.xml`)。`https://` のURLも使えます (WebSocket は `wss://` になります)。
 - Mac のIPアドレスが変わったら、ペアリングし直してください。
-- 外出先など LAN の外では relay に届きません。FCM を設定していれば通知は鳴りますが、回答の送信はできず「中継サーバーに接続できません。同じWi‑Fiに接続しているか確認してください」と表示されます。入力した回答 (通知からの返信を含む) は下書きとして端末に保存され、LAN に戻ると自動で再接続するので、そのまま「送信」できます (自動送信はしません)。
+- LANのみのrelayは外出先から届きません。FCMを設定していれば通知は鳴りますが、回答時は「中継サーバーに接続できません。ネットワーク接続を確認してください」と表示されます。クラウド中継またはHTTPS経路を設定した場合は外出先からも接続できます。入力した回答 (通知からの返信を含む) は下書きとして端末に保存され、接続が戻るとそのまま「送信」できます (自動送信はしません)。
 
 ## プッシュ通知 (FCM) の設定 — 任意
 
 ビルドで `google-services.json` と google-services Gradle プラグインは **使いません**。ダウンロードしたJSONを `./scripts/setup.sh firebase` へ渡すと、以下の値を安全に転記できます。Firebase の値が無くてもビルド・起動でき、その場合は
 アプリを開いている間 (WebSocket 接続中) だけローカル通知が出ます。
 
-アプリを閉じていても通知を受けたい場合は、Firebase プロジェクトに Android アプリ (`io.github.yusukeiwaki.oyobidashi`) を追加し、
+アプリを閉じていても通知を受けたい場合は、Firebase プロジェクトに Android アプリ (`me.oyobidashi.android`) を追加し、
 `google-services.json` に書かれている値を `android/local.properties` に転記します:
 
 ```properties

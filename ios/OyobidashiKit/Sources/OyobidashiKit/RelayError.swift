@@ -17,6 +17,12 @@ public enum RelayError: Error, Equatable, Sendable {
     case network(code: Int, message: String)
     case timeout
     case cancelled
+    case turnInProgress
+    case turnFailed
+    case turnCancelled
+    /// The server may have accepted the utterance. Reuse its ID when recovering.
+    case turnPending
+    case idempotencyConflict
     /// 2xx だがボディを解釈できなかった。
     case decoding(String)
 
@@ -41,6 +47,10 @@ public enum RelayError: Error, Equatable, Sendable {
         case "payload_too_large": return .payloadTooLarge
         case "rate_limited": return .rateLimited
         case "internal": return .server(message: message)
+        case "turn_in_progress": return .turnInProgress
+        case "idempotency_conflict": return .idempotencyConflict
+        case "call_ended": return .turnCancelled
+        case "conversation_failed", "voice_unavailable", "turn_failed": return .turnFailed
         default: break
         }
         switch status {
@@ -80,7 +90,7 @@ public enum RelayError: Error, Equatable, Sendable {
         }
     }
 
-    public static let unreachableMessage = "中継サーバーに接続できません。同じWi‑Fiに接続しているか確認してください"
+    public static let unreachableMessage = "中継サーバーに接続できません。ネットワーク接続を確認してください"
 
     /// 画面に出す日本語メッセージ。
     public var userMessage: String {
@@ -109,6 +119,16 @@ public enum RelayError: Error, Equatable, Sendable {
             return Self.unreachableMessage
         case .cancelled:
             return "キャンセルされました"
+        case .turnInProgress:
+            return "前の発話を処理しています。しばらく待ってから確認してください"
+        case .turnFailed:
+            return "音声の応答を取得できませんでした。もう一度送信するか、文字で返信できます"
+        case .turnCancelled:
+            return "通話が終了しました。必要であれば文字で返信してください"
+        case .turnPending:
+            return "発話の処理結果を確認できませんでした。入力内容は保存されています。通信が戻ったら再確認するか、文字で返信してください"
+        case .idempotencyConflict:
+            return "送信内容を確認できませんでした。文字で返信してください"
         case .decoding:
             return "サーバーの応答を解釈できませんでした"
         }

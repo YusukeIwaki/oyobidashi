@@ -1,7 +1,20 @@
-# Allowlist the image build inputs. Everything else in the repository stays
-# outside the Docker build context.
+# Allowlist the cloud runtime inputs. Native sources, Git history, local state,
+# tests and every other repository file stay outside the Docker build context.
 **
+!Dockerfile.cloud
 !.dockerignore
+!cloud/
+!cloud/package.json
+!cloud/bun.lock
+!cloud/src/
+!cloud/src/**/
+!cloud/src/**/*.ts
+!cloud/src/**/*.sql
+!relay/
+!relay/src/
+!relay/src/**/
+!relay/src/**/*.ts
+!relay/src/**/*.sql
 
 # Product site (Dockerfile.site). Same allowlist approach as the cloud image.
 !Dockerfile.site

@@ -107,7 +107,7 @@ describe("APNs provider", () => {
       keyPem: ecPem,
       keyId: "KEYID12345",
       teamId: "TEAMID6789",
-      bundleId: "io.github.yusukeiwaki.oyobidashi",
+      bundleId: "me.oyobidashi.ios",
       now: () => time.now,
       transport: async (req) => {
         sent.push(req);
@@ -128,7 +128,7 @@ describe("APNs provider", () => {
     expect(JSON.parse(req.body)).toEqual(fixture("apns_payload.json"));
     expect(req.headers).toMatchObject({
       "apns-push-type": "alert",
-      "apns-topic": "io.github.yusukeiwaki.oyobidashi",
+      "apns-topic": "me.oyobidashi.ios",
       "apns-priority": "10",
       "apns-collapse-id": "req_01JCXYZ",
       "apns-expiration": String(Date.parse("2026-11-15T15:00:00.000Z") / 1000),
@@ -275,13 +275,13 @@ describe("APNs HTTP/2 transport (against a local h2c server)", () => {
     try {
       const origin = `http://127.0.0.1:${port}`;
       const body = JSON.stringify(fixture("apns_payload.json"));
-      const ok = await transport({ origin, path: "/3/device/abc", headers: { "apns-topic": "io.github.yusukeiwaki.oyobidashi", "apns-push-type": "alert" }, body });
+      const ok = await transport({ origin, path: "/3/device/abc", headers: { "apns-topic": "me.oyobidashi.ios", "apns-push-type": "alert" }, body });
       expect(ok).toEqual({ status: 200, body: "" });
       const dead = await transport({ origin, path: "/3/device/dead", headers: {}, body });
       expect(dead).toEqual({ status: 410, body: '{"reason":"Unregistered"}' });
       expect(seen[0]!.headers[":method"]).toBe("POST");
       expect(seen[0]!.headers[":path"]).toBe("/3/device/abc");
-      expect(seen[0]!.headers["apns-topic"]).toBe("io.github.yusukeiwaki.oyobidashi");
+      expect(seen[0]!.headers["apns-topic"]).toBe("me.oyobidashi.ios");
       expect(seen[0]!.headers["apns-push-type"]).toBe("alert");
       expect(JSON.parse(seen[0]!.body)).toEqual(fixture("apns_payload.json"));
       expect(sessions).toBe(1);
@@ -633,7 +633,7 @@ describe("push dispatch from POST /v1/requests", () => {
       keyPem: ecPem,
       keyId: "K",
       teamId: "T",
-      bundleId: "io.github.yusukeiwaki.oyobidashi",
+      bundleId: "me.oyobidashi.ios",
       transport: async (req) => {
         apnsSent.push(req);
         return req.path.endsWith("/gone") ? { status: 410, body: '{"reason":"Unregistered"}' } : req.path.endsWith("/bad") ? { status: 400, body: '{"reason":"BadDeviceToken"}' } : { status: 200, body: "" };
@@ -721,7 +721,7 @@ describe("createPushFromConfig", () => {
       { apnsTransport: async (req) => (sent.push(req), { status: 200, body: "" }) },
     );
     await setup.providers.ios!.send({ token: "t", environment: null }, question());
-    expect(sent[0]!.headers["apns-topic"]).toBe("io.github.yusukeiwaki.oyobidashi");
+    expect(sent[0]!.headers["apns-topic"]).toBe("me.oyobidashi.ios");
   });
 
   test("FCM credentials → android provider", async () => {
@@ -770,13 +770,15 @@ describe("v0.2 mobile push contract",()=>{
  });
  test("VoIP invitations and silent updates have separate APNs types/topics",async()=>{
   const sent:ApnsTransportRequest[]=[];
-  const provider=createApnsProvider({keyPem:ecPem,keyId:"KEY",teamId:"TEAM",bundleId:"io.github.yusukeiwaki.oyobidashi",transport:async req=>{sent.push(req);return {status:200,body:""};}});
-  const request={...question(),call:{id:crypto.randomUUID(),request_id:question().id,state:"ringing" as const,outcome:null,device_id:null,started_at:question().created_at,updated_at:question().updated_at,transcript:[]}};
+  const provider=createApnsProvider({keyPem:ecPem,keyId:"KEY",teamId:"TEAM",bundleId:"me.oyobidashi.ios",transport:async req=>{sent.push(req);return {status:200,body:""};}});
+  const request={...question(),subject:"本番デプロイの承認",call:{id:crypto.randomUUID(),request_id:question().id,state:"ringing" as const,outcome:null,device_id:null,started_at:question().created_at,updated_at:question().updated_at,transcript:[]}};
   await provider.send({token:"voice",environment:"development",type:"voip"},request);
   await provider.send({token:"ordinary",environment:"development",type:"update"},{...request,status:"cancelled"});
-  expect(sent[0]!.headers).toMatchObject({"apns-topic":"io.github.yusukeiwaki.oyobidashi.voip","apns-push-type":"voip","apns-expiration":"0"});
+  expect(sent[0]!.headers).toMatchObject({"apns-topic":"me.oyobidashi.ios.voip","apns-push-type":"voip","apns-expiration":"0"});
   expect(JSON.parse(sent[0]!.body).call_id).toBe(request.call.id);
-  expect(sent[1]!.headers).toMatchObject({"apns-topic":"io.github.yusukeiwaki.oyobidashi","apns-push-type":"background","apns-priority":"5"});
+  expect(JSON.parse(sent[0]!.body)).toMatchObject({subject:request.subject,agent_name:request.agent!.name});
+  expect(sent[1]!.headers).toMatchObject({"apns-topic":"me.oyobidashi.ios","apns-push-type":"background","apns-priority":"5"});
   expect(JSON.parse(sent[1]!.body).aps.alert).toBeUndefined();
+  expect(JSON.parse(sent[1]!.body).subject).toBeUndefined();
  });
 });

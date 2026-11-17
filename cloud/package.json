@@ -1,0 +1,23 @@
+{
+  "name": "oyobidashi-cloud",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "api": "bun run src/main.ts api",
+    "worker": "bun run src/main.ts worker",
+    "migrate": "bun run src/main.ts migrate",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.browser.json",
+    "build:auth": "bun build src/auth-browser.ts --target browser --minify --outfile public/auth.js"
+  },
+  "dependencies": {
+    "jose": "^6.1.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "firebase": "13.3.0",
+    "postgres": "^3.4.7",
+    "railway": "3.17.0",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,6 +1,6 @@
 name: Oyobidashi
 options:
-  bundleIdPrefix: io.github.yusukeiwaki
+  bundleIdPrefix: me.oyobidashi
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
@@ -23,7 +23,7 @@ targets:
       - target: OyobidashiNotificationService
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.github.yusukeiwaki.oyobidashi
+        PRODUCT_BUNDLE_IDENTIFIER: me.oyobidashi.ios
         PRODUCT_NAME: Oyobidashi
         MARKETING_VERSION: "0.2.0"
         CURRENT_PROJECT_VERSION: "2"
@@ -48,7 +48,7 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         CFBundleURLTypes:
-          - CFBundleURLName: io.github.yusukeiwaki.oyobidashi.pair
+          - CFBundleURLName: me.oyobidashi.ios.pair
             CFBundleTypeRole: Editor
             CFBundleURLSchemes:
               - oyobidashi
@@ -76,9 +76,11 @@ targets:
     sources:
       - path: NotificationService
         excludes: [Info.plist]
+    dependencies:
+      - package: OyobidashiKit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.github.yusukeiwaki.oyobidashi.NotificationService
+        PRODUCT_BUNDLE_IDENTIFIER: me.oyobidashi.ios.NotificationService
         MARKETING_VERSION: "0.2.0"
         CURRENT_PROJECT_VERSION: "2"
         CODE_SIGN_STYLE: Automatic

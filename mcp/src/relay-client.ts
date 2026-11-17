@@ -34,6 +34,7 @@ const RequestSchema = z.object({
   id: z.string().min(1),
   kind: z.string().nullish(),
   question: z.string().nullish(),
+  subject: z.string().nullish(),
   context: z.string().nullish(),
   choices: z.array(z.string()).nullish(),
   urgency: z.string().nullish(),
@@ -98,6 +99,7 @@ export type RelayDeliveryMode = "auto" | "actions" | "text" | "call";
 export interface CreateRequestInput {
   kind: "question" | "notification";
   question: string;
+  subject?: string | undefined;
   context?: string | undefined;
   choices?: string[] | undefined;
   urgency?: "normal" | "high" | undefined;
@@ -144,11 +146,12 @@ export class RelayError extends Error {
   readonly code: string | undefined;
   /** `error.message` from the relay's error body. */
   readonly relayMessage: string | undefined;
+  readonly cloud: boolean;
 
   constructor(
     kind: RelayErrorKind,
     message: string,
-    details: { baseUrl: string; status?: number; code?: string; relayMessage?: string; cause?: unknown },
+    details: { baseUrl: string; status?: number; code?: string; relayMessage?: string; cause?: unknown; cloud?: boolean },
   ) {
     super(message, details.cause === undefined ? undefined : { cause: details.cause });
     this.name = "RelayError";
@@ -157,6 +160,7 @@ export class RelayError extends Error {
     this.status = details.status;
     this.code = details.code;
     this.relayMessage = details.relayMessage;
+    this.cloud = details.cloud ?? false;
   }
 
   /** Worth retrying while long-polling an existing request (the relay may come back). */
@@ -175,6 +179,8 @@ export function isAbortError(e: unknown): boolean {
 export interface RelayClientOptions {
   baseUrl: string;
   agentToken: string;
+  /** Firebase token source; only explicit 401 responses trigger one forced refresh. */
+  tokenProvider?: (forceRefresh: boolean, signal?: AbortSignal) => Promise<string>;
   fetch?: FetchLike;
   clock?: Clock;
   /** Client-side timeout for ordinary (non long-poll) calls. Default 15s. */
@@ -192,6 +198,7 @@ export const MAX_RELAY_WAIT_SECONDS = 300;
 export class RelayClient {
   readonly baseUrl: string;
   private readonly agentToken: string;
+  private readonly tokenProvider: RelayClientOptions["tokenProvider"];
   private readonly fetchImpl: FetchLike;
   private readonly clock: Clock;
   private readonly requestTimeoutMs: number;
@@ -200,6 +207,7 @@ export class RelayClient {
   constructor(options: RelayClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.agentToken = options.agentToken;
+    this.tokenProvider = options.tokenProvider;
     this.fetchImpl = options.fetch ?? ((url, init) => fetch(url, init));
     this.clock = options.clock ?? systemClock;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 15_000;
@@ -209,6 +217,7 @@ export class RelayClient {
   /** POST /v1/requests */
   async createRequest(input: CreateRequestInput, options: CallOptions = {}): Promise<CreateRequestResult> {
     const body: Record<string, unknown> = { kind: input.kind, question: input.question };
+    if (input.subject !== undefined) body.subject = input.subject;
     if (input.context !== undefined) body.context = input.context;
     if (input.choices !== undefined && input.choices.length > 0) body.choices = input.choices;
     if (input.urgency !== undefined) body.urgency = input.urgency;
@@ -220,7 +229,17 @@ export class RelayClient {
     if (input.agent?.cwd) agent.cwd = input.agent.cwd;
     if (Object.keys(agent).length > 0) body.agent = agent;
 
-    const json = await this.call("POST", "/v1/requests", body, this.requestTimeoutMs, options.signal);
+    const headers = {"Idempotency-Key":crypto.randomUUID()};
+    let json: unknown;
+    try {
+      json = await this.call("POST", "/v1/requests", body, this.requestTimeoutMs, options.signal, headers);
+    } catch (error) {
+      // Cloud guarantees a durable idempotency key. The LAN relay does not, so
+      // never automatically repeat a local POST after an ambiguous failure.
+      if (!this.tokenProvider || !(error instanceof RelayError) || !["network", "timeout"].includes(error.kind) || options.signal?.aborted) throw error;
+      await this.clock.sleep(250, options.signal);
+      json = await this.call("POST", "/v1/requests", body, this.requestTimeoutMs, options.signal, headers);
+    }
     const parsed = this.parse(CreateEnvelopeSchema, json, 201);
     return { request: parsed.request, delivery: parsed.delivery ?? undefined };
   }
@@ -264,19 +283,44 @@ export class RelayClient {
     if (!result.success) {
       throw new RelayError("bad_response", `The relay's response does not match the oyobidashi protocol: ${z.prettifyError(result.error)}`, {
         baseUrl: this.baseUrl,
+        cloud: !!this.tokenProvider,
         status,
       });
     }
     return result.data;
   }
 
-  /** Performs one HTTP exchange and returns the parsed JSON body of a 2xx response. */
+  /** Cloud pairing codes are intentionally never included in MCP tool output. */
+  async createPairingCode(options: CallOptions = {}): Promise<{code: string; expires_at: string}> {
+    const result = await this.call("POST", "/v1/pairing-codes", {}, this.requestTimeoutMs, options.signal);
+    return this.parse(z.object({code:z.string().min(1).max(200),expires_at:z.string().datetime()}), result, 201);
+  }
+
   private async call(
+    method: "GET" | "POST" | "PATCH", path: string, body: unknown,
+    timeoutMs: number, signal: AbortSignal | undefined, extraHeaders: Record<string, string> = {},
+  ): Promise<unknown> {
+    if (signal?.aborted) throw abortError();
+    const token = this.tokenProvider ? await this.tokenProvider(false, signal) : this.agentToken;
+    try { return await this.exchange(method, path, body, timeoutMs, signal, token, extraHeaders); }
+    catch (error) {
+      // Only a definitive authentication rejection is replayed here. Transport
+      // failures and server errors are not evidence that a mutation was rejected.
+      if (!this.tokenProvider || !(error instanceof RelayError) || error.status !== 401) throw error;
+      const fresh = await this.tokenProvider(true, signal);
+      return this.exchange(method, path, body, timeoutMs, signal, fresh, extraHeaders);
+    }
+  }
+
+  /** Performs one HTTP exchange and returns the parsed JSON body of a 2xx response. */
+  private async exchange(
     method: "GET" | "POST" | "PATCH",
     path: string,
     body: unknown,
     timeoutMs: number,
     signal: AbortSignal | undefined,
+    token: string,
+    extraHeaders: Record<string, string>,
   ): Promise<unknown> {
     if (signal?.aborted) throw abortError();
 
@@ -302,7 +346,8 @@ export class RelayClient {
     });
 
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.agentToken}`,
+      ...extraHeaders,
+      Authorization: `Bearer ${token}`,
       Accept: "application/json",
     };
     const init: RequestInit = { method, headers, signal: controller.signal, redirect: "error" };
@@ -324,10 +369,11 @@ export class RelayClient {
     } catch (e) {
       if (signal?.aborted) throw abortError();
       if (timedOut) throw this.timeoutError(timeoutMs);
-      const detail = e instanceof Error ? e.message : String(e);
+      const detail = this.tokenProvider ? "connection failed" : e instanceof Error ? e.message : String(e);
       throw new RelayError("network", `Cannot connect to the oyobidashi relay at ${this.baseUrl}: ${detail}`, {
         baseUrl: this.baseUrl,
-        cause: e,
+        cloud: !!this.tokenProvider,
+        ...(this.tokenProvider ? {} : {cause:e}),
       });
     } finally {
       timerCancel.abort();
@@ -347,22 +393,28 @@ export class RelayClient {
     if (!outcome.ok) {
       const envelope = isJson ? ErrorEnvelopeSchema.safeParse(json) : undefined;
       if (envelope?.success) {
-        const { code, message } = envelope.data.error;
+        const rawCode = envelope.data.error.code;
+        const safeCloudCodes = new Set(["unauthorized", "forbidden", "not_found", "invalid_request", "idempotency_conflict", "turn_in_progress", "already_resolved", "rate_limited", "overloaded", "payload_too_large", "unavailable", "internal", "service_unavailable"]);
+        const code = this.tokenProvider && !safeCloudCodes.has(rawCode) ? "unexpected_status" : rawCode;
+        const message = this.tokenProvider ? undefined : envelope.data.error.message;
         throw new RelayError("http", `The relay answered ${outcome.status} ${code}${message ? `: ${message}` : ""}`, {
           baseUrl: this.baseUrl,
+          cloud: !!this.tokenProvider,
           status: outcome.status,
           code,
           ...(message ? { relayMessage: message } : {}),
         });
       }
-      throw new RelayError("http", `The relay answered HTTP ${outcome.status} without a oyobidashi error body (${snippet(outcome.text)})`, {
+      throw new RelayError("http", `The relay answered HTTP ${outcome.status} without a oyobidashi error body (${this.tokenProvider ? "unexpected body" : snippet(outcome.text)})`, {
         baseUrl: this.baseUrl,
+        cloud: !!this.tokenProvider,
         status: outcome.status,
       });
     }
     if (!isJson) {
-      throw new RelayError("bad_response", `The relay answered HTTP ${outcome.status} with a body that is not JSON (${snippet(outcome.text)})`, {
+      throw new RelayError("bad_response", `The relay answered HTTP ${outcome.status} with a body that is not JSON (${this.tokenProvider ? "unexpected body" : snippet(outcome.text)})`, {
         baseUrl: this.baseUrl,
+        cloud: !!this.tokenProvider,
         status: outcome.status,
       });
     }
@@ -372,6 +424,7 @@ export class RelayClient {
   private timeoutError(timeoutMs: number): RelayError {
     return new RelayError("timeout", `The oyobidashi relay at ${this.baseUrl} did not respond within ${Math.round(timeoutMs / 1000)}s`, {
       baseUrl: this.baseUrl,
+      cloud: !!this.tokenProvider,
     });
   }
 }

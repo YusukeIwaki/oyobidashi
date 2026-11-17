@@ -118,6 +118,55 @@ final class URLSessionIntegrationTests: XCTestCase {
         }
     }
 
+    func testCommittedVoiceTurnIsRecoveredAfterRealTCPResponseTruncation() async throws {
+        let turnID = "f353b77b-94f0-44d3-85b2-87602f70b938"
+        let requestID = "req_01JCXYZ"
+        let requestJSON = Fixtures.string("request_pending.json")
+        let complete = "{\"request\":\(requestJSON),\"turn\":{\"id\":\"\(turnID)\",\"state\":\"completed\",\"reply\":\"受け取りました\",\"resolved\":false,\"error\":null}}"
+        let server = try await startServer { [http] request in
+            if request.hasPrefix("POST ") {
+                // The server committed the job but its response was cut off mid-body.
+                return Data("HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\nContent-Length: 2048\r\nConnection: close\r\n\r\n{\"request\":".utf8)
+            }
+            return http("200 OK", complete)
+        }
+        defer { server.stop() }
+        let client = RelayClient(endpoint: try RelayEndpoint("http://127.0.0.1:\(server.port)"), deviceToken: "kd_test",
+                                 transport: URLSessionTransport(session: session()), voiceTurnPolicy: VoiceTurnPolicy(overallTimeout: 5))
+        let response = try await client.sendCallTurn(requestID: requestID, text: "はい", turnID: turnID)
+        XCTAssertEqual(response.reply, "受け取りました")
+        XCTAssertEqual(server.requests.filter { $0.hasPrefix("POST ") }.count, 1)
+        XCTAssertEqual(server.requests.filter { $0.hasPrefix("GET /v1/requests/\(requestID)/turns/\(turnID) ") }.count, 1)
+    }
+
+    func testPreviewTransportDoesNotFollowRealHTTPRedirect() async throws {
+        let server = try await startServer { request in
+            if request.hasPrefix("GET /preview ") {
+                return Data("HTTP/1.1 302 Found\r\nLocation: /must-not-follow\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
+            }
+            return Data("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
+        }
+        defer { server.stop() }
+        // HTTP is used only for this loopback transport test. Production preview
+        // descriptors require HTTPS before the transport is invoked.
+        let request = URLRequest(url: URL(string: "http://127.0.0.1:\(server.port)/preview")!)
+        let (_, response) = try await NotificationPreviewTransport().send(request)
+        XCTAssertEqual(response.statusCode, 302)
+        XCTAssertEqual(server.requests.count, 1)
+    }
+
+    func testPreviewTransportRejectsOversizedRealResponseBeforeBuffering() async throws {
+        let server = try await startServer { _ in
+            let size = NotificationPreviewClient.maxBytes + 1
+            return Data("HTTP/1.1 200 OK\r\nContent-Length: \(size)\r\nConnection: close\r\n\r\n".utf8) + Data(repeating: 0x20, count: size)
+        }
+        defer { server.stop() }
+        do {
+            _ = try await NotificationPreviewTransport().send(URLRequest(url: URL(string: "http://127.0.0.1:\(server.port)/preview")!))
+            XCTFail("oversized preview accepted")
+        } catch { XCTAssertEqual(error as? NotificationPreviewError, .invalidResponse) }
+    }
+
     func testWebSocketUpgradeRejectedWith401IsReportedAsUnauthorized() async throws {
         let body = Fixtures.string("error_unauthorized.json")
         let server = try await startServer { [http] _ in http("401 Unauthorized", body) }

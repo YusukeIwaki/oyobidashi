@@ -61,6 +61,7 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
     @ObservationIgnored private var recognitionTask: SFSpeechRecognitionTask?
     @ObservationIgnored private var finalSentForCurrentListen = false
     @ObservationIgnored private var silenceTask: Task<Void, Never>?
+    @ObservationIgnored private var turnTask: Task<Void, Never>?
 
     override init() {
         super.init()
@@ -93,6 +94,13 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
             return
         }
         guard generation == gen else { return }
+        // An interrupted POST may already have been committed. Recover that utterance
+        // before recognizing a new one, including after process recreation.
+        if let draft = model?.drafts.draft(for: requestID), draft.voiceTurnID != nil {
+            finalSentForCurrentListen = false
+            sendTurnIfCompleted(draft.text, gen: gen, explicit: true)
+            return
+        }
         speak(initialText, isFinalReply: false, gen: gen)
     }
 
@@ -122,6 +130,8 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     private func cancelCurrentWork() {
+        turnTask?.cancel()
+        turnTask = nil
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
         stopListening(sendFinal: false)
     }
@@ -285,6 +295,19 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
         }
     }
 
+    var canRetryLastTurn: Bool {
+        if case .failed = phase { return requestID != nil && !lastUserText.isEmpty }
+        return false
+    }
+
+    /// Reuse the persisted ID when delivery was uncertain; an explicit retry of a
+    /// failed model turn gets a new ID through AppModel.
+    func retryLastTurn() {
+        guard canRetryLastTurn else { return }
+        finalSentForCurrentListen = false
+        sendTurnIfCompleted(lastUserText, gen: generation, explicit: true)
+    }
+
     private func sendTurnIfCompleted(_ text: String, gen: Int, explicit: Bool = false) {
         // explicit (ボタン) はユーザーの明示確定なので final 扱い。それ以外は isFinal 経由でのみここに来る。
         let isFinal = true
@@ -301,10 +324,11 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
             phase = .failed("接続情報がありません")
             return
         }
-        Task { @MainActor [weak self] in
+        turnTask = Task { @MainActor [weak self] in
             guard let self, self.generation == gen else { return }
             let outcome = await model.sendCallTurn(requestID: requestID, text: text)
             guard self.generation == gen else { return }
+            self.turnTask = nil
             switch outcome {
             case .success(let resp):
                 let reply = resp.reply ?? ""

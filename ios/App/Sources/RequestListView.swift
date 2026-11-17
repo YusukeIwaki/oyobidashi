@@ -40,7 +40,7 @@ struct RequestListView: View {
             .padding(16)
         }
         .background(PagerTheme.cream.ignoresSafeArea())
-        .navigationTitle("ホーム")
+        .navigationTitle("お呼び出し")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await model.refresh() }
         .toolbar {

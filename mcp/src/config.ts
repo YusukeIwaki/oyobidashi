@@ -1,6 +1,7 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { readCloudCredentials } from "./cloud-auth.ts";
 
 export type Env = Record<string, string | undefined>;
 
@@ -8,8 +9,9 @@ export interface Connection {
   /** Base URL of the relay without a trailing slash, e.g. http://127.0.0.1:8787 */
   baseUrl: string;
   agentToken: string;
+  cloudAuthFile?: string;
   /** Where each value came from (for error messages / diagnostics). */
-  source: { baseUrl: "env" | "config"; agentToken: "env" | "config" };
+  source: { baseUrl: "env" | "config" | "cloud"; agentToken: "env" | "config" | "cloud" };
   /** Path of the config file that was (or would have been) consulted. */
   configPath: string;
 }
@@ -112,6 +114,15 @@ export function resolveConnection(env: Env, home: () => string = homedir): Conne
       source: { baseUrl: "env", agentToken: "env" },
       configPath,
     };
+  }
+
+  // Explicit local endpoint/token settings keep their original precedence. Cloud
+  // state lives separately and never overwrites the LAN relay configuration.
+  const cloudPath = nonEmpty(env.OYOBIDASHI_CLOUD_AUTH_FILE) ?? join(oyobidashiHome(env, home), "cloud-auth.json");
+  if (!envUrl && !envToken && (nonEmpty(env.OYOBIDASHI_CLOUD_AUTH_FILE) || existsSync(cloudPath))) {
+    const cloud = readCloudCredentials(cloudPath);
+    return {baseUrl:cloud.baseUrl, agentToken:cloud.idToken, cloudAuthFile:cloudPath,
+      source:{baseUrl:"cloud",agentToken:"cloud"}, configPath};
   }
 
   const file = readConfigFile(configPath);
