@@ -14,13 +14,15 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("接続先")
                         HStack(alignment: .firstTextBaseline, spacing: 12) {
-                            Text(model.credentials?.endpoint.description ?? "-")
+                            Text(isOyobidashiCloud ? "Oyobidashiクラウド" : model.credentials?.endpoint.description ?? "-")
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                             Spacer(minLength: 0)
-                            Button("変更") { showingPairing = true }
-                                .buttonStyle(.borderless)
-                                .accessibilityLabel("接続先を変更")
+                            if !isOyobidashiCloud {
+                                Button("変更") { showingPairing = true }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityLabel("接続先を変更")
+                            }
                         }
                     }
                     LabeledContent("接続状態", value: connectionText)
@@ -28,7 +30,9 @@ struct SettingsView: View {
                 } header: {
                     Text("ペアリング")
                 } footer: {
-                    Text("接続先の変更が完了するまでは、現在のペアリングを維持します。")
+                    if !isOyobidashiCloud {
+                        Text("接続先の変更が完了するまでは、現在のペアリングを維持します。")
+                    }
                 }
                 PermissionSettingsView()
                 Section {
@@ -63,6 +67,10 @@ struct SettingsView: View {
                 Text("このiPhoneには質問が届かなくなります。")
             }
         }
+    }
+
+    private var isOyobidashiCloud: Bool {
+        model.credentials?.endpoint.host.lowercased() == "api.oyobidashi.me"
     }
 
     private var connectionText: String {

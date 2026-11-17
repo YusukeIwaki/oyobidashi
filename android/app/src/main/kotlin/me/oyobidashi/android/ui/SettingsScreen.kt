@@ -61,11 +61,13 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import me.oyobidashi.android.BuildConfig
 import me.oyobidashi.android.R
 import me.oyobidashi.android.Session
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(vm: MainViewModel, session: Session) {
     val state by session.repository.state.collectAsState()
+    val isOyobidashiCloud = session.credentials.baseUrl.toHttpUrlOrNull()?.host == "api.oyobidashi.me"
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
@@ -107,14 +109,20 @@ fun SettingsScreen(vm: MainViewModel, session: Session) {
                             headlineContent = { Text("接続先") },
                             supportingContent = {
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    SelectionContainer { Text(session.credentials.baseUrl, maxLines = 2) }
+                                    if (isOyobidashiCloud) {
+                                        Text("Oyobidashiクラウド")
+                                    } else {
+                                        SelectionContainer { Text(session.credentials.baseUrl, maxLines = 2) }
+                                    }
                                     Text(if (state.relayUnreachable) "接続できません" else "接続できます",
                                         color = if (state.relayUnreachable) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                                         style = MaterialTheme.typography.labelMedium)
                                 }
                             },
                             leadingContent = { Icon(painterResource(R.drawable.ic_computer), null, Modifier.size(24.dp)) },
-                            trailingContent = { TextButton(onClick = vm::openPairing) { Text("変更") } },
+                            trailingContent = if (isOyobidashiCloud) null else {
+                                { TextButton(onClick = vm::openPairing) { Text("変更") } }
+                            },
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         )
                         TextButton(
