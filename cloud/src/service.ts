@@ -86,6 +86,9 @@ export class CloudService {
   async accountLinkAttempt(tx: Transaction) {
     await this.quota(tx, "account_link", 10);
   }
+  async oauthAttempt(tx: Transaction) {
+    await this.quota(tx, "oauth_authorize", 20);
+  }
   async request(tx: Transaction, id: string) {
     const r = await tx.get("request", id);
     if (!r) throw missing();

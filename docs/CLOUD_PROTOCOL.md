@@ -8,9 +8,9 @@ additive. This document is the implementation contract for all components.
 
 Agent requests use a Firebase Authentication ID token in `Authorization: Bearer`.
 The server verifies the signature, issuer, audience, expiry and subject; it never
-uses a UID supplied by the client as authorization. The existing local stdio MCP
-bridge remains the MCP transport. This is not an OAuth authorization server for
-arbitrary remote MCP clients.
+uses a UID supplied by the client as authorization. The local stdio MCP bridge
+authenticates this way. MCP clients that connect by URL use the hosted endpoint
+and its own OAuth tokens instead; see "Hosted MCP endpoint" below.
 
 `POST /v1/pairing-codes` (agent auth) returns `{code, expires_at}`. Codes are random,
 single-use, valid for ten minutes and stored hashed. Existing `POST /v1/pair` binds
@@ -55,6 +55,64 @@ credentials never travel in a URL. The listener checks exact cloud Origin, loopb
 Host, path, state, project, expected UID and linked provider. It bounds body size,
 verification time and total login time. Cancellation, timeout, rejected accounts
 and network failures preserve the original credential file.
+
+## Hosted MCP endpoint
+
+`/v1/mcp` serves the stdio server's six tools over Streamable HTTP. It is
+stateless: POST only, no session ID, no server-initiated stream (GET and DELETE
+return 405), and `resources/subscribe` is not offered. Any replica can answer
+any request. `wait_seconds` is capped at 300; the reply stream carries keep-alive
+comments while a tool waits. A client disconnect ends the wait, not the request.
+
+The API is also the OAuth 2.1 authorization server for this one resource. It is
+enabled only when the Firebase web configuration is present.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /.well-known/oauth-protected-resource[/v1/mcp]` | RFC 9728 metadata; `resource` is `<origin>/v1/mcp` |
+| `GET /.well-known/oauth-authorization-server` | RFC 8414 metadata |
+| `POST /oauth/register` | RFC 7591 registration of public clients (no secret) |
+| `GET /oauth/authorize` | Consent page; `POST` records the decision from that page |
+| `POST /oauth/token` | `authorization_code` and `refresh_token` grants |
+| `POST /oauth/revoke` | RFC 7009; either token withdraws the whole approval |
+| `GET /pair` | Sign in and pair a phone without an MCP client |
+
+An unauthenticated `/v1/mcp` request gets 401 with
+`WWW-Authenticate: Bearer resource_metadata="..."`. Issuer and resource are the
+origin the client used (`PUBLIC_URL` when the host matches; always HTTPS except on
+loopback). PKCE with S256 is mandatory. Redirect URIs must be registered and match
+exactly, except that an HTTP loopback redirect may use any port. Allowed targets
+are HTTPS, HTTP on loopback and app-specific schemes; an unknown client or a
+mismatched redirect is shown as an error page and never redirected. A `resource`
+parameter must name this endpoint. Authorization responses carry `iss`.
+
+The consent page signs the human in with Google, Apple or GitHub in an in-memory
+Firebase session and posts the decision with that ID token. The server verifies
+the token and the page's `Origin`, and refuses anonymous sign-ins: an account
+without an external identity could not be recovered once the client lost its
+tokens. If the account has no paired phone, the page obtains a pairing code,
+shows it as a QR code and waits for the device before returning to the client.
+Signing in with an identity already linked through the stdio flow yields the same
+UID and therefore the same paired devices.
+
+Codes (`kmo_`, five minutes), access tokens (`kma_`, one hour) and refresh tokens
+(`kmr_`, 180 days idle) are opaque, random and stored as SHA-256 digests in
+`cloud_oauth`. Codes are single use; replaying one revokes the tokens it
+produced. Refresh tokens rotate on every use. A repeat within 60 seconds is
+honoured as a retried request; a later repeat revokes the approval. A user keeps
+at most 30 approvals, newest first. Client registrations lapse after 400 days
+without a token being issued.
+
+These tokens are accepted by `/v1/mcp` only. Firebase ID tokens and device tokens
+are not accepted there. Tool calls run in-process as the token's owner with the
+agent role and the same quotas as the REST API, but can never issue pairing codes
+or account-link tokens or open the device event stream. The asking agent shown on
+the phone is the registered `client_name`; no working directory is recorded.
+
+Unauthenticated endpoints are bounded: registration is capped globally per hour
+and by concurrency, approvals are limited to 20 per user per minute, bodies to
+64KB. OAuth endpoints and `/v1/mcp` send `Access-Control-Allow-Origin: *`; no
+cookie or ambient credential exists, so cross-origin reads expose nothing.
 
 ## Asynchronous voice turns
 

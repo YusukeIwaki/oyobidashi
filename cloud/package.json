@@ -8,7 +8,7 @@
     "migrate": "bun run src/main.ts migrate",
     "test": "bun test",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.browser.json",
-    "build:auth": "bun build src/auth-browser.ts --target browser --minify --outfile public/auth.js"
+    "build:auth": "bun build src/auth-browser.ts --target browser --minify --outfile public/auth.js && bun build src/oauth-browser.ts --target browser --minify --outfile public/oauth.js"
   },
   "dependencies": {
     "jose": "^6.1.0"
@@ -17,6 +17,7 @@
     "@types/bun": "^1.4.4",
     "firebase": "13.3.0",
     "postgres": "^3.4.7",
+    "qrcode-generator": "2.0.4",
     "railway": "3.17.0",
     "typescript": "^7.0.2"
   }

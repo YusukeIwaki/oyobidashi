@@ -16,6 +16,15 @@ import {
   authPageHeaders,
   type AccountAuth,
 } from "./account-auth.ts";
+import { MCP_PATH, OAuthServer, type OAuthStore } from "./oauth.ts";
+import { serveMcp } from "./mcp-http.ts";
+
+/** Enables the hosted MCP endpoint and its OAuth authorization server. */
+export interface RemoteMcpOptions {
+  store: OAuthStore;
+  script?: () => Promise<string>;
+  publicUrl?: string;
+}
 
 export const MAX_WS_BUFFER_BYTES = 256 * 1024;
 // A legal full hello can contain 200 requests and one bounded transcript. Allow
@@ -50,16 +59,30 @@ export class CloudApp {
   private closed = false;
   private pairInFlight = 0;
   private waiters = new Map<string, Set<() => void>>();
+  private readonly oauth?: OAuthServer;
   constructor(
     readonly service: CloudService,
     readonly verifier: IdentityVerifier,
     readonly maxSockets = 10_000,
     readonly accountAuth?: AccountAuth,
     readonly authScript?: () => Promise<string>,
-  ) {}
-  async fetch(
+    remote?: RemoteMcpOptions,
+  ) {
+    // The consent page signs the human in with Firebase, so it needs the web configuration.
+    if (remote && accountAuth)
+      this.oauth = new OAuthServer({ ...remote, service, verifier });
+  }
+  fetch(req: Request, server?: GatewayServer): Promise<Response | undefined> {
+    return this.route(req, server);
+  }
+  /**
+   * `internal` is the already authenticated owner of a hosted MCP call. It is set
+   * only by this process, never derived from the request.
+   */
+  private async route(
     req: Request,
     server?: GatewayServer,
+    internal?: Principal,
   ): Promise<Response | undefined> {
     try {
       if (this.closed) throw unavailable();
@@ -118,6 +141,17 @@ export class CloudApp {
           });
         });
       }
+      if (this.oauth && !internal) {
+        const handled = await this.oauth.handle(req, u);
+        if (handled) return handled;
+        if (path === MCP_PATH)
+          return await serveMcp(
+            req,
+            this.oauth,
+            (principal) => async (url, init) =>
+              (await this.route(new Request(url, init), undefined, principal))!,
+          );
+      }
       if (path === "/v1/pair" && method === "POST") {
         if (this.pairInFlight >= 32)
           throw new CloudError(
@@ -132,7 +166,16 @@ export class CloudApp {
           this.pairInFlight--;
         }
       }
-      const p = await authenticate(req, this.service.db, this.verifier);
+      // A hosted MCP call may ask and notify; it never mints account or device credentials.
+      if (
+        internal &&
+        (path === "/v1/auth/link-token" ||
+          path === "/v1/pairing-codes" ||
+          path === "/v1/events")
+      )
+        throw new CloudError(403, "forbidden", "not available to MCP clients");
+      const p =
+        internal ?? (await authenticate(req, this.service.db, this.verifier));
       if (path === "/v1/auth/link-token" && method === "POST") {
         requireRole(p, "agent");
         if (!this.accountAuth?.publicConfig.canLinkExisting)

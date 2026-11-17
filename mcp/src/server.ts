@@ -4,7 +4,7 @@ import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sd
 import { SubscribeRequestSchema, UnsubscribeRequestSchema, McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { systemClock, type Clock } from "./clock.ts";
-import { clampWaitSeconds, defaultWaitSeconds, resolveConnection, type Env } from "./config.ts";
+import { clampWaitSeconds, defaultWaitSeconds, MAX_WAIT_SECONDS, resolveConnection, type Env } from "./config.ts";
 import {
   isAbortError,
   RelayClient,
@@ -45,12 +45,22 @@ export interface ServerDeps {
   pollGraceMs?: number;
   retryBackoffMs?: readonly number[];
   minCycleMs?: number;
+  /** Supplies the relay connection directly instead of reading env/config files (hosted HTTP endpoint). */
+  client?: () => RelayClient;
+  /** Shown to the human as the asking agent when the transport has no initialize handshake to read it from. */
+  agentName?: string;
+  /** false omits resources/subscribe: a stateless HTTP request has no stream to push updates on. */
+  subscriptions?: boolean;
+  /** Upper bound for wait_seconds (default 3600). A hosted endpoint keeps HTTP requests short. */
+  maxWaitSeconds?: number;
+  /** Replaces the pairing hint, which by default describes the local relay CLI. */
+  noDeviceWarning?: string;
 }
 
 type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
-const WAIT_SECONDS_DESCRIPTION =
-  "How long this call blocks waiting for the human's answer, in seconds (0-3600; out-of-range values are clamped). " +
+const waitSecondsDescription = (max: number) =>
+  `How long this call blocks waiting for the human's answer, in seconds (0-${max}; out-of-range values are clamped). ` +
   "Default: 50, chosen to stay under typical MCP tool-call timeouts (the user can change it with OYOBIDASHI_DEFAULT_WAIT_SECONDS). " +
   "Only pass a larger value if you know your MCP client allows tool calls that long. " +
   "0 returns immediately with status \"pending\". When the time runs out you get status \"pending\" and continue with wait_for_answer.";
@@ -130,8 +140,8 @@ const presenceOutputSchema = {
   error_code: z.string().optional().describe("Machine-readable error code (only when the call failed)"),
 };
 
-function deliveryWarning(delivery: RelayDelivery | undefined): string | undefined {
-  if (delivery?.paired_devices === 0) return NO_DEVICE_WARNING;
+function deliveryWarning(delivery: RelayDelivery | undefined, noDevice: string = NO_DEVICE_WARNING): string | undefined {
+  if (delivery?.paired_devices === 0) return noDevice;
   if (delivery && delivery.websocket_delivered === 0 && delivery.push_attempted === 0) return "A phone is paired, but no live connection or push provider could deliver this request. Ask the human to open お呼び出し or configure APNs/FCM. Delivery is not confirmed.";
   return undefined;
 }
@@ -146,11 +156,14 @@ export function createServer(deps: ServerDeps = {}): McpServer {
   const clock = deps.clock ?? systemClock;
   const cwd = deps.cwd ?? (() => process.cwd());
   const log = deps.log ?? ((message: string) => void process.stderr.write(`[oyobidashi-mcp] ${message}\n`));
+  const subscriptions = deps.subscriptions !== false;
+  const maxWaitSeconds = clampWaitSeconds(deps.maxWaitSeconds ?? MAX_WAIT_SECONDS);
+  const WAIT_SECONDS_DESCRIPTION = waitSecondsDescription(maxWaitSeconds);
 
   const mcp = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     {
-      capabilities: { resources: { subscribe: true } },
+      capabilities: { resources: subscriptions ? { subscribe: true } : {} },
       instructions:
         "oyobidashi lets you try to reach your human on their phone while they are away from the keyboard. Delivery is never guaranteed. " +
         "Use ask_human when you are blocked on a decision only they can make; if it returns status \"pending\", keep calling wait_for_answer with the request_id. " +
@@ -164,6 +177,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
 
   /** Resolved on every call so that a relay (and its config.json) started later is picked up. */
   function connect(): RelayClient {
+    if (deps.client) return deps.client();
     const connection = resolveConnection(env, deps.homedir);
     let cloud: CloudTokenProvider | undefined;
     if (connection.cloudAuthFile) {
@@ -195,7 +209,9 @@ export function createServer(deps: ServerDeps = {}): McpServer {
   const signature = (status: Awaited<ReturnType<RelayClient["getPresence"]>>) => JSON.stringify({devices: status.devices, recent_events: status.recent_events});
   mcp.registerResource("human_status", humanStatusURI, {
     title: "Human availability and call feedback", mimeType: "application/json",
-    description: "Explicitly shared availability, expiry, last seen and recent call outcomes. Subscribe to receive resources/updated when it changes; read again for the current state.",
+    description: subscriptions
+      ? "Explicitly shared availability, expiry, last seen and recent call outcomes. Subscribe to receive resources/updated when it changes; read again for the current state."
+      : "Explicitly shared availability, expiry, last seen and recent call outcomes. Read again for the current state.",
   }, async (uri, extra) => {
     const status = await connect().getPresence({signal: extra.signal});
     return {contents:[{uri:uri.href,mimeType:"application/json",text:JSON.stringify(status)}]};
@@ -206,7 +222,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
     presenceTimer = undefined;
     presenceAbort?.abort();
   };
-  mcp.server.setRequestHandler(SubscribeRequestSchema, async request => {
+  if (subscriptions) mcp.server.setRequestHandler(SubscribeRequestSchema, async request => {
     if(request.params.uri !== humanStatusURI) throw new McpError(ErrorCode.InvalidParams,"Unknown resource URI");
     if (subscribed) return {};
     fingerprint = signature(await connect().getPresence());
@@ -227,7 +243,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
     presenceTimer.unref?.();
     return {};
   });
-  mcp.server.setRequestHandler(UnsubscribeRequestSchema, async request => {
+  if (subscriptions) mcp.server.setRequestHandler(UnsubscribeRequestSchema, async request => {
     if(request.params.uri !== humanStatusURI) throw new McpError(ErrorCode.InvalidParams,"Unknown resource URI");
     stopPresence();
     return {};
@@ -237,7 +253,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
 
   function agentInfo(): { name?: string; cwd?: string } {
     const agent: { name?: string; cwd?: string } = {};
-    const name = truncate(mcp.server.getClientVersion()?.name, 100);
+    const name = truncate(deps.agentName ?? mcp.server.getClientVersion()?.name, 100);
     if (name) agent.name = name;
     let dir: string | undefined;
     try {
@@ -250,7 +266,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
   }
 
   function effectiveWait(requested: number | undefined): number {
-    return requested === undefined ? defaultWaitSeconds(env, log) : clampWaitSeconds(requested);
+    return Math.min(maxWaitSeconds, requested === undefined ? defaultWaitSeconds(env, log) : clampWaitSeconds(requested));
   }
 
   function progressReporter(extra: Extra): ((info: { elapsedSeconds: number; waitSeconds: number }) => void) | undefined {
@@ -387,7 +403,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
         requestId = created.request.id;
         return await waitAndReport(client, requestId, waitSeconds, extra, {
           initial: created.request,
-          warning: deliveryWarning(created.delivery),
+          warning: deliveryWarning(created.delivery, deps.noDeviceWarning),
         });
       } catch (e) {
         return fail(e, extra, requestId ? { requestId, created: true } : {});
@@ -441,7 +457,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
           { kind: "notification", question: message, agent: agentInfo() },
           { signal: extra.signal },
         );
-        return notifiedResult(created.request, deliveryWarning(created.delivery));
+        return notifiedResult(created.request, deliveryWarning(created.delivery, deps.noDeviceWarning));
       } catch (e) {
         return fail(e, extra, {});
       }

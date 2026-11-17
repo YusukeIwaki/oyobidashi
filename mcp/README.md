@@ -195,6 +195,7 @@ bun run typecheck   # tsc --noEmit (strict)
 ```
 src/index.ts         stdio エントリポイント
 src/server.ts        MCP サーバーとツール定義 (依存はすべて注入可能)
+src/http.ts          クラウドの /v1/mcp が使う Streamable HTTP の処理 (同じツール定義を共用)
 src/relay-client.ts  relay の Agent API クライアント (fetch と時計を注入可能)
 src/wait.ts          long-poll の繰り返し・リトライ
 src/results.ts       結果とエラーメッセージの組み立て
@@ -213,7 +214,7 @@ test/*.test.ts       config / relay-client / tools / tools-errors / extensions (
 
 ## クラウドへの接続
 
-クラウド版でもMCPはローカルのstdioブリッジを使い、Firebase IDトークンでAPIへ接続します。公開環境のメインURLは[api.oyobidashi.me](https://api.oyobidashi.me)です。既存の[oyobidashi.up.railway.app](https://oyobidashi.up.railway.app)も引き続き利用できます。MCP登録は既存の`scripts/mcp.sh`のままで、ローカルrelayの起動は不要です。URLだけで接続する汎用リモートMCPのOAuth認可サーバーは提供しません。
+クラウド版には、MCPクライアントへ`https://api.oyobidashi.me/v1/mcp`を登録してブラウザでログインするだけの接続方法もあります。その場合はこのディレクトリのセットアップは不要です。手順は[cloud/README.md](../cloud/README.md#urlだけで接続するmcp)を参照してください。以下は、ローカルのstdioブリッジからFirebase IDトークンでAPIへ接続する方法です。公開環境のメインURLは[api.oyobidashi.me](https://api.oyobidashi.me)です。既存の[oyobidashi.up.railway.app](https://oyobidashi.up.railway.app)も引き続き利用できます。MCP登録は既存の`scripts/mcp.sh`のままで、ローカルrelayの起動は不要です。
 
 リポジトリルートから、通常のターミナルで実行します。
 

@@ -137,6 +137,8 @@ export interface WakeBus {
 }
 export interface IdentityVerifier {
   verify(token: string): Promise<string>;
+  /** Also reports how the user signed in ("anonymous", "google.com", ...) when known. */
+  identify?(token: string): Promise<{ uid: string; provider: string | null }>;
 }
 export const turnView = (t: Turn): TurnView => ({
   id: t.id,

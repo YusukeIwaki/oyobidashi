@@ -15,6 +15,12 @@
 !relay/src/**/
 !relay/src/**/*.ts
 !relay/src/**/*.sql
+!mcp/
+!mcp/package.json
+!mcp/bun.lock
+!mcp/src/
+!mcp/src/**/
+!mcp/src/**/*.ts
 
 # Product site (Dockerfile.site). Same allowlist approach as the cloud image.
 !Dockerfile.site

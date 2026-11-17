@@ -4,6 +4,10 @@ FROM oven/bun:1.4.4 AS dependencies
 WORKDIR /app/cloud
 COPY cloud/package.json cloud/bun.lock ./
 RUN bun install --frozen-lockfile --production
+# The hosted MCP endpoint reuses the stdio server's tool definitions.
+WORKDIR /app/mcp
+COPY mcp/package.json mcp/bun.lock ./
+RUN bun install --frozen-lockfile --production
 
 FROM oven/bun:1.4.4 AS browser
 WORKDIR /app/cloud
@@ -12,7 +16,8 @@ RUN bun install --frozen-lockfile
 WORKDIR /app
 COPY cloud/src ./cloud/src
 COPY relay/src ./relay/src
-RUN bun build cloud/src/auth-browser.ts --target browser --minify --outfile /app/auth.js
+RUN bun build cloud/src/auth-browser.ts --target browser --minify --outfile /app/auth.js \
+    && bun build cloud/src/oauth-browser.ts --target browser --minify --outfile /app/oauth.js
 
 FROM oven/bun:1.4.4 AS runtime
 WORKDIR /app
@@ -23,7 +28,11 @@ COPY --from=dependencies /app/cloud/node_modules ./cloud/node_modules
 COPY cloud/package.json ./cloud/package.json
 COPY cloud/src ./cloud/src
 COPY relay/src ./relay/src
+COPY --from=dependencies /app/mcp/node_modules ./mcp/node_modules
+COPY mcp/package.json ./mcp/package.json
+COPY mcp/src ./mcp/src
 COPY --from=browser /app/auth.js ./cloud/public/auth.js
+COPY --from=browser /app/oauth.js ./cloud/public/oauth.js
 USER bun
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

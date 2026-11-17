@@ -26,7 +26,7 @@ Bun製LAN relay / stdio MCPと、SwiftUI iOS / Compose Material 3 Androidクラ�
 
 LAN版の音声の会話判断は **ログイン済みClaude Code CLIのみ**。Codexでもセットアップ・MCP・通知・テキスト返信は利用できるが、Codexの契約だけで音声中継が使えるとは案内しない。APIキーやCLIのOAuthトークンを抽出しない。
 
-クラウド版は `cloud/README.md` と `docs/CLOUD_PROTOCOL.md` を参照する。上記CLI方式はLAN版であり、クラウド版の会話ワーカーは明示設定したLLM APIを使う。Firebase IDトークンでユーザーを識別し、PostgreSQLが状態・ジョブの正本、Redisは更新通知。無言の通話はワーカーを占有しない。
+クラウド版は `cloud/README.md` と `docs/CLOUD_PROTOCOL.md` を参照する。MCPはstdioブリッジのほか、URL登録だけで接続する `/v1/mcp` (APIがOAuth認可サーバーを兼ねる) を提供する。ツール定義は `mcp/src/server.ts` を両方で共用する。上記CLI方式はLAN版であり、クラウド版の会話ワーカーは明示設定したLLM APIを使う。Firebase IDトークンでユーザーを識別し、PostgreSQLが状態・ジョブの正本、Redisは更新通知。無言の通話はワーカーを占有しない。
 
 ## 変更・検証
 

@@ -4,6 +4,6 @@
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "types": []
   },
-  "include": ["src/auth-browser.ts", "src/auth-browser-flow.ts", "../relay/src/auth-handoff.ts"],
+  "include": ["src/auth-browser.ts", "src/auth-browser-flow.ts", "src/oauth-browser.ts", "src/oauth-browser-flow.ts", "../relay/src/auth-handoff.ts"],
   "exclude": []
 }

@@ -1,10 +1,11 @@
 # クラウド版 お呼び出し
 
-Railway上でAPIと会話ワーカーを別サービスとして実行する構成です。ローカルLAN版の`relay/`も引き続き利用できます。スマホは従来のペアリングを使い、MCPはFirebase Authenticationへ接続するstdioブリッジを使います。既定は匿名で開始し、あとからGoogleなどを同じUIDへリンクして復旧可能にします。公開環境のメインURLは[api.oyobidashi.me](https://api.oyobidashi.me)です。既存の[oyobidashi.up.railway.app](https://oyobidashi.up.railway.app)も同じAPIへ接続できます。
+Railway上でAPIと会話ワーカーを別サービスとして実行する構成です。ローカルLAN版の`relay/`も引き続き利用できます。スマホは従来のペアリングを使います。MCPの接続方法は2つあります。URLを登録してブラウザでログインする[リモートMCP](#urlだけで接続するmcp)と、Firebase Authenticationへ接続するstdioブリッジです。stdioブリッジは匿名で開始し、あとからGoogleなどを同じUIDへリンクして復旧可能にします。公開環境のメインURLは[api.oyobidashi.me](https://api.oyobidashi.me)です。既存の[oyobidashi.up.railway.app](https://oyobidashi.up.railway.app)も同じAPIへ接続できます。
 
 ```mermaid
 flowchart LR
   MCP[stdio MCP] -->|Firebase ID token| API[API / WebSocket]
+  Remote[URLで接続するMCPクライアント] -->|OAuth access token| API
   Phone[スマホ] <-->|device token| API
   API <--> PG[(PostgreSQL)]
   API <--> Redis[Redis: 更新通知]
@@ -83,7 +84,32 @@ APIだけに公開ドメインを割り当て、HTTPSで利用します。ワー
 
 `/healthz`はプロセスの生存と機能を返し、`/readyz`はDB接続まで確認します。Redis停止はreadinessを落としません。SIGTERM時は新規処理を止め、端末を再接続させ、進行中ジョブを返却します。SIGKILLなら15秒のリース切れで別ワーカーが引き継ぎます。
 
+## URLだけで接続するMCP
+
+MCPクライアントに`https://<APIのホスト>/v1/mcp`を登録します。公開環境では次のとおりです。
+
+```sh
+claude mcp add --transport http oyobidashi https://api.oyobidashi.me/v1/mcp
+```
+
+初回の接続でブラウザが開きます。Google・Apple・GitHubのいずれかでログインすると、そのクライアントに接続を許可したことになります。スマホが未登録なら、同じ画面にQRコードが出るので、お呼び出しアプリで読み取ります。あとからスマホを追加するときは`https://<APIのホスト>/pair`を開きます。以後、`login-cloud.sh`や`pair-cloud.sh`は不要です。
+
+stdioブリッジで外部アカウントをリンク済みなら、同じアカウントでログインすると同じ利用者になり、登録済みのスマホをそのまま使えます。匿名のままのアカウントではリモートMCPを使えません。先に`--link`でアカウントを登録してください。
+
+APIがOAuth 2.1の認可サーバーを兼ねます。追加の環境変数はなく、`FIREBASE_WEB_API_KEY`があれば有効になります。発行元のURLはクライアントが接続したホストから決まり、`PUBLIC_URL`と同じホストならその値を使います。
+
+- クライアントは事前登録なしで接続します（動的クライアント登録）。クライアントシークレットはなく、PKCEが必須です。
+- アクセストークンは1時間、リフレッシュトークンは最後の利用から180日有効です。どちらもハッシュだけを`cloud_oauth`テーブルへ保存します。
+- これらのトークンで使えるのは`/v1/mcp`だけです。ペアリングコードの発行やアカウントのリンクには使えません。
+- 1回の呼び出しで待てるのは最長300秒です。`ask_human`が`pending`を返したら`wait_for_answer`を繰り返します。
+- `human://status`の購読は使えません。`get_human_status`で読み取ります。
+
+ローカル実行時は`bun run --cwd cloud build:auth`で同意画面のbundle（`public/oauth.js`）も生成します。エンドポイントと検証内容の詳細は[docs/CLOUD_PROTOCOL.md](../docs/CLOUD_PROTOCOL.md#hosted-mcp-endpoint)を参照してください。
+
 ## ログインとペアリング
+
+以下はstdioブリッジを使う場合の手順です。
+
 
 リポジトリルートから、対話デスクトップ端末で実行します。公開環境を使う場合、Firebase公開設定はAPIから取得するので`--api-key`不要です。自分の環境ではURLを自分のHTTPS originへ置き換えてください。
 
@@ -135,7 +161,7 @@ Appleは利用者の開発チームで本体App IDのSign in with Appleを有効
 
 ブラウザではFirebaseのメモリ内セッションを使い、保存済みの別アカウントへ自動接続しません。リンク時は元のUIDと一致することをカスタムトークン認証後・プロバイダー連携後・資格情報取得後に確認します。ハンドオフのfragmentは読み取り直後に消去し、IDトークン・refresh tokenを一度限りのループバックへPOSTします。MCP側もHost・Origin・state・UIDを検証します。ポップアップの取り消しや失敗で元の資格情報を置き換えません。
 
-これはFirebaseを利用する専用stdioブリッジです。任意のMCPクライアントがURLだけで接続するOAuth 2.1認可サーバーは含みません。APIはIDトークンの署名・発行元・プロジェクト・期限・UIDを検証します。Firebase側でログインを取り消した既発行トークンの即時失効照会は行わないため、IDトークンの有効期限までの窓があります。
+ここまではFirebaseを利用する専用stdioブリッジの説明です。URLだけで接続するクライアント向けの認可は[URLだけで接続するMCP](#urlだけで接続するmcp)を参照してください。APIはIDトークンの署名・発行元・プロジェクト・期限・UIDを検証します。Firebase側でログインを取り消した既発行トークンの即時失効照会は行わないため、IDトークンの有効期限までの窓があります。
 
 ## 障害とUXの契約
 

@@ -10,6 +10,7 @@ import { Maintenance } from "./maintenance.ts";
 import { MAX_WS_SNAPSHOT_BYTES } from "./app.ts";
 import { loadPushConfig } from "./push-config.ts";
 import { createAccountAuth } from "./account-auth.ts";
+import { PostgresOAuthStore } from "./oauth-postgres.ts";
 import { createFcmProvider } from "../../relay/src/push/fcm.ts";
 import {
   createApnsProvider,
@@ -55,6 +56,8 @@ export async function main(
     );
   const db = new PostgresDatabase(config.databaseUrl, config.dbPool);
   await db.migrate();
+  const oauthStore = new PostgresOAuthStore(db.sql);
+  await oauthStore.migrate();
   if (role === "migrate") {
     await db.close();
     return;
@@ -79,6 +82,12 @@ export async function main(
           config.maxSockets,
           await createAccountAuth(process.env),
           () => Bun.file(new URL("../public/auth.js", import.meta.url)).text(),
+          {
+            store: oauthStore,
+            script: () =>
+              Bun.file(new URL("../public/oauth.js", import.meta.url)).text(),
+            ...(config.publicUrl ? { publicUrl: config.publicUrl } : {}),
+          },
         )
       : null;
   const conversation =
@@ -167,6 +176,7 @@ export async function main(
       if (Date.now() - cleanupAt >= 60_000) {
         cleanupAt = Date.now();
         void db.cleanup().catch(() => {});
+        if (app) void oauthStore.cleanup(Date.now()).catch(() => {});
       }
     }, 1000),
   );

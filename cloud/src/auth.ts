@@ -18,13 +18,20 @@ export function firebaseVerifier(
       ),
       { timeoutDuration: 5000, cacheMaxAge: 3600_000 },
     );
-  const cache = new Map<string, { uid: string; until: number }>();
+  const cache = new Map<
+    string,
+    { uid: string; provider: string | null; until: number }
+  >();
   return {
     async verify(token) {
+      return (await this.identify!(token)).uid;
+    },
+    async identify(token) {
       if (token.length > 8192) throw unauthorized();
       const digest = hash(token),
         cached = cache.get(digest);
-      if (cached && cached.until > now()) return cached.uid;
+      if (cached && cached.until > now())
+        return { uid: cached.uid, provider: cached.provider };
       try {
         const { payload } = await jwtVerify(token, jwks, {
           algorithms: ["RS256"],
@@ -44,12 +51,16 @@ export function firebaseVerifier(
           payload.auth_time > now() / 1000
         )
           throw unauthorized();
+        const raw = (payload.firebase as { sign_in_provider?: unknown })
+            ?.sign_in_provider,
+          provider = typeof raw === "string" && raw.length <= 64 ? raw : null;
         if (cache.size >= 5000) cache.delete(cache.keys().next().value!);
         cache.set(digest, {
           uid: payload.sub,
+          provider,
           until: Math.min(payload.exp! * 1000, now() + 60_000),
         });
-        return payload.sub;
+        return { uid: payload.sub, provider };
       } catch (e) {
         if (e instanceof CloudError) throw e;
         const code = (e as { code?: string })?.code;
