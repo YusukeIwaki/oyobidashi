@@ -38,34 +38,35 @@ import StoreButtons from "./StoreButtons.astro";
             <p class="scr__date">キッチンにて</p>
             <div class="timer"><span>タイマー ・ 煮込み</span><b>あと 12:40</b></div>
           </div>
-          <!-- 着信 -->
+          <!-- 着信 (ロック画面。発信者名は実機と同じく「お呼び出し」) -->
           <div class="scr scr--ring">
-            <p class="scr__app">お呼び出し オーディオ</p>
-            <div class="caller">
-              <div class="caller__rings"><i></i><i></i><i></i>
-                <svg viewBox="24 20 60 58"><path fill="#23201A" d="M30,42 Q30,36 36,36 H72 Q78,36 78,42 V68 Q78,74 72,74 H36 Q30,74 30,68 Z"/><path fill="#388E3C" d="M36,42 H72 V54 H36 Z"/><path fill="#A5D6A7" d="M40,46 H68 V48 H40 ZM40,50 H60 V52 H40 Z"/><path fill="#FFF6E5" d="M40,60 H46 V66 H40 ZM51,60 H57 V66 H51 ZM62,60 H68 V66 H62 Z"/><path fill="#E8641B" d="M72,24 L74,30 L80,32 L74,34 L72,40 L70,34 L64,32 L70,30 Z"/></svg>
-              </div>
-              <p class="caller__name">Claude Code</p>
-              <p class="caller__sub">shop の作業について</p>
-            </div>
-            <div class="callbtns">
-              <span class="cb cb--no"><svg viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 0 0-2.67-1.85.996.996 0 0 1-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg></span>
-              <span class="cb cb--yes"><svg viewBox="0 0 24 24"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg></span>
-            </div>
+            <p class="ring__app"><svg viewBox="24 20 60 58"><path fill="#23201A" d="M30,42 Q30,36 36,36 H72 Q78,36 78,42 V68 Q78,74 72,74 H36 Q30,74 30,68 Z"/><path fill="#388E3C" d="M36,42 H72 V54 H36 Z"/><path fill="#A5D6A7" d="M40,46 H68 V48 H40 ZM40,50 H60 V52 H40 Z"/><path fill="#FFF6E5" d="M40,60 H46 V66 H40 ZM51,60 H57 V66 H51 ZM62,60 H68 V66 H62 Z"/><path fill="#E8641B" d="M72,24 L74,30 L80,32 L74,34 L72,40 L70,34 L64,32 L70,30 Z"/></svg>お呼び出しオーディオ</p>
+            <p class="ring__name">お呼び出し</p>
+            <div class="ring__slide"><span class="ring__knob"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="ring__label">スライドで応答</span></div>
           </div>
-          <!-- 通話 -->
+          <!-- 通話 (応答後のアプリ画面) -->
           <div class="scr scr--talk">
-            <p class="scr__app">通話中 ・ Claude Code</p>
-            <div class="lcd">
-              <p class="lcd__q">旧APIの呼び出しが3か所残っています。削除しますか、残しますか?</p>
-              <p class="lcd__thanks">ありがとうございます。作業に戻ります。</p>
+            <div class="call__icon"><svg viewBox="24 20 60 58"><path fill="#23201A" d="M30,42 Q30,36 36,36 H72 Q78,36 78,42 V68 Q78,74 72,74 H36 Q30,74 30,68 Z"/><path fill="#388E3C" d="M36,42 H72 V54 H36 Z"/><path fill="#A5D6A7" d="M40,46 H68 V48 H40 ZM40,50 H60 V52 H40 Z"/><path fill="#FFF6E5" d="M40,60 H46 V66 H40 ZM51,60 H57 V66 H51 ZM62,60 H68 V66 H62 Z"/><path fill="#E8641B" d="M72,24 L74,30 L80,32 L74,34 L72,40 L70,34 L64,32 L70,30 Z"/></svg></div>
+            <p class="call__from">Claude Code</p>
+            <p class="call__state">通話中</p>
+            <p class="call__q">旧APIを削除しますか、<br>残しますか?</p>
+            <p class="call__note">呼び出しが3か所残っています。</p>
+            <div class="call__status">
+              <div class="st st--speak">
+                <p class="st__label">読み上げ中…</p>
+                <p class="st__text">旧APIを削除しますか、残しますか?</p>
+              </div>
+              <div class="st st--listen">
+                <p class="st__label st__label--mic">聞き取り中… お話しください</p>
+                <p class="st__box">残して、警告だけ出して</p>
+                <p class="st__hint">※ 確定するまで送信されません</p>
+              </div>
+              <div class="st st--thanks">
+                <p class="st__label">読み上げ中…</p>
+                <p class="st__text">ありがとうございます。作業に戻ります。</p>
+              </div>
             </div>
-            <div class="listen">
-              <div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-              <p class="listen__state">聞き取り中…</p>
-              <p class="listen__cap">「残して、警告だけ出して」</p>
-            </div>
-            <span class="cb cb--no cb--end"><svg viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 0 0-2.67-1.85.996.996 0 0 1-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg></span>
+            <span class="call__end">終了</span>
           </div>
         </div>
       </div>

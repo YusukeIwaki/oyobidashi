@@ -16,9 +16,10 @@ out=$(CDPATH= cd -- "$out" && pwd)
 
 cd "$site"
 bun run build >/dev/null
+# astro preview は常駐プロセスを別に起動するので、killではなく stop で止める。
+bunx astro preview stop >/dev/null 2>&1 || true
 bunx astro preview --port "$port" >/dev/null 2>&1 &
-server=$!
-trap 'kill "$server" 2>/dev/null || true' EXIT INT TERM
+trap 'bunx astro preview stop >/dev/null 2>&1 || true' EXIT INT TERM
 tries=0
 until curl -sf -o /dev/null "http://localhost:$port/"; do
   tries=$((tries + 1))

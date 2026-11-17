@@ -173,50 +173,36 @@ h1, h2 {
 .timer { margin-top: auto; width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; text-align: left; font-size: 0.68rem; color: var(--ink-2); line-height: 1.5; }
 .timer b { display: block; font-size: 0.95rem; color: var(--ink); }
 
-.scr--ring, .scr--talk { background: var(--ink); color: var(--paper); }
-.scr__app { font-size: 0.68rem; color: #B9B09A; letter-spacing: 0.06em; }
-.caller { margin-top: 30px; }
-.caller__rings { position: relative; width: 92px; height: 92px; margin: 0 auto; display: grid; place-items: center; background: var(--paper); border-radius: 50%; }
-.caller__rings svg { width: 62px; position: relative; }
-.caller__rings i { position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--orange); opacity: 0; }
-.stage[data-phone="ring"] .caller__rings i { animation: ring 2.1s ease-out infinite; }
-.caller__rings i:nth-child(2) { animation-delay: .7s !important; }
-.caller__rings i:nth-child(3) { animation-delay: 1.4s !important; }
-@keyframes ring { 0% { transform: scale(1); opacity: .9; } 100% { transform: scale(2.1); opacity: 0; } }
-.caller__name { font-family: var(--mincho); font-weight: 800; font-size: 1.5rem; margin-top: 30px; letter-spacing: 0.02em; }
-.caller__sub { font-size: 0.72rem; color: #B9B09A; margin-top: 2px; }
-.callbtns { margin-top: auto; width: 100%; display: flex; justify-content: space-between; padding: 0 14px; }
-.cb { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; }
-.cb svg { width: 24px; fill: #fff; }
-.cb--no { background: #D8412F; }
-.cb--yes { background: var(--green); }
-.stage[data-phone="ring"] .cb--yes { animation: nudge 1s ease-in-out infinite; }
-@keyframes nudge { 50% { transform: scale(1.1); } }
-.cb--end { margin-top: auto; }
+/* 着信: ロック画面の着信表示 */
+.scr--ring { background: linear-gradient(165deg, #2B3A44 0%, #23201A 70%); color: var(--paper); padding-top: 64px; }
+.ring__app { display: flex; align-items: center; gap: 5px; font-size: 0.7rem; color: #B9B09A; }
+.ring__app svg { width: 16px; background: var(--paper); border-radius: 4px; }
+.ring__name { font-size: 1.55rem; font-weight: 700; line-height: 1.4; letter-spacing: 0.02em; }
+.ring__slide { margin-top: auto; width: 100%; height: 50px; border-radius: 999px; background: rgba(255, 246, 229, .16); display: flex; align-items: center; padding: 4px; position: relative; }
+.ring__knob { width: 42px; height: 42px; border-radius: 50%; background: var(--paper); color: #2F6FE0; display: grid; place-items: center; flex: none; }
+.ring__knob svg { width: 20px; }
+.ring__label { flex: 1; font-size: 0.74rem; color: #D9D0BA; padding-right: 10px; }
+.stage[data-phone="ring"] .ring__knob { animation: slide 1.7s ease-in-out infinite; }
+@keyframes slide { 0%, 20% { transform: none; } 70%, 100% { transform: translateX(38px); } }
 
-.lcd {
-  position: relative; width: 100%; min-height: 128px; margin-top: 18px;
-  background: var(--lcd-bg); color: var(--lcd);
-  border-radius: 8px; padding: 12px;
-  font-family: var(--dot); font-size: 0.84rem; line-height: 1.6; text-align: left;
-  box-shadow: inset 0 0 0 1px rgba(124, 252, 154, .2);
-}
-.lcd__thanks { position: absolute; inset: 12px; opacity: 0; transition: opacity .3s; }
-.lcd__q { transition: opacity .3s; }
-.stage[data-phone="thanks"] .lcd__q { opacity: 0; }
-.stage[data-phone="thanks"] .lcd__thanks { opacity: 1; }
-.listen { margin-top: 18px; width: 100%; }
-.bars { display: flex; justify-content: center; align-items: center; gap: 4px; height: 30px; }
-.bars i { width: 4px; height: 6px; border-radius: 2px; background: var(--orange); }
-.stage[data-phone="answer"] .bars i { animation: bar .7s ease-in-out infinite alternate; }
-.bars i:nth-child(2n) { animation-delay: .15s !important; }
-.bars i:nth-child(3n) { animation-delay: .3s !important; }
-.bars i:nth-child(5) { animation-delay: .45s !important; }
-@keyframes bar { to { height: 28px; } }
-.listen__state, .listen__cap { font-size: 0.7rem; color: #B9B09A; margin-top: 8px; }
-.listen__cap { display: none; color: var(--paper); font-size: 0.82rem; font-weight: 500; }
-.stage[data-phone="answer"] .listen__state, .stage[data-phone="thanks"] .listen__state { display: none; }
-.stage[data-phone="answer"] .listen__cap, .stage[data-phone="thanks"] .listen__cap { display: block; }
+/* 通話: 応答後のアプリ画面 (クリーム地) */
+.scr--talk { background: var(--paper); color: var(--ink); padding: 40px 12px 18px; }
+.call__icon svg { width: 34px; }
+.call__from { font-size: 0.78rem; font-weight: 700; margin-top: 2px; line-height: 1.5; }
+.call__state { font-size: 0.68rem; font-weight: 700; color: var(--green); line-height: 1.4; }
+.call__q { font-size: 0.9rem; font-weight: 700; line-height: 1.45; margin-top: 12px; }
+.call__note { font-size: 0.66rem; color: var(--ink-2); line-height: 1.5; margin-top: 6px; }
+.call__status { width: 100%; margin-top: 12px; min-height: 104px; }
+.st { display: none; }
+.stage[data-phone="ask"] .st--speak,
+.stage[data-phone="answer"] .st--listen,
+.stage[data-phone="thanks"] .st--thanks { display: block; }
+.st__label { font-size: 0.7rem; color: var(--ink-2); line-height: 1.6; }
+.st__label--mic { color: var(--orange-dark); font-weight: 700; }
+.st__text { font-size: 0.7rem; line-height: 1.55; margin-top: 2px; }
+.st__box { font-size: 0.74rem; line-height: 1.5; margin-top: 6px; padding: 7px 8px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+.st__hint { font-size: 0.58rem; color: var(--ink-2); margin-top: 4px; line-height: 1.4; }
+.call__end { margin-top: auto; width: 100%; background: #E5392F; color: #fff; font-size: 0.78rem; font-weight: 700; border-radius: 999px; padding: 7px 0; line-height: 1.5; }
 
 /* ── セクション共通 ── */
 .sec { padding: clamp(64px, 9vw, 128px) 0; }
@@ -247,15 +233,19 @@ h1, h2 {
 .way:last-child { border-right: 0; }
 .way h3 { font-family: var(--mincho); font-weight: 800; font-size: 1.5rem; margin: 24px 0 8px; }
 .way > p { color: #C9C0AA; font-size: 0.95rem; }
-.way__fig { height: 168px; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+.way__fig { height: 196px; display: flex; flex-direction: column; justify-content: center; align-items: center; }
 .noti, .reply { width: 100%; max-width: 280px; background: var(--surface); color: var(--ink); border-radius: 14px; padding: 12px 14px; font-size: 0.8rem; line-height: 1.55; }
 .noti__app { font-size: 0.66rem; color: var(--ink-2); }
 .noti__q { font-weight: 700; margin-top: 2px; }
 .noti__btns { display: flex; gap: 8px; margin-top: 10px; }
 .noti__btns span { flex: 1; text-align: center; background: var(--container); border-radius: 8px; padding: 5px 4px; font-size: 0.72rem; font-weight: 700; }
 .noti__btns span:first-child { background: var(--orange-dark); color: #fff; }
-.reply__q { font-weight: 700; }
-.reply__a { margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; background: #fff; }
+.reply__from { font-size: 0.66rem; color: var(--ink-2); }
+.reply__from span { background: var(--orange-soft); color: var(--ink); font-weight: 700; border-radius: 999px; padding: 1px 8px; margin-left: 4px; }
+.reply__q { font-weight: 700; margin-top: 2px; }
+.reply__note { margin-top: 6px; font-size: 0.7rem; color: var(--ink-2); }
+.reply__note b { color: var(--ink); margin-right: 6px; }
+.reply__a { margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; background: #fff; }
 .reply__a i { display: inline-block; width: 2px; height: 1em; background: var(--orange); vertical-align: -2px; margin-left: 2px; animation: blink 1s steps(2) infinite; }
 .wave { display: flex; align-items: center; gap: 6px; height: 84px; }
 .wave i { width: 6px; border-radius: 3px; background: var(--lcd); height: 20%; animation: wave 1.1s ease-in-out infinite alternate; }

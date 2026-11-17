@@ -39,6 +39,7 @@
 ## 内容を変えるとき
 
 - **事実の出どころ:** セットアップ手順は `cloud/README.md`・`mcp/README.md`、届き方やMCPツールはルートの `README.md`・`mcp/README.md` が正です。そちらを変えたら `Setup.astro`・`Delivery.astro`・`Faq.astro` も合わせます。サイトだけに書いて実装と食い違わせない。
+- **アプリの画面:** 実機のスクリーンショットは `docs/product-reference/<日付>/` にあります。サイト内のスマホ画面や通知の絵は、これを見て描き起こしたものです。アプリの画面や文言が変わったら見比べて直します。参考画像には他社アプリの画面が写っているものがあるので、そのままサイトへ載せない。着信の発信者名は「お呼び出し」、応答後の画面に送信元 (エージェント名) と質問が出ます。
 - **ストアURL:** `src/config.ts` の `STORE_URLS` に入れると全ボタンがリンクになります。空のあいだは「近日公開」表示です。
 - **料金:** `Pricing.astro`。無料は Muse Spark 1.3 contributor (学習利用あり)、アプリ内課金は Muse Spark 1.3 (学習利用なし)。価格は未記載です。
 - **Astroの注意:** テンプレート内の `{` `}` は式として解釈されます。JSONなど波かっこを含む文字列は、frontmatterで変数にして `{変数}` で出します (`Setup.astro` の `mcpConfig` が例)。
@@ -63,6 +64,8 @@ bun run --cwd site dev                 # http://localhost:4321 で開発
 bun run --cwd site build               # site/dist/ へ出力。エラーなく終わること
 ./site/scripts/screenshot.sh [出力先]   # ビルドして 1440 / 820 / 390px で撮影
 ```
+
+ヒーローのスマホ画面は時間で切り替わります。`http://localhost:4321/?demo=ring` のように `?demo=` へ `idle` / `ring` / `ask` / `answer` / `thanks` を付けると、その状態で止めて確認できます。
 
 見た目に関わる変更では、`screenshot.sh` の画像を実際に開いて確認します。ビルドが通っただけで表示を確認済みとしない。見る点は、見出しの折り返し、文字の切れ・はみ出し、変更した箇所の3幅での配置です。ページが伸びて下が写らなくなったら、スクリプト内のタイル数を増やします。
 

@@ -33,7 +33,12 @@ if (stage) {
     [7, "idle", 3600],
   ];
 
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  // 表示確認用: ?demo=ring のように状態を固定できる (idle / ring / ask / answer / thanks)
+  const pinned = new URLSearchParams(location.search).get("demo");
+  const pinnedStep = seq.find(([, phone]) => phone === pinned);
+  if (pinnedStep) {
+    show(pinnedStep[0], pinnedStep[1]);
+  } else if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
     show(7, "answer");
   } else {
     let i = 0;
