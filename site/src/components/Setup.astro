@@ -1,49 +1,41 @@
 ---
-// MCPクライアントへ書き足す設定。波かっこはAstroの式と衝突するので文字列で持つ。
-const mcpConfig = JSON.stringify(
-  { mcpServers: { oyobidashi: { command: "/absolute/path/to/oyobidashi/scripts/mcp.sh" } } },
-  null,
-  2,
-);
+import { GITHUB_URL } from "../config";
 ---
 <section class="sec" id="setup">
   <div class="wrap">
     <div class="sec__head">
       <span class="chip" aria-hidden="true">ｾｯﾄｱｯﾌﾟ</span>
       <h2>準備は3つ。</h2>
-      <p>要るのは <a href="https://bun.sh" rel="noopener">Bun</a> とスマホアプリ。MCPサーバーを足したエージェントが、電話をかけられるようになります。</p>
+      <p>要るのはスマホアプリと、Google・Apple・GitHubのどれかのアカウント。パソコンに入れるものはありません。</p>
     </div>
 
     <ol class="steps">
       <li class="step">
         <div class="step__n" aria-hidden="true">1</div>
         <div class="step__body">
-          <h3>MCPサーバーで認証する</h3>
-          <p>メールアドレスもパスワードも聞きません。匿名ではじまり、Google・Apple・GitHubはあとから復旧用に足せます。</p>
-          <div class="code"><button class="copy" type="button">コピー</button><pre><code>git clone https://github.com/YusukeIwaki/oyobidashi.git
-cd oyobidashi
-bun install --cwd mcp --frozen-lockfile
-./scripts/login-cloud.sh --url https://api.oyobidashi.me</code></pre></div>
+          <h3>エージェントにURLを登録する</h3>
+          <p>Claude Codeなら次の1行です。ほかのツールでは、MCPサーバーのURLに <code>https://api.oyobidashi.me/v1/mcp</code> を入れます。</p>
+          <div class="code"><button class="copy" type="button">コピー</button><pre><code>claude mcp add --transport http oyobidashi https://api.oyobidashi.me/v1/mcp</code></pre></div>
         </div>
       </li>
       <li class="step">
         <div class="step__n" aria-hidden="true">2</div>
         <div class="step__body">
-          <h3>スマホアプリとペアリングする</h3>
-          <p>ターミナルに出るQRコードを、アプリの設定から読み取ります。URLとコードの手入力でも構いません。コードは10分、1回きりです。</p>
-          <div class="code"><button class="copy" type="button">コピー</button><pre><code>./scripts/pair-cloud.sh</code></pre></div>
+          <h3>ブラウザでログインする</h3>
+          <p>はじめて接続するとブラウザが開きます。Google・Apple・GitHubのどれかでログインすると、そのエージェントに接続を許可したことになります。</p>
         </div>
       </li>
       <li class="step">
         <div class="step__n" aria-hidden="true">3</div>
         <div class="step__body">
-          <h3>ツールに登録する</h3>
-          <p>Claude CodeやCodexなど、MCP対応のエージェントの設定に書き足します。</p>
-          <div class="code"><button class="copy" type="button">コピー</button><pre><code>{mcpConfig}</code></pre></div>
+          <h3>スマホアプリとペアリングする</h3>
+          <p>同じ画面に出るQRコードを、アプリの設定から読み取ります。コードは10分、1回きりです。スマホをあとから足すときは <a href="https://api.oyobidashi.me/pair" rel="noopener">api.oyobidashi.me/pair</a> を開きます。</p>
           <p class="step__after">あとは頼むときに、ひとこと。<q>困ったら電話して。</q></p>
         </div>
       </li>
     </ol>
+
+    <p class="steps__note">自分のサーバーやLANの中だけで動かす手順は、<a href={GITHUB_URL} rel="noopener">GitHub</a>にあります。</p>
 
     <div class="tools">
       <h3>エージェントに増える道具</h3>

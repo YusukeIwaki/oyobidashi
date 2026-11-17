@@ -370,6 +370,8 @@ h1, h2 {
 .step p { color: var(--ink-2); margin-top: 6px; }
 .step__after { margin-top: 18px !important; color: var(--ink) !important; }
 .step__after q { font-family: var(--mincho); font-weight: 800; font-size: 1.2rem; quotes: "「" "」"; background: linear-gradient(transparent 62%, var(--orange-soft) 62%); }
+.step p code { font-family: var(--mono); font-size: 0.86em; overflow-wrap: anywhere; }
+.steps__note { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--ink-2); font-size: 0.94rem; }
 .code { position: relative; margin-top: 16px; background: var(--ink); border-radius: 8px; }
 .code pre { margin: 0; padding: 18px 20px; overflow-x: auto; line-height: 1.5; }
 .code code { font-family: var(--mono); font-size: 0.82rem; line-height: 1.75; color: #EFE6D2; white-space: pre; }
