@@ -18,11 +18,8 @@ import java.time.format.DateTimeFormatter
 object Texts {
     const val UNREACHABLE = "中継サーバーに接続できません。ネットワーク接続を確認してください"
 
-    const val PLAN = "プラン"
-    const val BILLING_ACTIVE = "通話の内容は学習に使われません。"
-    const val BILLING_INACTIVE = "通話の内容がモデルの学習に使われます。"
-    const val BILLING_SUBSCRIBE = "学習に使わないプランにする"
-    const val BILLING_MANAGE = "サブスクリプションを管理"
+    const val BILLING_ACTIVE = "通話の内容がAIモデルの学習に使われません。"
+    const val BILLING_INACTIVE = "通話の内容がAIモデルの学習に使われます。"
     const val BILLING_SYNC_FAILED = "プランの状態を確認できませんでした。しばらく待ってからもう一度お試しください"
     const val BILLING_MANAGE_FAILED = "ブラウザで開けませんでした"
 

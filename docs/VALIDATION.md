@@ -108,6 +108,20 @@ App Attestの検証とApp Storeの署名検証は、試験用の証明書によ�
 | TestFlight | 配布版と同じ App Attest (production) での一連の流れ。課金は発生しない | 購入はSandbox扱い |
 | Google Play のライセンステスター（内部テスト版） | テスト用の支払い方法での購入、数分ごとの更新、Play Integrity、通知 | Playから入れたビルドが必要。手元でビルドしたAPKは検証に通らない |
 
+### Google Play の初回内部テスト (2026-11-18)
+
+`me.oyobidashi.android` を Play Console に登録し、Google 管理のアプリ署名鍵と別のアップロード鍵を確認しました。内部テストに `0.2.0`（バージョンコード `2`、対象 API 36）を公開しました。`me.oyobidashi.ai.monthly` の基本プラン `monthly` は日本で月額150円・自動更新です。既存の Google Cloud プロジェクトを Play Integrity にリンクし、Play Console から送ったテスト通知が専用 Pub/Sub トピックに到達することを確認しました。
+
+Android の単体試験と Debug APK・署名付き AAB、iOS Kit の単体試験と iOS Simulator 向けビルド、実 PostgreSQL／Redis を使うクラウド試験を確認しました。自動試験では、同じ利用者の iOS 購入が Android に反映され、別の利用者には反映されないことも確認しました。この時点では、実機のテスト購入、Play Integrity の実トークン、購読の更新・解約通知のクラウドへの反映は未確認です。
+
+続いて、同じ Google アカウントを内部テスター・ライセンステスターに登録し、招待の受諾と Pixel 10a の Play ストアでのアカウント一致を確認しました。購入検証サービスアカウントには対象アプリの権限を付与し、Google Play Developer API が検証用の無効な購入トークンを `400` で拒否するところまで確認しました。Play Console のトラックには「内部テスターに公開」と出ていますが、参加後のダウンロード先は Chrome で `Not Found`、Pixel で「アイテムは見つかりませんでした。」と表示され、実機のインストール・購入には進めませんでした。Play 版が入手できるまで Pixel の開発版は保持しました。
+
+22時台の再確認で配布ページが開くようになりました。Pixel 10a（Android 17）から開発版を削除し、Play ストアから `0.2.0` を入れ直しました。インストール元は `com.android.vending` でした。隔離した検証用 API にペアリングし、設定の FREE、本番向け表示の月額150円、購入画面の「テストカード、常に承認」と「請求が行われることはありません」を確認しました。テスト購入後、実際の Play Integrity および購入照会を経て検証用 DB に有効な Play 購読が1件登録され、設定が PLUS に切り替わりました。認証済みの `/v1/presence` に `voice_training` が付かなくなることも確認しました。Pixel は Play 版のまま Oyobidashi クラウドへ再ペアリングし、接続表示を確認しました。
+
+別の隔離DBで前回の Play テスト購入を再同期し、Pixel の「Google Playの購入を復元」で「Google Playの購入情報を確認しました。」を確認しました。Google Play Developer API でもテスト購入かつ承認済みでした。「Google Playで購読を管理」から解約すると Google の状態が `CANCELED` になり、22:33:17 JST の期限までは PLUS を保ちました。期限後に Google の API で `EXPIRED`、Pixel の設定で FREE、検証用 DB に有効な Play 購読がないことと `/v1/presence` の `voice_training` が戻ることを確認しました。アプリまたはサーバーの時計・購読データは書き換えていません。
+
+同じ隔離環境と利用者に iPhone 16 Pro と Pixel 10a をペアリングし、両方が FREE であることを確認しました。iPhone でアップグレードを押すと、StoreKit は当日16:46:38 JST に期限切れになった Sandbox 取引を返しました。購入結果と StoreKit の更新で届いた取引もサーバーへ同期する修正を入れ、サーバーの取引署名検証と、期限切れにより PLUS が有効にならないことを確認しました。その後、iPhone の Sandbox 設定にある「トランザクションを開始」で新規購入し、サーバーが同じ利用者に有効な Apple 購読を1件登録し、`/v1/presence` から `voice_training` が消えることを確認しました。iPhone と Play 内部テスト版の Pixel の両方で PLUS が表示され、Pixel には「App Storeで購入した購読は、iPhoneの設定から管理できます。」と案内されました。
+
 組織による一括購入(Apple Business／Apple School Manager)の席は、`ownershipType`が`assigned`のトランザクションとして届き、取り消しは`revocationType`が`ASSIGNMENT_REVOKE`になります(Xcode 27のStoreKit定義で確認)。席ごとに`originalTransactionId`が分かれるかどうかはAppleの文書を取得できず未確認のため、複数のアカウントが同じIDを保有できる扱いにしています。
 
 ## Push送信先の再インストール・有効期限 (2026-11-17)

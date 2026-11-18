@@ -35,8 +35,11 @@ import kotlin.coroutines.resumeWithException
 data class BillingPlanState(
     val status: BillingStatus? = null,
     val formattedPrice: String? = null,
-    val productId: String? = null,
+    val googleAvailable: Boolean = false,
+    val loadingPrice: Boolean = false,
+    val working: Boolean = false,
     val syncError: String? = null,
+    val notice: String? = null,
 )
 
 /**
@@ -44,7 +47,7 @@ data class BillingPlanState(
  *
  * 購入の確認 (acknowledge) はサーバーが行うので、端末側では行わない。
  * 起動時・購入後・ストア更新時に購入を照会して [BillingSync] へ渡す。
- * プロジェクト番号が未設定なら何もしない。
+ * Play Integrity が未設定でもクラウドの現在の利用権は表示する。
  */
 class BillingManager(
     context: Context,
@@ -52,10 +55,8 @@ class BillingManager(
     private val api: () -> BillingApi?,
     cloudProjectNumber: String,
 ) : PurchasesUpdatedListener {
-    val configured: Boolean = cloudProjectNumber.trim().toLongOrNull() != null
-
     private val integrity: PlayIntegrityTokens? =
-        if (configured) PlayIntegrityTokens(context, cloudProjectNumber) else null
+        if ((cloudProjectNumber.trim().toLongOrNull() ?: 0) > 0) PlayIntegrityTokens(context, cloudProjectNumber) else null
 
     private val billingClient: BillingClient = BillingClient.newBuilder(context.applicationContext)
         .setListener(this)
@@ -68,111 +69,145 @@ class BillingManager(
 
     private val mutex = Mutex()
 
-    @Volatile
-    private var productDetails: ProductDetails? = null
-
-    @Volatile
-    private var offerToken: String? = null
+    private data class MonthlyPlan(val details: ProductDetails, val offerToken: String, val price: String)
+    private var monthlyPlan: MonthlyPlan? = null
+    private var purchaseApi: BillingApi? = null
 
     override fun onPurchasesUpdated(billingResult: BillingResult, purchases: List<Purchase>?) {
-        if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) refresh()
+        val purchaseClient = purchaseApi
+        purchaseApi = null
+        when (billingResult.responseCode) {
+            BillingClient.BillingResponseCode.OK, BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED -> {
+                val pending = purchases.orEmpty().any { it.purchaseState == Purchase.PurchaseState.PENDING }
+                refresh(notice = if (pending) "Google Playで支払いを確認中です。" else null)
+            }
+            BillingClient.BillingResponseCode.USER_CANCELED -> Unit
+            else -> if (purchaseClient != null && api() === purchaseClient) {
+                _state.value = _state.value.copy(syncError = Texts.BILLING_SYNC_FAILED)
+            }
+        }
     }
 
     /** セッション終了時にサーバーの状態表示を消す。 */
     fun clear() {
-        productDetails = null
-        offerToken = null
+        monthlyPlan = null
+        purchaseApi = null
         _state.value = BillingPlanState()
     }
 
     /** 起動時・設定表示時・ストア更新時に、状態と購入をサーバーへ同期する。 */
-    fun refresh() {
-        if (!configured) return
+    fun refresh() = refresh(notice = null)
+
+    private fun refresh(notice: String?) {
+        val client = api() ?: return
         scope.launch {
             mutex.withLock {
-                try {
-                    refreshInternal()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    _state.value = _state.value.copy(syncError = Texts.BILLING_SYNC_FAILED)
-                }
+                if (api() !== client) return@withLock
+                withFeedback(client) { refreshInternal(client, notice = notice) }
+            }
+        }
+    }
+
+    fun restore() {
+        val client = api() ?: return
+        if (!_state.value.googleAvailable || _state.value.working) return
+        _state.value = _state.value.copy(working = true, syncError = null, notice = null)
+        scope.launch {
+            mutex.withLock {
+                if (api() !== client) return@withLock
+                withFeedback(client) { refreshInternal(client, restoring = true) }
             }
         }
     }
 
     /** 購入画面を出す。成否はストアの通知とその後の同期で確定し、端末側では解錠しない。 */
     fun launchBillingFlow(activity: Activity) {
-        if (!configured) return
+        val client = api() ?: return
+        if (_state.value.working || monthlyPlan == null || _state.value.status?.active != false) return
+        _state.value = _state.value.copy(working = true, syncError = null, notice = null)
         scope.launch {
             mutex.withLock {
-                try {
-                    val details = productDetails ?: run {
-                        val ids = api()?.billingStatus()?.google?.productIds.orEmpty()
-                        if (ids.isEmpty()) null else loadProductDetails(ids)?.first
-                    }
-                    val token = offerToken
-                    if (details == null || token == null) {
-                        _state.value = _state.value.copy(syncError = Texts.BILLING_SYNC_FAILED)
-                        return@withLock
-                    }
+                if (api() !== client) return@withLock
+                withFeedback(client) {
+                    refreshInternal(client)
+                    val plan = monthlyPlan ?: return@withFeedback
+                    if (api() !== client || _state.value.status?.active != false) return@withFeedback
                     val params = BillingFlowParams.ProductDetailsParams.newBuilder()
-                        .setProductDetails(details)
-                        .setOfferToken(token)
+                        .setProductDetails(plan.details)
+                        .setOfferToken(plan.offerToken)
                         .build()
                     val flowParams = BillingFlowParams.newBuilder()
                         .setProductDetailsParamsList(listOf(params))
                         .build()
-                    val result = billingClient.launchBillingFlow(activity, flowParams)
-                    when (result.responseCode) {
-                        BillingClient.BillingResponseCode.OK -> refreshInternal()
-                        BillingClient.BillingResponseCode.USER_CANCELED -> Unit
-                        else -> _state.value = _state.value.copy(syncError = Texts.BILLING_SYNC_FAILED)
+                    purchaseApi = client
+                    val result = try {
+                        billingClient.launchBillingFlow(activity, flowParams)
+                    } catch (e: RuntimeException) {
+                        purchaseApi = null
+                        throw e
                     }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    _state.value = _state.value.copy(syncError = Texts.BILLING_SYNC_FAILED)
+                    if (result.responseCode != BillingClient.BillingResponseCode.OK) purchaseApi = null
+                    when (result.responseCode) {
+                        BillingClient.BillingResponseCode.OK, BillingClient.BillingResponseCode.USER_CANCELED -> Unit
+                        BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED -> refreshInternal(client)
+                        else -> error("purchase flow unavailable")
+                    }
                 }
             }
         }
     }
 
-    private suspend fun refreshInternal() {
-        val client = api() ?: run {
-            _state.value = BillingPlanState()
-            return
+    private suspend fun withFeedback(client: BillingApi, block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            if (api() === client) _state.value = _state.value.copy(syncError = Texts.BILLING_SYNC_FAILED)
+        } finally {
+            if (api() === client) _state.value = _state.value.copy(working = purchaseApi != null, loadingPrice = false)
         }
-        val tokens = integrity ?: return
+    }
+
+    private suspend fun refreshInternal(client: BillingApi, restoring: Boolean = false, notice: String? = null) {
         val status = client.billingStatus()
-        if (!status.enabled) {
-            productDetails = null
-            offerToken = null
-            _state.value = BillingPlanState(status = status)
-            return
-        }
-        var formattedPrice = _state.value.formattedPrice
-        var productId = _state.value.productId
-        val googleIds = status.google?.productIds.orEmpty()
-        if (googleIds.isNotEmpty()) {
-            loadProductDetails(googleIds)?.let { (details, price) ->
-                formattedPrice = price ?: formattedPrice
-                productId = details.productId
-            }
-        }
-        val purchases = queryPurchasedPurchases()
-        // 報告する購入が無ければ端末検証も送信もしない。空の報告はサーバーの状態を変えない。
-        val synced = if (purchases.isEmpty()) status else BillingSync(client, tokens).sync(purchases)
-        _state.value = BillingPlanState(
-            status = synced,
-            formattedPrice = formattedPrice,
-            productId = productId ?: status.google?.productIds?.firstOrNull(),
+        if (api() !== client) return
+        val ids = status.google?.productIds.orEmpty()
+        val tokens = integrity?.takeIf { status.enabled && ids.isNotEmpty() }
+        monthlyPlan = null
+        _state.value = _state.value.copy(
+            status = status,
+            formattedPrice = null,
+            googleAvailable = tokens != null,
+            loadingPrice = tokens != null && !status.active,
             syncError = null,
+            notice = notice ?: _state.value.notice,
         )
+        if (tokens == null) return
+
+        val purchases = queryPurchasedPurchases(ids)
+        if (api() !== client) return
+        val synced = if (purchases.isEmpty()) status else BillingSync(client, tokens).sync(purchases)
+        if (api() !== client) return
+        val restored = restoring && purchases.isNotEmpty() && synced.activeStores?.contains("google") == true
+        _state.value = _state.value.copy(
+            status = synced,
+            notice = when {
+                restored -> "Google Playの購入情報を確認しました。"
+                restoring -> "このGoogleアカウントで復元できる購入は見つかりませんでした。"
+                else -> _state.value.notice
+            },
+        )
+        if (synced.active) return
+        _state.value = _state.value.copy(loadingPrice = true)
+        val plan = loadProductDetails(ids)
+        if (api() !== client) return
+        monthlyPlan = plan
+        _state.value = _state.value.copy(formattedPrice = plan?.price)
     }
 
     /** SUBS の商品詳細を取り、ベースプランの offer と月額表示を覚える。 */
-    private suspend fun loadProductDetails(productIds: List<String>): Pair<ProductDetails, String?>? {
+    private suspend fun loadProductDetails(productIds: List<String>): MonthlyPlan? {
         if (productIds.isEmpty()) return null
         ensureConnected()
         val products = productIds.map { productId ->
@@ -187,26 +222,21 @@ class BillingManager(
         if (result.billingResult.responseCode != BillingClient.BillingResponseCode.OK) {
             throw IllegalStateException("product details unavailable")
         }
-        val details = result.productDetailsList?.firstOrNull() ?: return null
-        val offer = details.subscriptionOfferDetails
-            ?.firstOrNull { it.offerId == null }
-            ?: details.subscriptionOfferDetails?.firstOrNull()
-            ?: return null
-        productDetails = details
-        offerToken = offer.offerToken
-        return details to monthlyPrice(offer)
-    }
-
-    private fun monthlyPrice(offer: ProductDetails.SubscriptionOfferDetails): String? {
-        val phases = offer.pricingPhases.pricingPhaseList
-        val phase = phases.firstOrNull {
-            it.billingPeriod == "P1M" && it.recurrenceMode == ProductDetails.RecurrenceMode.INFINITE_RECURRING
-        } ?: phases.lastOrNull()
-        return phase?.formattedPrice
+        val details = result.productDetailsList.orEmpty().associateBy { it.productId }
+        for (id in productIds) {
+            val product = details[id] ?: continue
+            for (offer in product.subscriptionOfferDetails.orEmpty().filter { it.offerId == null }) {
+                val phase = offer.pricingPhases.pricingPhaseList.singleOrNull() ?: continue
+                if (phase.billingPeriod == "P1M" && phase.recurrenceMode == ProductDetails.RecurrenceMode.INFINITE_RECURRING) {
+                    return MonthlyPlan(product, offer.offerToken, phase.formattedPrice)
+                }
+            }
+        }
+        return null
     }
 
     /** 購入済み (PURCHASED) の定期購入をすべて取り出す。保留中は含めない。 */
-    private suspend fun queryPurchasedPurchases(): List<PurchaseRef> {
+    private suspend fun queryPurchasedPurchases(productIds: List<String>): List<PurchaseRef> {
         ensureConnected()
         val params = QueryPurchasesParams.newBuilder()
             .setProductType(BillingClient.ProductType.SUBS)
@@ -217,7 +247,9 @@ class BillingManager(
         }
         return result.purchasesList
             .filter { it.purchaseState == Purchase.PurchaseState.PURCHASED }
-            .flatMap { purchase -> purchase.products.map { productId -> PurchaseRef(productId, purchase.purchaseToken) } }
+            .flatMap { purchase ->
+                purchase.products.filter { it in productIds }.map { PurchaseRef(it, purchase.purchaseToken) }
+            }
     }
 
     private suspend fun ensureConnected() {

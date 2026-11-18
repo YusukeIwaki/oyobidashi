@@ -39,6 +39,7 @@ struct CurrentPlanRow: View {
 
 struct PlanChangeSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.purchase) private var purchase
     @ObservedObject var store: BillingStore
     @State private var selection: BillingPlanPresentation.Plan
     @State private var showingManagement = false
@@ -100,7 +101,8 @@ struct PlanChangeSheet: View {
     private func confirm() {
         switch store.planPresentation.action(for: selection) {
         case .none: break
-        case .purchase: Task { await store.purchase() }
+        case .purchase:
+            Task { await store.purchase { try await purchase($0) } }
         case .manageSubscriptions: showingManagement = true
         }
     }
@@ -143,7 +145,7 @@ private struct PlanPickerContent: View {
                     Text("組織から割り当てられた購読は、組織の管理者が変更します。")
                         .font(.footnote)
                         .foregroundStyle(PagerTheme.inkSoft)
-                } else if presentation.currentPlan == .standard && selection == .free {
+                } else if presentation.currentPlan == .standard && selection == .free && presentation.action(for: .free) == .manageSubscriptions {
                     Text("App Storeで解約の手続きを行います。有効期限までは現在のプランをご利用いただけます。")
                         .font(.footnote)
                         .foregroundStyle(PagerTheme.inkSoft)
@@ -153,7 +155,13 @@ private struct PlanPickerContent: View {
                         .foregroundStyle(PagerTheme.inkSoft)
                 }
 
-                if displayPrice == nil && !isLoadingProducts {
+                if presentation.hasGoogleSubscription {
+                    Text("Google Playで購入した購読は、AndroidのGoogle Playで管理できます。")
+                        .font(.footnote)
+                        .foregroundStyle(PagerTheme.inkSoft)
+                }
+
+                if presentation.currentPlan == .free && displayPrice == nil && !isLoadingProducts {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("料金を取得できませんでした。再読み込みしてください。")
                             .font(.footnote)

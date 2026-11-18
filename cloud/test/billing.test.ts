@@ -17,6 +17,7 @@ const BUNDLE = "com.example.app",
   PRODUCT = "voice.monthly";
 const store = fakeAppStore(),
   attest = fakeAppAttest(APP_ID);
+const url = process.env.CLOUD_TEST_DATABASE_URL;
 afterAll(() => attest.dispose());
 
 function setup(config: Partial<BillingConfig> = {}, database?: Database) {
@@ -126,6 +127,7 @@ describe("subscription billing", () => {
       enabled: true,
       active: false,
       expires_at: null,
+      active_stores: [],
       apple: { product_ids: [PRODUCT] },
     });
     expect(await s.training("alice")).toBe(true);
@@ -475,7 +477,7 @@ describe("subscription billing", () => {
 describe("Google Play billing", () => {
   const PACKAGE = "com.example.android",
     hashOf = (text: string) => createHash("sha256").update(text).digest("base64url");
-  function google(overrides: { verdict?: Record<string, any>; purchases?: Record<string, any> } = {}) {
+  function google(overrides: { verdict?: Record<string, any>; purchases?: Record<string, any> } = {}, database?: Database) {
     const calls: string[] = [];
     let now = Date.now();
     const state = { requestHash: "", purchases: overrides.purchases ?? {} as Record<string, any> };
@@ -510,7 +512,7 @@ describe("Google Play billing", () => {
       fetch: send,
       now: () => now,
     });
-    const s = setup({ google: { productIds: ["voice_monthly"], play } });
+    const s = setup({ google: { productIds: ["voice_monthly"], play } }, database);
     now = s.h.clock.now;
     const sync = async (token: string, purchases: unknown[], hash?: string) => {
       const payload = JSON.stringify({ challenge: await s.challenge(token), purchases });
@@ -533,6 +535,7 @@ describe("Google Play billing", () => {
     const r = await g.sync(d.device_token, [{ product_id: "voice_monthly", purchase_token: "tok" }]);
     expect(r.status).toBe(200);
     expect(r.body.active).toBe(true);
+    expect(r.body.active_stores).toEqual(["google"]);
     expect(r.body.google).toEqual({ product_ids: ["voice_monthly"] });
     expect(g.calls.some((c) => c.includes("/purchases/subscriptions/voice_monthly/tokens/tok:acknowledge"))).toBe(true);
     // The raw purchase token is not stored.
@@ -541,6 +544,64 @@ describe("Google Play billing", () => {
     const bob = await g.s.h.pair("bob", "android");
     expect((await g.sync(bob.device_token, [{ product_id: "voice_monthly", purchase_token: "tok" }])).body.active).toBe(true);
     expect((await g.s.call("GET", "/v1/billing", d.device_token)).body.active).toBe(false);
+  });
+
+  test("both platforms see the same owner's active subscription stores", async () => {
+    const g = google();
+    const ios = await g.s.phone("alice");
+    const android = await g.s.h.pair("alice", "android");
+    const other = await g.s.h.pair("bob", "android");
+    const shortExpiry = g.s.h.clock.now + 86400_000;
+    await ios.sync([await g.s.transaction({ expiresDate: shortExpiry })]);
+    const status = async (token: string) => (await g.s.call("GET", "/v1/billing", token)).body;
+    expect((await status(android.device_token)).active_stores).toEqual(["apple"]);
+    expect((await status(other.device_token)).active_stores).toEqual([]);
+
+    g.state.purchases.tok = active(g.s.h.clock.now);
+    await g.sync(android.device_token, [{ product_id: "voice_monthly", purchase_token: "tok" }]);
+    expect((await status(ios.token)).active_stores).toEqual(["apple", "google"]);
+    g.s.h.advance(2 * 86400_000);
+    const remaining = await status(ios.token);
+    expect(remaining.active).toBe(true);
+    expect(remaining.active_stores).toEqual(["google"]);
+  });
+
+  test.skipIf(!url)("concurrent App Store and Google Play syncs retain both subscriptions on PostgreSQL", async () => {
+    const admin = postgres(url!, { max: 1, onnotice: () => {} });
+    const schema = `oyobidashi_test_${crypto.randomUUID().replaceAll("-", "")}`;
+    await admin.unsafe(`CREATE SCHEMA ${schema}`);
+    const db = new PostgresDatabase(url!, 2, schema);
+    try {
+      await db.migrate();
+      const g = google({}, db);
+      const ios = await g.s.phone("alice");
+      const android = await g.s.h.pair("alice", "android");
+      const day = 86400_000;
+      const now = g.s.h.clock.now;
+      const apple = await g.s.transaction({ expiresDate: now + day });
+      g.state.purchases.tok = active(now);
+
+      const [appleSync, googleSync] = await Promise.all([
+        ios.sync([apple]),
+        g.sync(android.device_token, [{ product_id: "voice_monthly", purchase_token: "tok" }]),
+      ]);
+      expect(appleSync.status).toBe(200);
+      expect(googleSync.status).toBe(200);
+
+      const status = async (token: string) => (await g.s.call("GET", "/v1/billing", token)).body;
+      const expiry = new Date(now + 30 * day).toISOString();
+      for (const token of [ios.token, android.device_token]) {
+        expect(await status(token)).toMatchObject({ active: true, active_stores: ["apple", "google"], expires_at: expiry });
+      }
+      g.s.h.advance(2 * day);
+      expect(await status(ios.token)).toMatchObject({ active: true, active_stores: ["google"], expires_at: expiry });
+      g.s.h.advance(29 * day);
+      expect(await status(android.device_token)).toMatchObject({ active: false, active_stores: [], expires_at: null });
+    } finally {
+      await db.close();
+      await admin.unsafe(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
   });
 
   test("a linked Play purchase replaces the old token across accounts", async () => {
@@ -602,7 +663,6 @@ describe("Google Play billing", () => {
   });
 });
 
-const url = process.env.CLOUD_TEST_DATABASE_URL;
 describe.skipIf(!url)("subscription billing on real PostgreSQL", () => {
   test("a linked Play token atomically removes the old owner's seat, even with a one-connection pool", async () => {
     const admin = postgres(url!, { max: 1, onnotice: () => {} });

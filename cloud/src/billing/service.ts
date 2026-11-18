@@ -135,14 +135,13 @@ export class Billing {
     if (!this.enabled) return { enabled: false };
     const e = await tx.get("entitlement", "current");
     const now = this.now();
-    const expires = Math.max(
-      0,
-      ...Object.values(e?.sources ?? {}).map((s) => s.expires),
-    );
+    const activeSources = Object.values(e?.sources ?? {}).filter((source) => source.expires > now);
+    const expires = Math.max(0, ...activeSources.map((source) => source.expires));
     return {
       enabled: true,
       active: entitled(e, now),
       expires_at: expires > now ? iso(expires) : null,
+      active_stores: [...new Set(activeSources.map((source) => source.store))].sort(),
       ...(this.config.apple
         ? { apple: { product_ids: this.config.apple.productIds } }
         : {}),

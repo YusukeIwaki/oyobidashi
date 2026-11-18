@@ -96,7 +96,7 @@ class AppGraph(private val app: Application) {
     val presence: StateFlow<DevicePresence> = _presence.asStateFlow()
     val presenceSyncError = MutableStateFlow<String?>(null)
 
-    /** プラン (課金) の同期。プロジェクト番号が未設定なら何もしない。 */
+    /** クラウドのプラン表示と Google Play 購入の同期。 */
     val billingManager = BillingManager(
         app,
         scope,

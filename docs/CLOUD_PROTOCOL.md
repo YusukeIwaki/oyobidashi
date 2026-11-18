@@ -223,12 +223,15 @@ and are never returned by any API, tool result, error or log.
 `GET /v1/billing` (device auth) returns
 
 ```json
-{"enabled":true,"active":false,"expires_at":null,
+{"enabled":true,"active":false,"expires_at":null,"active_stores":[],
  "apple":{"product_ids":["..."]},"google":{"product_ids":["..."]}}
 ```
 
 `apple` / `google` are present only when that store is configured. `expires_at`
-is ISO 8601 or null. Devices use `active` only for display; the server decides.
+is ISO 8601 or null. `active_stores` lists the stores ("apple" and/or "google")
+with current access for this owner. Clients use it to show the correct
+subscription management instructions. Devices use `active` only for display;
+the server decides.
 
 Every state-changing billing call is device-authenticated, attested and bound to
 a single-use challenge. `POST /v1/billing/challenge` with `{}` returns

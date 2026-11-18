@@ -37,6 +37,8 @@ public struct BillingPlanPresentation: Equatable, Sendable {
     public let isEnabled: Bool
     public let currentPlan: Plan
     public let isAssigned: Bool
+    public let hasGoogleSubscription: Bool
+    private let canManageInAppStore: Bool
     public let expiresAt: Date?
     public let nextRenewalDate: Date?
     public let freePlanStartsAt: Date?
@@ -45,12 +47,14 @@ public struct BillingPlanPresentation: Equatable, Sendable {
         isEnabled = status.enabled
         currentPlan = status.enabled && status.active ? .standard : .free
         self.isAssigned = isAssigned
+        hasGoogleSubscription = status.active && status.activeStores?.contains("google") == true
+        canManageInAppStore = status.activeStores?.contains("apple") ?? true
         expiresAt = status.enabled && status.active ? status.expiresAt : nil
 
         let periods = renewalPeriods.filter { $0.expiresAt > now }
-        if currentPlan == .standard, !isAssigned {
+        if currentPlan == .standard, !isAssigned, canManageInAppStore {
             nextRenewalDate = periods.filter { $0.willAutoRenew == true }.map(\.expiresAt).min()
-            if let deadline = status.expiresAt, deadline > now,
+            if !hasGoogleSubscription, let deadline = status.expiresAt, deadline > now,
                let lastPeriod = periods.map(\.expiresAt).max(),
                abs(lastPeriod.timeIntervalSince(deadline)) < 1,
                periods.allSatisfy({ $0.willAutoRenew == false }) {
@@ -87,13 +91,14 @@ public struct BillingPlanPresentation: Equatable, Sendable {
         switch (currentPlan, selection) {
         case (.free, .free): return .none
         case (.free, .standard): return .purchase
-        case (.standard, .free): return freePlanStartsAt == nil ? .manageSubscriptions : .none
-        case (.standard, .standard): return .manageSubscriptions
+        case (.standard, .free): return canManageInAppStore && freePlanStartsAt == nil ? .manageSubscriptions : .none
+        case (.standard, .standard): return canManageInAppStore ? .manageSubscriptions : .none
         }
     }
 
     public func actionTitle(for selection: Plan) -> String {
         if isAssigned { return "組織で管理されています" }
+        if currentPlan == .standard && !canManageInAppStore { return "現在のプラン" }
         switch (currentPlan, selection) {
         case (.free, .free): return "現在のプラン"
         case (.free, .standard): return "アップグレード"

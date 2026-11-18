@@ -8,18 +8,21 @@ public struct BillingStatus: Codable, Equatable, Sendable {
     public var enabled: Bool
     public var active: Bool
     public var expiresAt: Date?
+    public var activeStores: Set<String>?
     public var apple: BillingStoreProducts?
     public var google: BillingStoreProducts?
 
     enum CodingKeys: String, CodingKey {
         case enabled, active, apple, google
         case expiresAt = "expires_at"
+        case activeStores = "active_stores"
     }
 
-    public init(enabled: Bool, active: Bool = false, expiresAt: Date? = nil, apple: BillingStoreProducts? = nil, google: BillingStoreProducts? = nil) {
+    public init(enabled: Bool, active: Bool = false, expiresAt: Date? = nil, apple: BillingStoreProducts? = nil, google: BillingStoreProducts? = nil, activeStores: Set<String>? = nil) {
         self.enabled = enabled
         self.active = active
         self.expiresAt = expiresAt
+        self.activeStores = activeStores
         self.apple = apple
         self.google = google
     }
@@ -29,6 +32,7 @@ public struct BillingStatus: Codable, Equatable, Sendable {
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
         active = try c.decodeIfPresent(Bool.self, forKey: .active) ?? false
         expiresAt = try c.decodeIfPresent(Date.self, forKey: .expiresAt)
+        activeStores = try c.decodeIfPresent(Set<String>.self, forKey: .activeStores)
         apple = try c.decodeIfPresent(BillingStoreProducts.self, forKey: .apple)
         google = try c.decodeIfPresent(BillingStoreProducts.self, forKey: .google)
     }

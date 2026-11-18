@@ -60,6 +60,24 @@ final class BillingPlanPresentationTests: XCTestCase {
         XCTAssertNil(p.freePlanStartsAt)
     }
 
+    func testGooglePurchaseShowsPlusWithoutOpeningAppStoreManagement() {
+        let p = BillingPlanPresentation(status: .init(enabled: true, active: true, expiresAt: end, activeStores: ["google"]), now: now)
+        XCTAssertEqual(p.title, "PLUS")
+        XCTAssertTrue(p.hasGoogleSubscription)
+        XCTAssertEqual(p.action(for: .free), .none)
+        XCTAssertEqual(p.action(for: .standard), .none)
+    }
+
+    func testAppleCancellationDoesNotPromiseFreeWhileGooglePlayAlsoGrantsPlus() {
+        let p = BillingPlanPresentation(
+            status: .init(enabled: true, active: true, expiresAt: end, activeStores: ["apple", "google"]),
+            renewalPeriods: [.init(expiresAt: end, willAutoRenew: false)], now: now
+        )
+        XCTAssertTrue(p.hasGoogleSubscription)
+        XCTAssertNil(p.freePlanStartsAt)
+        XCTAssertEqual(p.action(for: .free), .manageSubscriptions)
+    }
+
     func testExpiredServerStatusShowsFreeDespiteCachedRenewalInformation() {
         let p = BillingPlanPresentation(status: .init(enabled: true, active: false, expiresAt: end), renewalPeriods: [.init(expiresAt: end, willAutoRenew: false)], now: now)
         XCTAssertEqual(p.title, "FREE")

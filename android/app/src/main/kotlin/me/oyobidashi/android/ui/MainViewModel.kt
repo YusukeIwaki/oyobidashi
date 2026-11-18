@@ -44,9 +44,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- プラン ----
     val billingState = graph.billingManager.state
-    val billingConfigured: Boolean get() = graph.billingManager.configured
 
     fun refreshBilling() = graph.billingManager.refresh()
+    fun restorePlan() = graph.billingManager.restore()
 
     fun purchasePlan(activity: Activity) = graph.billingManager.launchBillingFlow(activity)
 

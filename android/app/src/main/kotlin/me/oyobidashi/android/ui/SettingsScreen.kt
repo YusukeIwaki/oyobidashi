@@ -1,7 +1,6 @@
 package me.oyobidashi.android.ui
 
 import android.Manifest
-import android.app.Activity
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
@@ -27,7 +26,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -61,6 +59,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.delay
+import java.time.Duration
+import java.time.Instant
 import me.oyobidashi.android.BuildConfig
 import me.oyobidashi.android.R
 import me.oyobidashi.android.Session
@@ -72,12 +73,21 @@ fun SettingsScreen(vm: MainViewModel, session: Session) {
     val state by session.repository.state.collectAsState()
     val billing by vm.billingState.collectAsState()
     LaunchedEffect(session) { vm.refreshBilling() }
+    LaunchedEffect(session, billing.status?.expiresInstant) {
+        val expires = billing.status?.expiresInstant ?: return@LaunchedEffect
+        delay(Duration.between(Instant.now(), expires).toMillis().coerceAtLeast(0) + 1_000)
+        vm.refreshBilling()
+    }
     val isOyobidashiCloud = session.credentials.baseUrl.toHttpUrlOrNull()?.host == "api.oyobidashi.me"
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
     var refresh by remember { mutableIntStateOf(0) }
     var confirming by remember { mutableStateOf(false) }
+    var showingPlan by remember(session) { mutableStateOf(false) }
+    if (showingPlan && billing.status?.enabled == true) {
+        PlanDialog(billing, vm::purchasePlan, vm::restorePlan, vm::refreshBilling) { showingPlan = false }
+    }
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) refresh++ }
         lifecycle.addObserver(observer)
@@ -138,47 +148,20 @@ fun SettingsScreen(vm: MainViewModel, session: Session) {
                     }
                 }
                 val planStatus = billing.status
-                if (vm.billingConfigured && planStatus?.enabled == true) {
-                    item { SectionHeading(Texts.PLAN) }
+                if (planStatus?.enabled == true) {
+                    item { SectionHeading("現在のプラン") }
                     item {
                         SettingsGroup {
-                            Column(
-                                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                if (planStatus.active) {
-                                    Text(Texts.BILLING_ACTIVE)
-                                    val expiry = Texts.billingExpiry(planStatus.expiresAt)
-                                    if (expiry.isNotEmpty()) {
-                                        Text(expiry, style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    val productId = billing.productId ?: planStatus.google?.productIds?.firstOrNull()
-                                    if (productId != null) {
-                                        TextButton(onClick = {
-                                            val url = "https://play.google.com/store/account/subscriptions?sku=" +
-                                                Uri.encode(productId) + "&package=" + Uri.encode(context.packageName)
-                                            try {
-                                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                                            } catch (_: RuntimeException) {
-                                                Toast.makeText(context, Texts.BILLING_MANAGE_FAILED, Toast.LENGTH_LONG).show()
-                                            }
-                                        }) { Text(Texts.BILLING_MANAGE) }
-                                    }
-                                } else {
-                                    Text(Texts.BILLING_INACTIVE)
-                                    billing.formattedPrice?.let { price ->
-                                        Text(price, style = MaterialTheme.typography.bodyMedium)
-                                    }
-                                    Button(onClick = {
-                                        (context as? Activity)?.let { vm.purchasePlan(it) }
-                                    }) { Text(Texts.BILLING_SUBSCRIBE) }
-                                }
-                                billing.syncError?.let { message ->
-                                    Text(message, style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.error)
-                                }
-                            }
+                            ListItem(
+                                headlineContent = { Text(if (planStatus.active) "PLUS" else "FREE") },
+                                supportingContent = {
+                                    Text(if (planStatus.active) Texts.BILLING_ACTIVE else Texts.BILLING_INACTIVE)
+                                },
+                                trailingContent = {
+                                    TextButton(onClick = { showingPlan = true }) { Text("変更") }
+                                },
+                                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            )
                         }
                     }
                 }

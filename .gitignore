@@ -41,6 +41,9 @@ GoogleService-Info.plist
 *.sqlite3
 *.log
 
+# ローカルの一時検証
+/cloud/test/abuse-probe.test.ts
+
 # iOS
 ios/**/.build/
 ios/**/.swiftpm/

@@ -24,6 +24,7 @@ data class BillingStatus(
     val enabled: Boolean = false,
     val active: Boolean = false,
     @SerialName("expires_at") val expiresAt: String? = null,
+    @SerialName("active_stores") val activeStores: Set<String>? = null,
     val apple: BillingProducts? = null,
     val google: BillingProducts? = null,
 ) {
@@ -77,7 +78,7 @@ class BillingSync(
 ) {
     suspend fun sync(purchases: List<PurchaseRef>): BillingStatus {
         val status = client.billingStatus()
-        if (!status.enabled) return status
+        if (!status.enabled || status.google?.productIds.isNullOrEmpty()) return status
         val challenge = client.billingChallenge()
         val payload = buildJsonObject {
             put("challenge", JsonPrimitive(challenge.challenge))

@@ -128,19 +128,24 @@ final class BillingStore: ObservableObject {
         await refreshAndSync()
     }
 
-    func purchase() async {
-        guard let product, !isWorking else { return }
+    func purchase(using startPurchase: @MainActor (Product) async throws -> Product.PurchaseResult) async {
+        guard let product, let credentials = model.credentials, !isWorking else { return }
         isWorking = true
         clearFeedback()
         defer { isWorking = false }
         do {
-            switch try await product.purchase() {
+            switch try await startPurchase(product) {
             case .success(let verification):
                 guard case .verified = verification else {
                     errorMessage = "購入を確認できませんでした"
                     return
                 }
-                await syncCurrentEntitlements()
+                guard model.credentials == credentials else { return }
+                await syncCurrentEntitlements(including: verification)
+                guard model.credentials == credentials else { return }
+                if errorMessage == nil && status?.active != true {
+                    errorMessage = "有効な購読を確認できませんでした。購入を復元してもう一度お試しください。"
+                }
             case .userCancelled, .pending:
                 break
             @unknown default:
@@ -160,7 +165,8 @@ final class BillingStore: ObservableObject {
             try await AppStore.sync()
             await refreshAndSync()
             if errorMessage == nil && productErrorMessage == nil {
-                noticeMessage = status?.active == true ? "購入情報を確認しました。" : "復元できる購入は見つかりませんでした。"
+                let restored = status?.active == true && (status?.activeStores?.contains("apple") ?? true)
+                noticeMessage = restored ? "購入情報を確認しました。" : "App Storeで復元できる購入は見つかりませんでした。"
             }
         } catch {
             errorMessage = Self.message(for: error)
@@ -173,23 +179,31 @@ final class BillingStore: ObservableObject {
     }
 
     func syncCurrentEntitlements() async {
+        await syncCurrentEntitlements(including: nil)
+    }
+
+    private func syncCurrentEntitlements(including purchase: VerificationResult<Transaction>?) async {
         // purchase と Transaction.updates が重なっても、アテステーションや
         // アサーションを並行送信しない。後から届いた更新も順に処理する。
         let previous = syncTail
         syncSequence += 1
         let sequence = syncSequence
+        let credentials = model.credentials
         let task = Task<Void, Never> { [weak self] in
             if let previous { await previous.value }
-            await self?.performSync()
+            guard let self, self.model.credentials == credentials else { return }
+            await self.performSync(including: purchase)
         }
         syncTail = task
         await task.value
         if sequence == syncSequence { syncTail = nil }
     }
 
-    private func performSync() async {
+    private func performSync(including purchase: VerificationResult<Transaction>?) async {
+        let credentials = model.credentials
         if status == nil { await refresh() }
-        guard let credentials = model.credentials, let client, let status, status.enabled, let apple = status.apple else { return }
+        guard let credentials, model.credentials == credentials,
+              let client, let status, status.enabled, let apple = status.apple else { return }
         let ids = Set(apple.productIDs)
         var jws: [String] = []
         var transactions: [Transaction] = []
@@ -199,6 +213,12 @@ final class BillingStore: ObservableObject {
             jws.append(result.jwsRepresentation)
             transactions.append(transaction)
             if transaction.ownershipType == .assigned { assigned = true }
+        }
+        // StoreKit の購入結果や更新が届いても、購入一覧への反映が遅れることがある。
+        if let purchase, case .verified(let transaction) = purchase,
+           ids.contains(transaction.productID), !jws.contains(purchase.jwsRepresentation) {
+            jws.append(purchase.jwsRepresentation)
+            if !transactions.contains(where: { $0.id == transaction.id }) { transactions.append(transaction) }
         }
         guard model.credentials == credentials else { return }
         isAssigned = assigned
@@ -270,7 +290,7 @@ final class BillingStore: ObservableObject {
             revokedJWS.append(result.jwsRepresentation)
             revokedTransactions.append(transaction)
         }
-        await syncCurrentEntitlements()
+        await syncCurrentEntitlements(including: result)
     }
 
     static func message(for error: Error) -> String {

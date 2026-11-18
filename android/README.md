@@ -14,7 +14,7 @@ AI コーディングエージェント (Claude Code / Codex) からの質問を
 
 送信結果を失った場合は同じUUIDの結果を先に取得し、対応サーバーでのみ同じUUIDを再送します。待機は250ms〜2秒のバックオフ、全体95秒、連続通信失敗とPOST再試行は最大3回に制限します。確定した発話とUUIDを送信前に下書きへ永続化し、失敗・プロセス再起動後も復旧します。最終応答の読み上げが終わるまで通話を保持し、自動再発信はしません。
 
-- applicationId・namespace・Kotlinのルートpackage: `me.oyobidashi.android` / minSdk 26 / targetSdk 35
+- applicationId・namespace・Kotlinのルートpackage: `me.oyobidashi.android` / minSdk 26 / targetSdk 36
 - Kotlin + Jetpack Compose (Material 3)
 
 ソースとテストは`src/*/kotlin/me/oyobidashi/android/`に配置します。applicationIdを変更すると旧版とは別アプリになります。Firebaseでは新しいpackage nameでAndroidアプリを追加し、そのApp IDをローカル設定へ反映して、新アプリでペアリングし直してください。旧Firebase登録や旧アプリのデータは削除する必要がありません。
@@ -29,7 +29,7 @@ AI コーディングエージェント (Claude Code / Codex) からの質問を
 ## 必要なもの
 
 - JDK 17
-- Android SDK (compileSdk 35)。`ANDROID_HOME` を設定するか、`android/local.properties` に書きます (git 管理外):
+- Android SDK (compileSdk 36)。`ANDROID_HOME` を設定するか、`android/local.properties` に書きます (git 管理外):
 
 ```properties
 sdk.dir=/Users/<you>/Library/Android/sdk
@@ -46,6 +46,12 @@ cd android
 ./gradlew installDebug    # 接続中の端末/エミュレータにインストール
 ./gradlew lint            # 任意
 ```
+
+## Google Play の内部テストと課金
+
+内部テスト用の AAB は `./gradlew :app:bundleRelease` で作成します。初回のリリースでは Google がアプリ署名鍵を生成・保管する Play App Signing の既定設定を使います。AAB のアップロード鍵は別で、`oyobidashi.release.storeFile`、`storePassword`、`keyAlias`、`keyPassword` を保護したローカル設定から渡します。
+
+課金の検証には、Play Console にリンクした Google Cloud プロジェクトの**番号**を `oyobidashi.play.cloudProjectNumber` に設定します。クラウド側は [Google Play 用の課金設定](../cloud/README.md#サブスクリプション)を使います。内部テスターとライセンステスターに同じ Google アカウントを登録し、対応する実機で Google Play から内部テスト版をインストールしてください。購入画面でテスト用の支払い方法が表示されることを確認します。既に別の鍵で署名した開発版が入っている場合は、Play 版への切り替えに再インストールと再ペアリングが必要です。
 
 ## 使い方 (既定はLAN内)
 
