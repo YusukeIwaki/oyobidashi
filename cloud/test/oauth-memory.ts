@@ -41,9 +41,34 @@ export class MemoryOAuthStore implements OAuthStore {
     const stale = [...latest].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(keep);
     for (const [grant] of stale) await this.revokeGrant(grant);
   }
+  async listGrants(uid: string) {
+    this.check();
+    const latest = new Map<string, OAuthRow>();
+    for (const row of this.rows.values())
+      if (row.kind === "refresh" && row.uid === uid && row.grant && row.used === null) {
+        const old = latest.get(row.grant);
+        if (!old || row.created >= old.created) latest.set(row.grant, row);
+      }
+    return [...latest.values()].map((row) => structuredClone(row));
+  }
+  async revokeOwnedGrant(uid: string, grant: string) {
+    this.check();
+    if ([...this.rows.values()].some((row) => row.uid === uid && row.grant === grant))
+      await this.revokeGrant(grant);
+  }
+  async revokeOwner(uid: string) {
+    this.check();
+    const grants = new Set([...this.rows.values()].filter((row) => row.uid === uid && row.grant).map((row) => row.grant!));
+    for (const grant of grants) await this.revokeGrant(grant);
+  }
   async countSince(kind: OAuthKind, since: number) {
     this.check();
     return [...this.rows.values()].filter((r) => r.kind === kind && r.created >= since).length;
+  }
+  async countRegistrations(host: string, since: number) {
+    this.check();
+    return [...this.rows.values()].filter((row) => row.kind === "client" && row.created >= since &&
+      row.doc.registration_hosts?.includes(host)).length;
   }
   async cleanup(now: number) {
     for (const [k, r] of this.rows) if (r.expires < now) this.rows.delete(k);

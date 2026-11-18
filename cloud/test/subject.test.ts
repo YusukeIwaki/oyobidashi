@@ -4,6 +4,14 @@ import { JobWorker } from "../src/worker.ts";
 import type { RequestObject } from "../../relay/src/types.ts";
 
 describe("call subjects", () => {
+  test("agent names and subjects cannot contain control characters", async () => {
+    const h = harness();
+    const response = await h.call("POST", "/v1/requests", "agent-alice", {
+      question: "q", subject: "本人\u0000\n確認", agent: { name: "公式\u0000\nサポート" },
+    });
+    expect(response.body.request.subject).toBe("本人 確認");
+    expect(response.body.request.agent.name).toBe("公式 サポート");
+  });
   test("validates, normalizes, and persists subjects for authenticated device reads", async () => {
     const h = harness();
     const d = await h.pair();

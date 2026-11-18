@@ -68,6 +68,7 @@ targets:
       path: App/Oyobidashi.entitlements
       properties:
         aps-environment: development
+        com.apple.developer.devicecheck.appattest-environment: development
         com.apple.developer.usernotifications.time-sensitive: true
 
   OyobidashiNotificationService:

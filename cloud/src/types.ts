@@ -15,6 +15,7 @@ export interface TurnView {
 }
 export interface CloudCall extends Call {
   turn?: TurnView;
+  turn_count?: number;
 }
 export interface CloudRequest extends RequestObject {
   version: number;
@@ -52,7 +53,41 @@ export interface Feedback {
   event: string;
   at: string;
 }
+/** One store subscription held by this owner. `shared` sources may have other holders. */
+export interface EntitlementSource {
+  store: "apple" | "google";
+  product_id: string;
+  expires: number;
+  shared: boolean;
+}
+export interface AppleBillingProof {
+  value: EntitlementSource;
+  /** End of the signed transaction, even when a refund makes access end now. */
+  periodEnd: number;
+  signedDate: number;
+  revoked: boolean;
+}
+export function newerAppleProof(previous: AppleBillingProof | null, next: AppleBillingProof): boolean {
+  if (!previous) return true;
+  if (next.signedDate < previous.signedDate) return false;
+  if (next.revoked) return next.periodEnd >= previous.periodEnd;
+  if (previous.revoked) return next.periodEnd > previous.periodEnd;
+  // Grace can extend an older transaction, so compare its effective access
+  // deadline rather than the transaction's original period end.
+  if (next.value.expires < previous.value.expires) return false;
+  return true;
+}
+export interface Entitlement {
+  sources: Record<string, EntitlementSource>;
+}
+export const entitled = (e: Entitlement | null, now: number) =>
+  !!e && Object.values(e.sources).some((s) => s.expires > now);
 export interface Records {
+  entitlement: Entitlement;
+  /** App Attest key of one iOS device, keyed by device ID. */
+  attest: { key_id: string; public_key: string; counter: number };
+  /** Single-use billing challenge, keyed by its hash. */
+  challenge: { deviceId: string; expires: number };
   request: CloudRequest;
   device: Device;
   turn: Turn;
@@ -61,6 +96,13 @@ export interface Records {
   dedupe: Dedupe;
   feedback: Feedback;
   quota: { window: number; count: number };
+  call_cooldown: { until: number };
+  ban: { at: number; reason: "voice_velocity" | "voice_oversize" | "voice_hammer" };
+  voice_usage: { buckets: { minute: number; turns: number; longTurns: number }[] };
+  voice_attempts: { recent: number[] };
+  voice_challenge: { deviceId: string; purpose: "apple_enroll" | "android_enroll" | "token"; expires: number };
+  voice_key: { platform: "ios" | "android"; keyId: string; publicKey: string; counter: number; integrityAt: number };
+  voice_access: { tokenHash: string; keyId: string; expires: number };
   preview: {
     requestId: string;
     deviceId: string;
@@ -127,11 +169,26 @@ export interface Database {
   findDevice(hash: string): Promise<{ uid: string; device: Device } | null>;
   findPairing(hash: string): Promise<string | null>;
   findPreview(hash: string): Promise<string | null>;
+  isBanned(uid: string): Promise<boolean>;
   claim(kind: Job["kind"], now: number, leaseMs: number): Promise<Job | null>;
   dueOwners(now: number, limit?: number): Promise<string[]>;
   revisions(uids: string[]): Promise<Map<string, string>>;
   health(): Promise<void>;
   close(): Promise<void>;
+  /**
+   * Records that `uid` holds the store subscription `source`. An exclusive claim
+   * removes every other holder and returns them.
+   */
+  /** Null means a Play purchase token was replaced by a newer token. */
+  billingClaim(source: string, uid: string, exclusive: boolean): Promise<string[] | null>;
+  billingSupersede(source: string, successor: string): Promise<string[]>;
+  billingHolders(source: string): Promise<string[]>;
+  billingHeld(source: string, uid: string): Promise<boolean>;
+  billingRelease(source: string, uid: string): Promise<void>;
+  /** Applies a signed Apple update and its owner entitlement atomically. */
+  applyAppleBilling(source: string, uid: string | null, proof: AppleBillingProof): Promise<void>;
+  /** Moves a Play subscription and any linked predecessor in one transaction. */
+  applyGoogleBilling(source: string, uid: string, value: EntitlementSource, linkedSource?: string): Promise<void>;
 }
 export interface WakeBus {
   publish(uid: string): Promise<void>;

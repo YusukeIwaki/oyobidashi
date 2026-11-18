@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { harness } from "./helpers.ts";
 import { MemoryDatabase } from "./memory.ts";
 import { hash } from "../src/service.ts";
+import { JobWorker } from "../src/worker.ts";
 
 describe("cloud identity and boundaries", () => {
   test("Firebase identity is required and caller-supplied UID cannot change ownership", async () => {
@@ -119,6 +120,19 @@ describe("cloud identity and boundaries", () => {
 });
 
 describe("durable nonblocking turn contract", () => {
+  test("declining a call prevents immediate repeated rings for five minutes", async () => {
+    const h = harness();
+    const phone = await h.pair("alice");
+    const ask = () => h.call("POST", "/v1/requests", "agent-alice", {
+      question: "確認してください", priority: "high", delivery_mode: "call",
+    });
+    const first = await ask();
+    expect(first.body.request.delivery_mode).toBe("call");
+    await h.call("POST", `/v1/requests/${first.body.request.id}/call`, phone.device_token, { event: "decline" });
+    expect((await ask()).body.request.delivery_mode).toBe("text");
+    h.advance(5 * 60_000 + 1);
+    expect((await ask()).body.request.delivery_mode).toBe("call");
+  });
   test("silent calls create no voice jobs, and different owners can call concurrently", async () => {
     const h = harness(),
       a = await h.setup(),
@@ -271,6 +285,92 @@ describe("durable nonblocking turn contract", () => {
 });
 
 describe("commit boundaries and validation", () => {
+  test("three impossible-length voice turns ban the account without banning another owner", async () => {
+    const h = harness(), s = await h.setup();
+    const worker = new JobWorker(h.service, {
+      conversation: { turn: async () => ({ reply: "次へ", resolved: false, answer: null }) },
+    });
+    for (let i = 0; i < 2; i++) {
+      expect((await s.turn("あ".repeat(2001))).status).toBe(202);
+      expect(await worker.runOnce("turn")).toBe(true);
+    }
+    expect((await s.turn("あ".repeat(2001))).body.error.code).toBe("account_banned");
+    expect(await h.db.isBanned("alice")).toBe(true);
+    expect((await h.call("GET", "/v1/presence", "agent-alice")).status).toBe(403);
+    expect((await h.call("POST", "/v1/requests", "agent-bob", { question: "other owner" })).status).toBe(201);
+  });
+  test("ninety distinct rapid voice turns ban an account, retries do not add to the count", async () => {
+    const h = harness(), s = await h.setup();
+    const worker = new JobWorker(h.service, {
+      conversation: { turn: async () => ({ reply: "次へ", resolved: false, answer: null }) },
+    });
+    let current = s;
+    for (let i = 0; i < 89; i++) {
+      if (i > 0 && i % 29 === 0) {
+        await h.call("POST", `/v1/requests/${current.id}/call`, current.d.device_token, { event: "hangup" });
+        h.advance(60_000);
+        const next = await h.call("POST", "/v1/requests", "agent-alice", { question: "次の質問", priority: "high", delivery_mode: "call" });
+        const id = next.body.request.id as string;
+        await h.call("POST", `/v1/requests/${id}/call`, current.d.device_token, { event: "answer" });
+        current = { ...current, id, turn: async (text = "はい", turnId = crypto.randomUUID()) => {
+          const response = await h.call("POST", `/v1/requests/${id}/call`, current.d.device_token, { event: "turn", text, turn_id: turnId, async: true });
+          return { ...response, turnId };
+        } };
+      }
+      const id = crypto.randomUUID();
+      expect((await current.turn("はい", id)).status).toBe(202);
+      expect((await current.turn("はい", id)).status).toBe(202);
+      expect(await worker.runOnce("turn")).toBe(true);
+    }
+    expect((await current.turn("はい")).body.error.code).toBe("account_banned");
+    expect((await h.db.transaction("alice", (tx) => tx.get("ban", "current")))?.reason).toBe("voice_velocity");
+  });
+  test("machine-like distinct turn IDs during one pending model call trigger a durable ban", async () => {
+    const h = harness(), s = await h.setup();
+    const accepted = await s.turn("はい");
+    expect(accepted.status).toBe(202);
+    expect((await s.turn("はい", accepted.turnId)).status).toBe(202);
+    for (let i = 0; i < 28; i++)
+      expect((await s.turn("次", crypto.randomUUID())).body.error.code).toBe("turn_in_progress");
+    expect((await s.turn("次")).body.error.code).toBe("account_banned");
+    expect((await h.db.transaction("alice", (tx) => tx.get("ban", "current")))?.reason).toBe("voice_hammer");
+  });
+  test("voice hammer detection spans a minute boundary", async () => {
+    const h = harness();
+    h.advance((Math.floor(h.clock.now / 60_000) + 2) * 60_000 - h.clock.now - 1000);
+    const s = await h.setup();
+    expect((await s.turn("はい")).status).toBe(202);
+    for (let i = 0; i < 18; i++) expect((await s.turn("次")).status).toBe(409);
+    h.advance(2000);
+    for (let i = 0; i < 10; i++) expect((await s.turn("次")).status).toBe(409);
+    expect((await s.turn("次")).body.error.code).toBe("account_banned");
+  });
+  test("notification bursts are bounded independently of question creation", async () => {
+    const h = harness();
+    for (let i = 0; i < 10; i++)
+      expect((await h.call("POST", "/v1/requests", "agent-alice", { kind: "notification", question: `notice ${i}` })).status).toBe(201);
+    const next = await h.call("POST", "/v1/requests", "agent-alice", { kind: "notification", question: "again" });
+    expect(next.status).toBe(429);
+    expect((await h.call("POST", "/v1/requests", "agent-alice", { question: "real question" })).status).toBe(201);
+  });
+  test("a new request prunes the oldest completed record at the storage limit", async () => {
+    const h = harness();
+    const first = await h.call("POST", "/v1/requests", "agent-alice", { kind: "notification", question: "first" });
+    const base = first.body.request;
+    await h.db.transaction("alice", async (tx) => {
+      for (let i = 0; i < 999; i++) {
+        const id = `seed-${i.toString().padStart(4, "0")}`;
+        await tx.put("request", id, {
+          ...base, id, created_at: new Date(h.clock.now - (1000 - i) * 1000).toISOString(),
+        });
+      }
+    });
+    const created = await h.call("POST", "/v1/requests", "agent-alice", { question: "new" });
+    expect(created.status).toBe(201);
+    expect(await h.db.transaction("alice", (tx) => tx.list("request", {}, 1001))).toHaveLength(1000);
+    expect((await h.call("GET", "/v1/requests/seed-0000")).status).toBe(404);
+    expect((await h.call("GET", `/v1/requests/${first.body.request.id}`)).status).toBe(200);
+  });
   test("question creation and its push jobs roll back together", async () => {
     const db = new MemoryDatabase(),
       h = harness(db);

@@ -80,7 +80,8 @@ RESULT (structuredContent.status):
 - "answered": "answer" holds the reply. "input_method" is "text", "voice" or "choice"; for "choice", "choice_index" is the zero-based index into your choices. A "voice" answer is a speech-to-text transcription and may contain recognition errors (wrong homophones, garbled names/identifiers): interpret it in context and re-ask if it is ambiguous and the decision matters.
 - "pending": no answer within wait_seconds. This is NOT an error and the question is still on their phone. "priority", "delivery_mode", and "call" report how it is being delivered. Call wait_for_answer with the returned "request_id" and keep doing so until it resolves. Do not call ask_human again for the same question. If the question is no longer useful, call cancel_request.
 - "cancelled" / "expired": no answer will arrive (requests expire after expires_in_seconds, about an hour by default).
-A "warning" field means delivery is doubtful (e.g. no phone is paired); pass that on to the user.`;
+A "warning" field means delivery is doubtful (e.g. no phone is paired); pass that on to the user.
+A "privacy_notice" field means voice-call conversations may be used for model training; when it is present, keep personal data, credentials and confidential business details out of questions delivered as calls and prefer text delivery for anything sensitive.`;
 
 const WAIT_FOR_ANSWER_DESCRIPTION = `Keep waiting for the human's answer to a question previously sent with ask_human.
 
@@ -99,11 +100,11 @@ Use it when the question or notification became irrelevant: you found the answer
 
 const GET_HUMAN_STATUS_DESCRIPTION = `Check whether your human is reachable before you escalate, and read their recent feedback.
 
-Returns device availability (available/busy/away with an optional note), recent feedback events (answers, call declined/hangup/missed/failed), and the relay time. Use it before raising priority or switching delivery to call: if the human is busy or away, prefer low priority and text and only escalate when truly blocked; if they recently declined or hung up, do NOT redial. Presence is what the human chose to share and never proves a notification was seen: delivery is not guaranteed by the OS.`;
+Returns device availability (available/busy/away with an optional note), recent feedback events (answers, call declined/hangup/missed/failed), and the relay time. Use it before raising priority or switching delivery to call: if the human is busy or away, prefer low priority and text and only escalate when truly blocked; if they recently declined or hung up, do NOT redial. Presence is what the human chose to share and never proves a notification was seen: delivery is not guaranteed by the OS. A "privacy_notice" field means voice-call conversations may be used for model training; when it is present, keep personal data, credentials and confidential business details out of questions delivered as calls and prefer text delivery for anything sensitive.`;
 
 const UPDATE_REQUEST_DESCRIPTION = `Change the priority or delivery mode of a pending question sent with ask_human.
 
-Pass "priority" (low/normal/high/urgent) and/or "delivery_mode" (auto/actions/text/call). At least one is required. The relay recalculates the effective delivery and the result reports the current request including the effective "delivery_mode" and "call" state plus any human "feedback". Use it to escalate when truly blocked (check get_human_status first) or to quieten a question that can wait. A call needs high/urgent priority and explicit "call" mode; if the call was declined, hung up, missed, or failed, do NOT switch back to call. If the question is no longer useful, call cancel_request instead.`;
+Pass "priority" (low/normal/high/urgent) and/or "delivery_mode" (auto/actions/text/call). At least one is required. The relay recalculates the effective delivery and the result reports the current request including the effective "delivery_mode" and "call" state plus any human "feedback". Use it to escalate when truly blocked (check get_human_status first) or to quieten a question that can wait. A call needs high/urgent priority and explicit "call" mode; if the call was declined, hung up, missed, or failed, do NOT switch back to call. If the question is no longer useful, call cancel_request instead. A "privacy_notice" field means voice-call conversations may be used for model training; when it is present, keep personal data, credentials and confidential business details out of questions delivered as calls and prefer text delivery for anything sensitive.`;
 
 const outputSchema = {
   status: z
@@ -122,6 +123,7 @@ const outputSchema = {
   call: z.record(z.string(), z.unknown()).optional().describe("Live call state (id, state ringing/active/ended, outcome, transcript) when there is one"),
   feedback: z.unknown().optional().describe("Human feedback for this request when the relay returns it"),
   warning: z.string().optional().describe("Present when delivery is doubtful, e.g. no phone is paired with the relay"),
+  privacy_notice: z.string().optional().describe("Present when voice-call conversations may be used for model training; keep sensitive content out of call-delivered questions and prefer text"),
   error_code: z.string().optional().describe("Machine-readable error code (only when the call failed)"),
 };
 
@@ -137,6 +139,7 @@ const presenceOutputSchema = {
     .describe("Recent human feedback events (request_id, device_id, event, at), newest first"),
   now: z.string().optional().describe("Relay time (ISO8601)"),
   warning: z.string().optional().describe("Present when delivery is doubtful, e.g. no phone is paired with the relay"),
+  privacy_notice: z.string().optional().describe("Present when voice-call conversations may be used for model training; keep sensitive content out of call-delivered questions and prefer text"),
   error_code: z.string().optional().describe("Machine-readable error code (only when the call failed)"),
 };
 
@@ -169,7 +172,8 @@ export function createServer(deps: ServerDeps = {}): McpServer {
         "Use ask_human when you are blocked on a decision only they can make; if it returns status \"pending\", keep calling wait_for_answer with the request_id. " +
         "Use get_human_status before escalating priority or delivery. Use update_request to change priority or delivery of a pending question. " +
         "Use notify_human for one-way news (e.g. a long task finished); withdraw it with cancel_request when it is no longer useful. " +
-        "Voice answers are speech-to-text and may contain recognition errors. Never redial after declined/hangup.",
+        "Voice answers are speech-to-text and may contain recognition errors. Never redial after declined/hangup. " +
+        "If a result carries \"privacy_notice\", voice-call conversations may be used for model training, so keep sensitive content out of call-delivered questions and prefer text.",
     },
   );
 
@@ -300,7 +304,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
     requestId: string,
     waitSeconds: number,
     extra: Extra,
-    opts: { initial?: Awaited<ReturnType<RelayClient["getRequest"]>>; warning?: string | undefined },
+    opts: { initial?: Awaited<ReturnType<RelayClient["getRequest"]>>; warning?: string | undefined; voiceTraining?: boolean | undefined },
   ): Promise<ToolResult> {
     const request = await waitForResolution(client, requestId, {
       clock,
@@ -311,7 +315,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
       retryBackoffMs: deps.retryBackoffMs,
       minCycleMs: deps.minCycleMs,
     });
-    return requestResult(request, { waitedSeconds: waitSeconds, warning: opts.warning });
+    return requestResult(request, { waitedSeconds: waitSeconds, warning: opts.warning, voiceTraining: opts.voiceTraining });
   }
 
   mcp.registerTool(
@@ -404,6 +408,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
         return await waitAndReport(client, requestId, waitSeconds, extra, {
           initial: created.request,
           warning: deliveryWarning(created.delivery, deps.noDeviceWarning),
+          voiceTraining: created.delivery?.voice_training === true,
         });
       } catch (e) {
         return fail(e, extra, requestId ? { requestId, created: true } : {});

@@ -75,6 +75,8 @@ enabled only when the Firebase web configuration is present.
 | `GET /oauth/authorize` | Consent page; `POST` records the decision from that page |
 | `POST /oauth/token` | `authorization_code` and `refresh_token` grants |
 | `POST /oauth/revoke` | RFC 7009; either token withdraws the whole approval |
+| `GET /oauth/connections` | Human-facing page to inspect and withdraw MCP approvals |
+| `GET /oauth/grants`, `DELETE /oauth/grants/{id}` | Authenticated approval list and owner-scoped revocation from that page |
 | `GET /pair` | Sign in and pair a phone without an MCP client |
 
 An unauthenticated `/v1/mcp` request gets 401 with
@@ -82,13 +84,16 @@ An unauthenticated `/v1/mcp` request gets 401 with
 origin the client used (`PUBLIC_URL` when the host matches; always HTTPS except on
 loopback). PKCE with S256 is mandatory. Redirect URIs must be registered and match
 exactly, except that an HTTP loopback redirect may use any port. Allowed targets
-are HTTPS, HTTP on loopback and app-specific schemes; an unknown client or a
+are HTTPS, HTTP on loopback and app-specific schemes other than `oyobidashi:`; an unknown client or a
 mismatched redirect is shown as an error page and never redirected. A `resource`
 parameter must name this endpoint. Authorization responses carry `iss`.
 
 The consent page signs the human in with Google, Apple or GitHub in an in-memory
 Firebase session and posts the decision with that ID token. The server verifies
-the token and the page's `Origin`, and refuses anonymous sign-ins: an account
+the token and the page's `Origin`, and accepts only a direct Google, Apple or
+GitHub sign-in. Anonymous and custom-token sessions cannot approve an MCP
+client. The page displays a separate, explicit approval button after sign-in;
+the registered client name is marked as unverified. An account
 without an external identity could not be recovered once the client lost its
 tokens. If the account has no paired phone, the page obtains a pairing code,
 shows it as a QR code and waits for the device before returning to the client.
@@ -98,8 +103,9 @@ UID and therefore the same paired devices.
 Codes (`kmo_`, five minutes), access tokens (`kma_`, one hour) and refresh tokens
 (`kmr_`, 180 days idle) are opaque, random and stored as SHA-256 digests in
 `cloud_oauth`. Codes are single use; replaying one revokes the tokens it
-produced. Refresh tokens rotate on every use. A repeat within 60 seconds is
-honoured as a retried request; a later repeat revokes the approval. A user keeps
+produced. Refresh tokens rotate on every use; replay revokes the entire
+approval. Removing the last paired phone also revokes all of that owner's MCP
+approvals. A user keeps
 at most 30 approvals, newest first. Client registrations lapse after 400 days
 without a token being issued.
 
@@ -109,7 +115,7 @@ agent role and the same quotas as the REST API, but can never issue pairing code
 or account-link tokens or open the device event stream. The asking agent shown on
 the phone is the registered `client_name`; no working directory is recorded.
 
-Unauthenticated endpoints are bounded: registration is capped globally per hour
+Unauthenticated endpoints are bounded: registration is capped per redirect host per hour
 and by concurrency, approvals are limited to 20 per user per minute, bodies to
 64KB. OAuth endpoints and `/v1/mcp` send `Access-Control-Allow-Origin: *`; no
 cookie or ambient credential exists, so cross-origin reads expose nothing.
@@ -157,6 +163,145 @@ changes. Redis messages are hints; loss must not lose work. Gateways periodicall
 reconcile connected devices from PostgreSQL, send a fresh hello on reconnection,
 and close revoked sockets. Slow sockets are disconnected and recover by snapshot.
 Client disconnects and gateway shutdown do not terminate durable calls or jobs.
+
+## Cloud voice device proof and automatic account suspension
+
+Cloud `answer` and `turn` call events require both the device bearer token and
+`X-Oyobidashi-Voice-Token`. The latter is opaque, bound to that device, and
+expires after ten minutes. Other call events and LAN relay calls do not use it.
+The API and worker both enforce the proof before a model turn can start. Cloud
+voice is unavailable until the platform's proof configuration is present.
+
+`GET /v1/voice` returns `enabled`, `supported`, `platform`, `uid`, `device_id`,
+and `token_ttl_seconds`. The device calls `POST /v1/voice/challenge` with
+`{"purpose":"apple_enroll"|"android_enroll"|"token"}`. Each random challenge
+is bound to the device and purpose, single use, and valid for five minutes.
+
+For iOS, the app makes a separate App Attest key. It attests SHA-256 of UTF-8
+`voice-enroll\n<uid>\n<device_id>\n<challenge>` and sends `challenge`,
+`key_id`, `attestation` (base64) to `POST /v1/voice/apple/attest`. For Android,
+the app creates an EC P-256 signing key in Android Keystore, hashes its SPKI
+DER bytes with SHA-256, and encodes the result as base64url `key_id`. The Play
+Integrity standard request uses SHA-256/base64url of UTF-8
+`voice-enroll\n<uid>\n<device_id>\n<challenge>\n<key_id>` as `requestHash`.
+It sends `challenge`, `public_key` (base64 SPKI DER), and `integrity_token` to
+`POST /v1/voice/android/enroll`. The server checks the Play-recognized package,
+device integrity, freshness, and request hash. Android enrollment must be
+renewed every six hours. The server currently checks the Play Integrity verdict
+and the bound key's signature; it does not verify a hardware key-attestation
+certificate chain.
+
+For a short token renewal, both platforms sign `voice-token\n<uid>\n<device_id>\n<challenge>`.
+iOS supplies an App Attest assertion over the SHA-256 digest; Android supplies
+an ECDSA SHA-256 signature (base64 DER). `POST /v1/voice/token` receives
+`challenge`, `key_id`, `signature` and returns `access_token`, `expires_at`,
+`expires_in:600`. The server checks the iOS assertion counter or Android
+signature and hashes the issued token at rest. Re-enrollment invalidates any
+previous token. Normal API calls do not invoke App Attest or Play Integrity.
+
+The server suspends the entire Firebase UID with no expiry and no user-facing
+unban endpoint when it sees 30 distinct voice turn IDs in one minute, 90
+accepted turns across ten minute buckets, or three accepted turns longer than
+2000 Unicode characters across five minute buckets. Replaying the same
+accepted turn ID does not count. Banned users receive 403 `account_banned`;
+queued model and push jobs are skipped. A newly created Firebase UID is a
+different account and is outside this account-level ban.
+
+## Subscription, attestation and the voice model
+
+All of this is optional. A deployment that sets none of the billing variables
+serves `{"enabled":false}` from `GET /v1/billing`, answers the other billing
+routes with 404, and uses its one configured voice model for everyone. The LAN
+relay has no billing routes; clients treat 404 on `GET /v1/billing` as disabled.
+
+A subscription belongs to the owner UID, not to a device. The worker picks the
+voice model per turn: an owner with an active subscription gets the standard
+model, everyone else gets `VOICE_MODEL_FREE` when it is set. A failure of one
+model never falls back to the other. Model names are deployment configuration
+and are never returned by any API, tool result, error or log.
+
+`GET /v1/billing` (device auth) returns
+
+```json
+{"enabled":true,"active":false,"expires_at":null,
+ "apple":{"product_ids":["..."]},"google":{"product_ids":["..."]}}
+```
+
+`apple` / `google` are present only when that store is configured. `expires_at`
+is ISO 8601 or null. Devices use `active` only for display; the server decides.
+
+Every state-changing billing call is device-authenticated, attested and bound to
+a single-use challenge. `POST /v1/billing/challenge` with `{}` returns
+`{"challenge":"<base64url, 32 random bytes>","expires_at":"..."}`. A challenge
+is valid for five minutes, for the device that requested it, once.
+
+In the calls below `payload` is a JSON document serialized to a string by the
+client. The server hashes exactly the UTF-8 bytes of that string, so the client
+must sign the same string it sends and must not re-serialize it.
+
+iOS (App Attest):
+
+- `POST /v1/billing/apple/attest` `{"key_id","attestation","challenge"}`.
+  `key_id` is the base64 key identifier from `DCAppAttestService.generateKey`,
+  `attestation` the base64 attestation object for
+  `clientDataHash = SHA256(UTF-8 of challenge)`. The server validates the
+  certificate chain to the Apple App Attestation root, the nonce, the App ID
+  (`<team>.<bundle>`), the environment and the key identifier, then stores the
+  public key and counter with the device. 204 on success. A device keeps one key;
+  attesting again replaces it.
+- `POST /v1/billing/apple` `{"key_id","assertion","payload"}` where `payload` is
+  `{"challenge":"...","transactions":["<JWS>", ...]}` (at most 20) and `assertion`
+  is the base64 result of `generateAssertion(keyId, clientDataHash:
+  SHA256(UTF-8 of payload))`. The assertion counter must increase. Each JWS is a
+  StoreKit 2 `jwsRepresentation`; the server verifies its chain to Apple Root CA
+  G3, the bundle ID, the product ID and the environment, and ignores anything
+  else. 409 `attestation_required` means the device must attest (again) first.
+
+Android (Play Integrity, standard request):
+
+- `POST /v1/billing/google` `{"integrity_token","payload"}` where `payload` is
+  `{"challenge":"...","purchases":[{"product_id","purchase_token"}, ...]}` (at
+  most 20) and `integrity_token` was requested with
+  `requestHash = base64url(SHA256(UTF-8 of payload))` without padding. The server
+  decodes the token with Google, requires the configured package name,
+  `PLAY_RECOGNIZED` and `MEETS_DEVICE_INTEGRITY`, then verifies each purchase
+  token with the Play Developer API and acknowledges it.
+
+Both sync calls return the same body as `GET /v1/billing`. An empty list is
+valid and changes nothing: a subscription ends only through its expiry or a
+store revocation, never because a device stopped reporting it. Clients sync at
+launch, after a purchase and on store updates, not only after buying, because a
+subscription can arrive without a purchase on that device (restore, family
+sharing, or a seat assigned by an organization).
+
+Apple ownership: `inAppOwnershipType` `PURCHASED` binds the subscription to one
+UID; a later sync from another UID moves it. `FAMILY_SHARED` and `ASSIGNED`
+(a seat bought by an organization through Apple Business or Apple School
+Manager) have no purchaser on the device and no `appAccountToken`. Each
+beneficiary must have a signed `appTransactionId`; the same signed beneficiary
+transaction can belong to one UID at a time, while different signed
+beneficiaries may hold separate seats under the same original transaction.
+Updates are ordered by signed date and effective period so a saved transaction
+cannot undo a later refund or shorten a renewal. A transaction with `revocationDate`, including `revocationType`
+`ASSIGNMENT_REVOKE`, ends the subscription for its holders immediately. Google
+purchases always bind to one UID. A Google purchase with `linkedPurchaseToken`
+supersedes the previous token so its former holder cannot retain a second seat.
+
+Store notifications keep the state current without a device:
+`POST /v1/billing/webhooks/apple` takes App Store Server Notifications V2 and
+trusts only the verified `signedPayload`; `POST /v1/billing/webhooks/google`
+takes a Pub/Sub push whose OIDC bearer token must carry the configured audience
+and service account, and re-reads the purchase from Google instead of trusting
+the message. Unknown transactions are acknowledged and ignored. Webhooks are
+idempotent and unauthenticated bodies are bounded to 64KB.
+
+Agents learn about data use without learning the model. When
+`VOICE_FREE_TRAINING=1` and the owner has no active subscription, the agent
+view of `GET /v1/presence` and the `delivery` object of `POST /v1/requests`
+carry `"voice_training":true`. The field is absent otherwise. It concerns only
+`question`, `context`, `choices` and the spoken conversation of a request that
+is answered by voice call; text, choice and notification delivery never reach a
+model. MCP surfaces it as a `privacy_notice` string in tool results.
 
 ## Push routing and previews
 

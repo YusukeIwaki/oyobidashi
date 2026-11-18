@@ -48,15 +48,39 @@ bun run --cwd cloud worker
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | ワーカーの会話判断。モデル名は明示設定 |
 | `VOICE_PROVIDER` | `anthropic`（既定）または `meta`。選んだプロバイダーのキーだけを使用 |
 | `MODEL_API_KEY`, `META_MODEL` | `VOICE_PROVIDER=meta` の会話判断。Meta Model API のキーとモデル名（例 `muse-spark-1.2`） |
+| `VOICE_MODEL_FREE` | ワーカー。サブスクリプションのない利用者に使うモデル名。同じプロバイダー・同じキーで呼び出す。未設定なら全員が上のモデル |
+| `VOICE_FREE_TRAINING` | API。`1`なら、サブスクリプションのない利用者の通話が学習に使われることをMCPの結果で知らせる。モデル名は伝えない |
+| `VOICE_APPLE_TEAM_ID`, `VOICE_APPLE_BUNDLE_ID`, `VOICE_APP_ATTEST_ENVIRONMENTS` | API。クラウド音声のiOS端末証明。未設定時は`APPLE_TEAM_ID`、`APPLE_IAP_BUNDLE_ID`、`APPLE_APP_ATTEST_ENVIRONMENTS`を使う。課金の有効化は不要 |
+| `VOICE_ANDROID_PACKAGE_NAME`, `VOICE_GOOGLE_SERVICE_ACCOUNT_JSON` | API。クラウド音声のAndroid端末証明。未設定時はGoogle Play課金の同名設定を使う。アプリ側にはPlay Integrity用Cloud Project Numberも必要 |
+| `APPLE_IAP_PRODUCT_IDS`, `APPLE_IAP_BUNDLE_ID`, `APPLE_TEAM_ID` | API。App Storeの購読を受け付ける商品ID（カンマ区切り）、アプリのBundle ID、Team ID。商品IDが未設定ならAppleの課金は無効 |
+| `APPLE_IAP_ENVIRONMENTS` | API。受け付けるApp Storeの環境。`Production`（既定）と`Sandbox`のカンマ区切り。TestFlightと審査はSandbox |
+| `APPLE_APP_ATTEST_ENVIRONMENTS` | API。受け付けるApp Attestの環境。`production`（既定）と`development`のカンマ区切り。Xcodeから実機へ入れたビルドはdevelopment |
+| `GOOGLE_PLAY_PRODUCT_IDS`, `GOOGLE_PLAY_PACKAGE_NAME`, `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | API。Google Playの購読を受け付ける商品ID、アプリのパッケージ名、Play Developer APIとPlay Integrity APIを呼べるサービスアカウントJSON |
+| `GOOGLE_PLAY_PUBSUB_AUDIENCE`, `GOOGLE_PLAY_PUBSUB_SERVICE_ACCOUNT` | API。リアルタイム デベロッパー通知のPub/Sub pushを認証するaudienceと、pushに使うサービスアカウントのメール。未設定ならGoogleのWebhookは拒否 |
 | `FCM_SERVICE_ACCOUNT_JSON` または `FCM_SERVICE_ACCOUNT_PATH` | Railwayの秘密変数に設定するサービスアカウントJSON、または保護されたファイル。両方の指定は拒否 |
 | `APNS_KEY_PEM` または `APNS_KEY_PATH` | Railwayの秘密変数に設定するAPNs鍵本文、または保護されたファイル。両方の指定は拒否 |
 | `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID` | ワーカーのAPNs設定。利用者自身の値を使用。標準の本体Bundle IDは`me.oyobidashi.ios`。旧アプリからの移行時は、新アプリのインストール・再ペアリングと合わせて送信topicを切り替える |
 
 会話APIが未設定ならテキスト・通知は使えますが、音声ターンは明示的な失敗となります。クラウドではClaude Code CLIのOAuthやサブスクリプション認証を共有しません。LAN版のCLI方式とは別の、APIの利用設定が必要です。
 
-Metaのキー用変数名は`MODEL_API_KEY`です。Muse Sparkを使う場合は、Railwayのworkerサービスに`VOICE_PROVIDER=meta`、`META_MODEL=muse-spark-1.2`、`MODEL_API_KEY`を設定します。キーは[Meta Model API](https://dev.meta.ai/)で発行し、RailwayのVariablesから保存してください。`ANTHROPIC_API_KEY`への代入では切り替わりません。接続先は公式の`https://api.meta.ai/v1/messages`に固定し、Bearer認証で送信します。推論の深さをlowにし、JSONスキーマと既存の業務検証の両方で応答を検査します。キーが未設定でも他社のキーへ自動フォールバックしません。[公式Messages仕様](https://dev.meta.ai/docs/protocols/messages)
+クラウド音声の応答・発話には、App AttestまたはPlay Integrityで登録した端末が10分有効の音声トークンを取得する必要があります。AndroidのIntegrity判定は登録時と6時間ごとの更新時に要求し、10分ごとのトークン更新は端末内の署名鍵を使用します。各API呼び出しではIntegrity APIを呼びません。iOSもApp Attestのアサーションをトークン更新時に作成します。設定のないプラットフォームではクラウド音声を拒否します。旧版アプリのクラウド音声は更新まで使えません。LAN版の通話・テキスト・通知には影響しません。
 
-現在の公開環境もこのMeta設定です。Singaporeの当該workerからは`404 model_not_found`でしたが、同じキーで日本のMacからは成功しました。workerを米国西部へ移し、通常版Muse Sparkで実際の会話判断・回答要約・お礼の取得に成功しています。送信元や配信経路による差と考えられますが、Singapore全体の利用可否を断定するものではありません。実iPhoneでも、クラウド経由の着信・音声認識・確認質問への再回答・お礼の読み上げ・自動終話を確認しました。[検証記録](../docs/VALIDATION.md)
+異常利用はアカウント単位で自動停止します。1分に異なる発話IDを30件、10分に受理済み発話90件、または5分に2000文字超の発話3件が停止条件です。同じIDの再送は数えません。停止記録に期限や利用者向け解除APIはありません。Firebase UIDを新規作成できる状態では、新しいアカウントまで恒久的に阻止するものではありません。
+
+Metaのキー用変数名は`MODEL_API_KEY`です。Muse Sparkを使う場合は、Railwayのworkerサービスに`VOICE_PROVIDER=meta`、`META_MODEL=muse-spark-1.2`、`MODEL_API_KEY`を設定します。キーは[Meta Model API](https://dev.meta.ai/)で発行し、RailwayのVariablesから保存してください。`ANTHROPIC_API_KEY`への代入では切り替わりません。接続先は公式の`https://api.meta.ai/v1/messages`に固定し、Bearer認証で送信します。推論の深さをmediumにし、JSONスキーマと既存の業務検証の両方で応答を検査します。キーが未設定でも他社のキーへ自動フォールバックしません。[公式Messages仕様](https://dev.meta.ai/docs/protocols/messages)
+
+過去にMetaプロバイダーを異なるリージョンから検証しました。Singaporeの当該workerからは`404 model_not_found`でしたが、同じキーで日本のMacからは成功しました。workerを米国西部へ移し、実際の会話判断・回答要約・お礼の取得に成功しています。送信元や配信経路による差と考えられますが、Singapore全体の利用可否を断定するものではありません。実iPhoneでも、クラウド経由の着信・音声認識・確認質問への再回答・お礼の読み上げ・自動終話を確認しました。[検証記録](../docs/VALIDATION.md)
+
+### サブスクリプション
+
+任意の機能です。上の課金用の変数を設定しなければ無効で、`GET /v1/billing`は`{"enabled":false}`を返し、設定した1つのモデルを全員に使います。自前のサーバーではこの状態のまま、好きなモデルを使えます。
+
+有効にすると、購読中の利用者には標準のモデル、それ以外には`VOICE_MODEL_FREE`を使います。片方が失敗しても、もう片方へは切り替えません。どのモデルを使っているかは、API・MCPの結果・エラー・ログのいずれにも出しません。
+
+- 購入の登録は端末認証に加えて、iOSはApp Attest、AndroidはPlay Integrityの検証を通った端末だけが呼べます。開発ビルドはApp Attestがdevelopment、Playを経由しないAndroidビルドは検証に通りません。
+- Appleの購読は、本人の購入のほか、ファミリー共有と、組織がApple Business／Apple School Managerでまとめて購入して割り当てた席も受け付けます。割り当てた席は端末での購入を伴わないので、アプリは起動時とストアの更新時にも同期します。
+- 更新・解約・返金・席の取り消しはストアの通知で反映します。App Store Connectの「App Store サーバ通知」(Version 2) に`<PUBLIC_URL>/v1/billing/webhooks/apple`を、Google PlayのPub/Sub pushに`<PUBLIC_URL>/v1/billing/webhooks/google`を設定します。
+- 手元で課金なしに試す方法、ストア側の準備は[検証記録](../docs/VALIDATION.md)と[プロトコル](../docs/CLOUD_PROTOCOL.md)を参照してください。
 
 ローカルスタックの例はルートの`compose.cloud.yml`です。`.env`はgit管理外です。`docker compose -f compose.cloud.yml up --build`で起動します。実Firebaseログイン・API利用・Push送信には自身の設定が必要です。
 
@@ -92,7 +116,7 @@ MCPクライアントに`https://<APIのホスト>/v1/mcp`を登録します。�
 claude mcp add --transport http oyobidashi https://api.oyobidashi.me/v1/mcp
 ```
 
-初回の接続でブラウザが開きます。Google・Apple・GitHubのいずれかでログインすると、そのクライアントに接続を許可したことになります。スマホが未登録なら、同じ画面にQRコードが出るので、お呼び出しアプリで読み取ります。あとからスマホを追加するときは`https://<APIのホスト>/pair`を開きます。以後、`login-cloud.sh`や`pair-cloud.sh`は不要です。
+初回の接続でブラウザが開きます。Google・Apple・GitHubのいずれかでログインし、接続先を確認して明示的に許可します。スマホが未登録なら、同じ画面にQRコードが出るので、お呼び出しアプリで読み取ります。接続済みアプリの確認・取消しは`https://<APIのホスト>/oauth/connections`で行えます。最後のスマホをペアリング解除すると、そのアカウントのMCP許可も失効します。あとからスマホを追加するときは`https://<APIのホスト>/pair`を開きます。以後、`login-cloud.sh`や`pair-cloud.sh`は不要です。
 
 stdioブリッジで外部アカウントをリンク済みなら、同じアカウントでログインすると同じ利用者になり、登録済みのスマホをそのまま使えます。匿名のままのアカウントではリモートMCPを使えません。先に`--link`でアカウントを登録してください。
 
@@ -182,7 +206,7 @@ Appleは利用者の開発チームで本体App IDのSign in with Appleを有効
 | アカウント切り替え | Push宛先を全ユーザーで一意所有。旧宛先IDの端末イベントを破棄 |
 | 通知を受けたアプリが休止中 | Cloud Pushは本文を汎用化。iOS拡張は短命・質問限定のプレビュートークンで本文と選択肢を取得。取得できなければ汎用通知からアプリを開く |
 | 着信拒否・45秒無応答・10分無言 | 質問を残してテキストへ切り替え。自動再発信しない |
-| 過負荷 | 1人の未回答200件、端末32台、質問／発話60回/分、ペアコード20回/分を上限に429 |
+| 過負荷 | 1人の未回答200件、保存済みリクエスト1000件、端末32台、質問／発話60回/分、一方向通知10件/分、ペアコード20回/分、同時WebSocket・長時間待機8本を上限に429。通話履歴は直近8発話に制限 |
 
 端末側の全体待ち時間は95秒、ポーリングは250msから2秒までのバックオフです。待機中は非同期タスク／コルーチンが停止し、スレッドを占有しません。明示的に失敗した発話は新しいIDで再試行できます。結果不明の発話は同じIDで回復します。
 

@@ -12,6 +12,7 @@ import {
   unauthorized,
 } from "./errors.ts";
 import {
+  entitled,
   iso,
   liveTurn,
   turnView,
@@ -49,8 +50,13 @@ export class CloudService {
     readonly bus: WakeBus,
     readonly now: () => number = Date.now,
   ) {}
+  /** Set by deployments whose free voice model trains on conversations. */
+  freeVoiceTrains = false;
+  voiceProofRequired = false;
   async run<T>(p: Principal, fn: (tx: Transaction) => Promise<T>): Promise<T> {
     return this.db.transaction(p.uid, async (tx) => {
+      if (await tx.get("ban", "current"))
+        throw new CloudError(403, "account_banned", "このアカウントは利用を停止しました。");
       if (p.role === "device") {
         const device = await tx.get("device", p.deviceId);
         if (!device || device.tokenHash !== p.tokenHash) throw unauthorized();
@@ -84,9 +90,55 @@ export class CloudService {
     q.count++;
     await tx.put("quota", key, q, (window + 1) * 60_000);
   }
+  /** Counts only distinct, accepted speech turns. Retries never increment it. */
+  private async voiceAbuse(tx: Transaction, text: string) {
+    const minute = Math.floor(this.now() / 60_000);
+    const usage = (await tx.get("voice_usage", "current")) ?? { buckets: [] };
+    usage.buckets = usage.buckets.filter((bucket) => bucket.minute >= minute - 9);
+    let bucket = usage.buckets.find((item) => item.minute === minute);
+    if (!bucket) {
+      bucket = { minute, turns: 0, longTurns: 0 };
+      usage.buckets.push(bucket);
+    }
+    bucket.turns++;
+    if (Array.from(text).length > 2000) bucket.longTurns++;
+    await tx.put("voice_usage", "current", usage, this.now() + 11 * 60_000);
+    const turns = usage.buckets.reduce((sum, item) => sum + item.turns, 0);
+    const longTurns = usage.buckets.filter((item) => item.minute >= minute - 4)
+      .reduce((sum, item) => sum + item.longTurns, 0);
+    const reason = turns >= 90 ? "voice_velocity" : longTurns >= 3 ? "voice_oversize" : null;
+    if (reason) await tx.put("ban", "current", { at: this.now(), reason });
+    return reason;
+  }
+
+  /** Distinct turn IDs sent faster than a person can speak, including while a turn is pending. */
+  private async voiceHammer(tx: Transaction) {
+    const attempts = (await tx.get("voice_attempts", "current")) ?? { recent: [] };
+    attempts.recent = attempts.recent.filter((at) => at > this.now() - 60_000);
+    attempts.recent.push(this.now());
+    await tx.put("voice_attempts", "current", attempts, this.now() + 60_000);
+    if (attempts.recent.length >= 30) {
+      await tx.put("ban", "current", { at: this.now(), reason: "voice_hammer" });
+      return true;
+    }
+    return false;
+  }
 
   async accountLinkAttempt(tx: Transaction) {
     await this.quota(tx, "account_link", 10);
+  }
+  async billingAttempt(tx: Transaction) {
+    await this.quota(tx, "billing", 30);
+  }
+  async voiceProofAttempt(tx: Transaction) {
+    await this.quota(tx, "voice_proof", 12);
+  }
+  /** True when this owner's voice calls may be used for model training. */
+  async voiceTraining(tx: Transaction) {
+    return (
+      this.freeVoiceTrains &&
+      !entitled(await tx.get("entitlement", "current"), this.now())
+    );
   }
   async oauthAttempt(tx: Transaction) {
     await this.quota(tx, "oauth_authorize", 20);
@@ -247,6 +299,7 @@ export class CloudService {
         x.id !== r.id &&
         (x.call?.state === "active" || x.call?.state === "ringing"),
     );
+    const declined = await tx.get("call_cooldown", "declined");
     return deliveryMode({
       requested,
       priority,
@@ -254,7 +307,7 @@ export class CloudService {
       context: r.context,
       choices: r.choices,
       presence,
-      anotherCall: another || r.call?.state === "ended",
+      anotherCall: another || r.call?.state === "ended" || !!(declined && declined.until > now),
     });
   }
   async create(
@@ -283,6 +336,7 @@ export class CloudService {
       "question",
     );
     await this.quota(tx, "create", 60);
+    if (kind === "notification") await this.quota(tx, "notification", 10);
     const urgency = enumeration(
       body,
       "urgency",
@@ -297,7 +351,7 @@ export class CloudService {
     );
     const requested = enumeration(body, "delivery_mode", modes, "auto");
     const question = string(body, "question", 4000, true)!;
-    const subject = string(body, "subject", 40)?.trim().replace(/\s+/gu, " ") || null;
+    const subject = string(body, "subject", 40)?.replace(/[\p{C}\s]+/gu, " ").trim() || null;
     const context = string(body, "context", 8000);
     const choices = body.choices;
     if (
@@ -318,7 +372,7 @@ export class CloudService {
       if (typeof body.agent !== "object" || Array.isArray(body.agent))
         throw invalid("agent must be an object");
       agent = {
-        name: string(body.agent as Record<string, unknown>, "name", 100),
+        name: string(body.agent as Record<string, unknown>, "name", 100)?.replace(/[\p{C}\s]+/gu, " ").trim() || null,
         cwd: string(body.agent as Record<string, unknown>, "cwd", 1000),
       };
     }
@@ -328,6 +382,11 @@ export class CloudService {
         "rate_limited",
         "未回答の質問が多いため、先に回答または取り消しをしてください。",
       );
+    const history = await tx.list("request", {}, 1001);
+    if (history.length >= 1000) {
+      const oldestTerminal = history.reverse().find((item) => item.status !== "pending");
+      if (oldestTerminal) await tx.remove("request", oldestTerminal.id);
+    }
     const now = this.now();
     const r: CloudRequest = {
       id: `req_${crypto.randomUUID()}`,
@@ -382,6 +441,7 @@ export class CloudService {
         paired_devices: ds.length,
         websocket_delivered: 0,
         push_attempted: ds.filter((d) => d.push_token || d.voip_token).length,
+        ...((await this.voiceTraining(tx)) ? { voice_training: true } : {}),
       },
     };
   }
@@ -502,12 +562,13 @@ export class CloudService {
     id: string,
     deviceId: string,
     b: Record<string, unknown>,
+    voiceToken?: string | null,
   ): Promise<{
     status: number;
-    body: ReturnType<CloudService["envelope"]> & {
+    body: { error: { code: string; message: string } } | (ReturnType<CloudService["envelope"]> & {
       reply?: string | null;
       resolved?: boolean;
-    };
+    });
   }> {
     const event = enumeration(
       b,
@@ -548,6 +609,11 @@ export class CloudService {
       );
     if (c.device_id && c.device_id !== deviceId)
       throw conflict("call_claimed", "call was answered on another device");
+    if (this.voiceProofRequired && (event === "answer" || event === "turn")) {
+      const access = await tx.get("voice_access", deviceId);
+      if (!voiceToken || !access || access.expires <= this.now() || access.tokenHash !== hash(voiceToken))
+        throw new CloudError(403, "voice_proof_required", "通話を続けるには端末の確認が必要です。");
+    }
     if (event === "answer") {
       if (c.state === "ringing") {
         c.state = "active";
@@ -566,6 +632,8 @@ export class CloudService {
       };
     }
     if (event !== "turn") {
+      if (event === "decline")
+        await tx.put("call_cooldown", "declined", { until: this.now() + 5 * 60_000 }, this.now() + 5 * 60_000);
       await this.endCall(
         tx,
         r,
@@ -581,18 +649,20 @@ export class CloudService {
     }
     if (c.state !== "active")
       throw conflict("call_not_active", "answer the call before speaking");
+    if (await this.voiceHammer(tx))
+      return { status: 403, body: { error: { code: "account_banned", message: "このアカウントは利用を停止しました。" } } };
     if (liveTurn(c.turn))
-      throw conflict(
-        "turn_in_progress",
-        "応答を準備しています。少しお待ちください。",
-      );
-    if (c.transcript.length >= 60)
+      return { status: 409, body: { error: { code: "turn_in_progress", message: "応答を準備しています。少しお待ちください。" } } };
+    if ((c.turn_count ?? 0) >= 30)
       throw conflict("call_too_long", "テキストで会話を続けてください。");
     if (b.async !== true)
       throw conflict(
         "client_upgrade_required",
         "音声通話にはアプリの更新が必要です。テキストで返信できます。",
       );
+    if (await this.voiceAbuse(tx, text!))
+      return { status: 403, body: { error: { code: "account_banned", message: "このアカウントは利用を停止しました。" } } };
+    c.turn_count = (c.turn_count ?? 0) + 1;
     const t: Turn = {
       id: turnId!,
       requestId: id,
@@ -665,6 +735,8 @@ export class CloudService {
       );
     if (!uid) throw bad();
     return this.db.transaction(uid, async (tx) => {
+      if (await tx.get("ban", "current"))
+        throw new CloudError(403, "account_banned", "このアカウントは利用を停止しました。");
       const pairing = await tx.get("pairing", key);
       if (!pairing || pairing.used || pairing.expires <= this.now())
         throw bad();
@@ -800,6 +872,9 @@ export class CloudService {
       recent_events:
         p.role === "agent" ? await tx.list("feedback", {}, 100) : [],
       now: iso(this.now()),
+      ...(p.role === "agent" && (await this.voiceTraining(tx))
+        ? { voice_training: true }
+        : {}),
     };
   }
   async putPresence(

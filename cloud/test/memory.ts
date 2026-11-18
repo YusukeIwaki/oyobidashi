@@ -1,8 +1,11 @@
 import {
+  newerAppleProof,
   pushEndpointKey,
   pushClientKey,
   scopedJobId,
   type Database,
+  type AppleBillingProof,
+  type EntitlementSource,
   type Device,
   type Job,
   type Kind,
@@ -219,6 +222,10 @@ export class MemoryDatabase implements Database {
       )?.uid ?? null
     );
   }
+  async isBanned(uid: string) {
+    this.check();
+    return this.records.has(`${uid}:ban:current`);
+  }
   async claim(kind: Job["kind"], now: number, leaseMs: number) {
     this.check();
     const j = [...this.jobs.values()].find(
@@ -246,6 +253,98 @@ export class MemoryDatabase implements Database {
   }
   async health() {
     this.check();
+  }
+  billing = new Map<string, Set<string>>();
+  billingSuperseded = new Map<string, string>();
+  appleState = new Map<string, AppleBillingProof>();
+  async applyAppleBilling(source: string, uid: string | null, proof: AppleBillingProof) {
+    this.check();
+    const key = `apple:${source}`;
+    const previousLock = this.locks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const lock = new Promise<void>((resolve) => { release = resolve; });
+    this.locks.set(key, lock);
+    await previousLock;
+    try {
+      if (!newerAppleProof(this.appleState.get(source) ?? null, proof)) return;
+      const previousHolders = new Set(this.billing.get(source) ?? []);
+      const holders = new Set(previousHolders);
+      if (proof.revoked) holders.clear();
+      else if (uid) { holders.clear(); holders.add(uid); }
+      this.billing.set(source, holders);
+      for (const owner of new Set([...previousHolders, ...(uid ? [uid] : [])]))
+        await this.transaction(owner, async (tx) => {
+          const entitlement = (await tx.get("entitlement", "current")) ?? { sources: {} };
+          if (holders.has(owner)) entitlement.sources[source] = proof.value;
+          else delete entitlement.sources[source];
+          await tx.put("entitlement", "current", entitlement);
+        });
+      this.appleState.set(source, structuredClone(proof));
+    } finally {
+      release();
+      if (this.locks.get(key) === lock) this.locks.delete(key);
+    }
+  }
+  async billingClaim(source: string, uid: string, exclusive: boolean) {
+    this.check();
+    if (this.billingSuperseded.has(source)) return null;
+    const holders = this.billing.get(source) ?? new Set<string>();
+    const others = exclusive ? [...holders].filter((h) => h !== uid) : [];
+    for (const o of others) holders.delete(o);
+    holders.add(uid);
+    this.billing.set(source, holders);
+    return others;
+  }
+  async applyGoogleBilling(source: string, uid: string, value: EntitlementSource, linkedSource?: string) {
+    this.check();
+    const key = "billing:google-global";
+    const previous = this.locks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const lock = new Promise<void>((resolve) => { release = resolve; });
+    this.locks.set(key, lock);
+    await previous;
+    try {
+      if (this.billingSuperseded.has(source)) return;
+      const oldHolders = [...(this.billing.get(source) ?? [])];
+      const linkedHolders = linkedSource && linkedSource !== source
+        ? [...(this.billing.get(linkedSource) ?? [])] : [];
+      if (linkedSource && linkedSource !== source) {
+        this.billingSuperseded.set(linkedSource, source);
+        this.billing.delete(linkedSource);
+      }
+      this.billing.set(source, new Set([uid]));
+      for (const owner of [...new Set([...oldHolders, ...linkedHolders, uid])].sort())
+        await this.transaction(owner, async (tx) => {
+          const entitlement = (await tx.get("entitlement", "current")) ?? { sources: {} };
+          if (linkedSource) delete entitlement.sources[linkedSource];
+          if (owner === uid) entitlement.sources[source] = value;
+          else delete entitlement.sources[source];
+          await tx.put("entitlement", "current", entitlement);
+        });
+    } finally {
+      release();
+      if (this.locks.get(key) === lock) this.locks.delete(key);
+    }
+  }
+  async billingSupersede(source: string, successor: string) {
+    this.check();
+    if (source === successor) return [];
+    this.billingSuperseded.set(source, successor);
+    const displaced = [...(this.billing.get(source) ?? [])];
+    this.billing.delete(source);
+    return displaced;
+  }
+  async billingHolders(source: string) {
+    this.check();
+    return [...(this.billing.get(source) ?? [])];
+  }
+  async billingHeld(source: string, uid: string) {
+    this.check();
+    return this.billing.get(source)?.has(uid) ?? false;
+  }
+  async billingRelease(source: string, uid: string) {
+    this.check();
+    this.billing.get(source)?.delete(uid);
   }
   async revisions(uids: string[]) {
     this.check();

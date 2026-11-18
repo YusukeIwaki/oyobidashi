@@ -4,6 +4,25 @@ import XCTest
 final class RelayClientTests: XCTestCase {
     private let stub = StubTransport()
 
+    func testVoiceProofProtocolAndCallHeader() async throws {
+        let c = try client()
+        stub.on("GET", "/v1/voice", status: 200, body: Data(#"{"enabled":true,"supported":true,"platform":"ios","uid":"alice","device_id":"dev_01"}"#.utf8))
+        let fetchedStatus = try await c.voiceStatus()
+        let status = try XCTUnwrap(fetchedStatus)
+        XCTAssertEqual(status.deviceID, "dev_01")
+        XCTAssertEqual(VoiceProofMessage.enrollment(uid: status.uid, deviceID: status.deviceID, challenge: "nonce"), "voice-enroll\nalice\ndev_01\nnonce")
+        stub.on("POST", "/v1/voice/challenge", status: 200, body: Data(#"{"challenge":"nonce"}"#.utf8))
+        let challenge = try await c.voiceChallenge("token")
+        XCTAssertEqual(challenge.challenge, "nonce")
+        stub.on("POST", "/v1/voice/token", status: 200, body: Data(#"{"access_token":"kv_test","expires_at":"2026-11-18T12:00:00.000Z"}"#.utf8))
+        let access = try await c.voiceToken(challenge: "nonce", keyID: "key", signature: Data([1]))
+        XCTAssertEqual(access.accessToken, "kv_test")
+        stub.onAny { _ in .init(403, Data(#"{"error":{"code":"voice_proof_required","message":"proof"}}"#.utf8)) }
+        let secured = RelayClient(endpoint: try RelayEndpoint("https://relay.example"), deviceToken: "kd_token", transport: stub, voiceAccessToken: "kv_test")
+        await assertThrows(.forbidden) { _ = try await secured.answerCall(requestID: "r") }
+        XCTAssertEqual(stub.requests.last?.value(forHTTPHeaderField: "X-Oyobidashi-Voice-Token"), "kv_test")
+    }
+
     private func client(_ base: String = "https://relay.example", token: String? = "kd_token") throws -> RelayClient {
         RelayClient(endpoint: try RelayEndpoint(base), deviceToken: token, transport: stub)
     }

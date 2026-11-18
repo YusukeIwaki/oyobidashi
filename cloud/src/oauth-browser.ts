@@ -25,7 +25,7 @@ const element = (id: string) => document.getElementById(id)!;
 const heading = element("heading"), explanation = element("explanation"), details = element("details");
 const providers = element("providers"), pairing = element("pairing"), qr = element("qr");
 const pairingHint = element("pairing-hint"), actions = element("actions"), status = element("status");
-const mode = main?.dataset.mode === "pair" ? "pair" : "authorize";
+const mode = main?.dataset.mode === "pair" ? "pair" : main?.dataset.mode === "connections" ? "connections" : "authorize";
 const clientName = main?.dataset.client || "名前のないアプリ";
 const request = authorizationParams(location.search);
 const labels: Record<AccountProvider,string> = {google:"Google", apple:"Apple", github:"GitHub"};
@@ -67,6 +67,7 @@ async function call(path: string, init: {method: string; body?: unknown; signedI
     ...(init.body !== undefined ? {body:JSON.stringify(init.body)} : {}),
   });
   if (!response.ok) throw Object.assign(new Error("request failed"), {status:response.status});
+  if (response.status === 204) return null;
   return response.json();
 }
 
@@ -111,6 +112,58 @@ function drawQr(text: string) {
   qr.replaceChildren(svg);
 }
 
+function showApproval() {
+  if (mode !== "authorize") return;
+  clearTimeout(pollTimer);
+  pairing.hidden = true;
+  qr.replaceChildren();
+  heading.textContent = "接続の許可を確認";
+  explanation.textContent = `未確認のアプリ「${clientName}」に、あなたのスマホへの質問・通知を許可しますか？`;
+  details.hidden = false;
+  actions.replaceChildren(
+    button("このアプリを許可する", () => void decide("approve")),
+    button("許可しない", () => void decide("deny"), true),
+  );
+  message("接続先を確認してから選んでください。");
+}
+
+async function showConnections() {
+  if (mode !== "connections") return;
+  providers.replaceChildren();
+  actions.replaceChildren();
+  message("接続済みアプリを確認しています…");
+  try {
+    const result = await call("/oauth/grants", {method:"GET"}) as {
+      grants?: {id: string; name: string | null; redirect_uri: string | null; last_used_at: string}[];
+    };
+    if (!Array.isArray(result.grants)) throw new Error("invalid response");
+    heading.textContent = "接続済みアプリ";
+    explanation.textContent = "ここで取り消すと、そのアプリはスマホへ質問や通知を送れなくなります。";
+    for (const grant of result.grants) {
+      const section = document.createElement("section");
+      const title = document.createElement("p");
+      title.textContent = `未確認のアプリ: ${grant.name || "名前なし"}`;
+      const destination = document.createElement("p");
+      destination.textContent = `戻り先: ${grant.redirect_uri || "不明"}`;
+      const revoke = button("接続を取り消す", async () => {
+        setDisabled(true);
+        try {
+          await call(`/oauth/grants/${encodeURIComponent(grant.id)}`, {method:"DELETE"});
+          section.remove();
+          message("接続を取り消しました。");
+        } catch { message(UNREACHABLE); }
+        setDisabled(false);
+      });
+      section.append(title, destination, revoke);
+      actions.append(section);
+    }
+    message(result.grants.length ? "アプリ名は接続元の自己申告です。" : "接続済みアプリはありません。");
+  } catch {
+    message(UNREACHABLE);
+    actions.replaceChildren(button("再試行", () => void showConnections()));
+  }
+}
+
 /** Shows a one-time pairing code and watches for the phone to appear. */
 async function showPairing(alreadyPaired: number) {
   clearTimeout(pollTimer);
@@ -124,7 +177,7 @@ async function showPairing(alreadyPaired: number) {
   } catch (error) {
     message((error as {status?: number}).status === 429 ? "ペアリングできる台数の上限か、試行回数の上限に達しました。少し待ってからお試しください。" : UNREACHABLE);
     actions.replaceChildren(button("再試行", () => void showPairing(alreadyPaired)));
-    if (mode === "authorize") actions.append(button("ペアリングせずに接続する", () => void decide("approve"), true));
+    if (mode === "authorize") actions.append(button("ペアリングせずに進む", () => showApproval(), true));
     return;
   }
   const link = pairingUrl(location.origin, issued.code);
@@ -138,7 +191,7 @@ async function showPairing(alreadyPaired: number) {
   details.hidden = true;
   pairingHint.textContent = "スマホの「お呼び出し」アプリを開き、このQRコードを読み取ってください。QRコードは10分間、1回だけ使えます。";
   actions.replaceChildren(button("このスマホでアプリを開く", () => {location.href = link;}, true));
-  if (mode === "authorize") actions.append(button("あとでペアリングする", () => void decide("approve"), true));
+  if (mode === "authorize") actions.append(button("あとでペアリングする", () => showApproval(), true));
   message("スマホの登録を待っています…");
 
   const poll = async () => {
@@ -148,14 +201,14 @@ async function showPairing(alreadyPaired: number) {
       qr.replaceChildren();
       message("QRコードの有効期限が切れました。");
       actions.replaceChildren(button("QRコードを更新", () => void showPairing(alreadyPaired)));
-      if (mode === "authorize") actions.append(button("あとでペアリングする", () => void decide("approve"), true));
+      if (mode === "authorize") actions.append(button("あとでペアリングする", () => showApproval(), true));
       return;
     }
     try {
       if (pairedDevices(await call("/v1/presence", {method:"GET"})) > alreadyPaired) {
         pairing.hidden = true;
         qr.replaceChildren();
-        if (mode === "authorize") return void decide("approve");
+        if (mode === "authorize") return showApproval();
         heading.textContent = "ペアリングが完了しました";
         explanation.textContent = "このスマホへ質問や通知が届くようになりました。";
         actions.replaceChildren(button("別のスマホも登録する", () => void showPairing(alreadyPaired + 1), true));
@@ -172,6 +225,7 @@ async function signedIn() {
   providers.replaceChildren();
   actions.replaceChildren();
   message("アカウントを確認しています…");
+  if (mode === "connections") return showConnections();
   let count: number;
   try { count = pairedDevices(await call("/v1/presence", {method:"GET"})); }
   catch {
@@ -179,7 +233,7 @@ async function signedIn() {
     actions.replaceChildren(button("再試行", () => void signedIn()));
     return;
   }
-  if (mode === "authorize" && count > 0) return decide("approve");
+  if (mode === "authorize" && count > 0) return showApproval();
   await showPairing(count);
 }
 
@@ -196,7 +250,7 @@ async function start() {
     await setPersistence(auth, inMemoryPersistence);
     await signOut(auth);
     for (const provider of config.providers)
-      providers.append(button(`${labels[provider]}でログイン${mode === "authorize" ? "して許可" : ""}`, () => {
+      providers.append(button(`${labels[provider]}でログイン`, () => {
         if (user || finished) return;
         setDisabled(true);
         message("ログイン画面で操作を完了してください。");
@@ -221,16 +275,19 @@ async function start() {
 
 if (mode === "authorize") {
   heading.textContent = "お呼び出しへの接続を許可";
-  explanation.textContent = `「${clientName}」が、あなたのスマホへ質問や通知を送れるようになります。ログインすると許可したことになります。`;
-  for (const [term, value] of [["接続するアプリ", clientName], ["許可後の戻り先", main?.dataset.redirect ?? ""]] as const) {
+  explanation.textContent = `未確認のアプリ「${clientName}」が、あなたのスマホへ質問や通知を送ろうとしています。ログイン後に許可するか選べます。`;
+  for (const [term, value] of [["アプリの自己申告名（未確認）", clientName], ["許可後の戻り先", main?.dataset.redirect ?? ""]] as const) {
     const dt = document.createElement("dt"), dd = document.createElement("dd");
     dt.textContent = term;
     dd.textContent = value;
     details.append(dt, dd);
   }
   details.hidden = false;
-} else {
+} else if (mode === "pair") {
   heading.textContent = "スマホをペアリング";
   explanation.textContent = "MCPの接続に使ったアカウントでログインすると、お呼び出しアプリで読み取るQRコードを表示します。";
+} else {
+  heading.textContent = "接続済みアプリ";
+  explanation.textContent = "接続に使ったアカウントでログインすると、許可したアプリを確認・取り消しできます。";
 }
 void start();

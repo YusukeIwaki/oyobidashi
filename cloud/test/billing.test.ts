@@ -1,0 +1,694 @@
+import { afterAll, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { CloudApp } from "../src/app.ts";
+import { Billing, loadBillingConfig, type BillingConfig } from "../src/billing/service.ts";
+import { GooglePlay } from "../src/billing/google.ts";
+import { verifyAppleJws } from "../src/billing/apple.ts";
+import { unauthorized } from "../src/errors.ts";
+import { JobWorker } from "../src/worker.ts";
+import { fakeAppAttest, fakeAppStore } from "./billing-fixtures.ts";
+import { harness } from "./helpers.ts";
+import postgres from "postgres";
+import { PostgresDatabase } from "../src/postgres.ts";
+import type { Database } from "../src/types.ts";
+
+const BUNDLE = "com.example.app",
+  APP_ID = `TEAM123456.${BUNDLE}`,
+  PRODUCT = "voice.monthly";
+const store = fakeAppStore(),
+  attest = fakeAppAttest(APP_ID);
+afterAll(() => attest.dispose());
+
+function setup(config: Partial<BillingConfig> = {}, database?: Database) {
+  const h = harness(database);
+  h.service.freeVoiceTrains = true;
+  const billing = new Billing(h.service, {
+    apple: {
+      bundleId: BUNDLE,
+      appId: APP_ID,
+      productIds: [PRODUCT],
+      environments: ["Production"],
+      attestEnvironments: ["production"],
+      storeRoot: store.rootPem,
+      attestRoot: attest.rootPem,
+    },
+    ...config,
+  });
+  const app = new CloudApp(
+    h.service,
+    {
+      async verify(token: string) {
+        if (!token.startsWith("agent-")) throw unauthorized();
+        return token.slice(6);
+      },
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    billing,
+  );
+  const call = async (
+    method: string,
+    path: string,
+    token: string | null,
+    body?: unknown,
+    headers: Record<string, string> = {},
+  ) => {
+    const response = (await app.fetch(
+      new Request(`http://localhost${path}`, {
+        method,
+        headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }),
+    ))!;
+    return {
+      status: response.status,
+      body: response.status === 204 ? null : ((await response.json()) as any),
+    };
+  };
+  const challenge = async (token: string) =>
+    (await call("POST", "/v1/billing/challenge", token, {})).body.challenge as string;
+  /** Pairs a phone and attests its App Attest key. */
+  const phone = async (uid: string) => {
+    const paired = await h.pair(uid),
+      token = paired.device_token,
+      key = attest.device();
+    const c = await challenge(token);
+    const attested = await call("POST", "/v1/billing/apple/attest", token, {
+      key_id: key.keyId,
+      attestation: key.attestation(c),
+      challenge: c,
+    });
+    expect(attested.status).toBe(204);
+    const sync = async (transactions: string[]) => {
+      const payload = JSON.stringify({ challenge: await challenge(token), transactions });
+      return call("POST", "/v1/billing/apple", token, {
+        key_id: key.keyId,
+        assertion: key.assertion(payload),
+        payload,
+      });
+    };
+    return { token, key, sync, uid };
+  };
+  const transaction = (fields: Record<string, unknown> = {}) =>
+    store.sign({
+      bundleId: BUNDLE,
+      productId: PRODUCT,
+      environment: "Production",
+      originalTransactionId: "1000",
+      expiresDate: h.clock.now + 30 * 86400_000,
+      signedDate: h.clock.now,
+      inAppOwnershipType: "PURCHASED",
+      ...fields,
+    });
+  const training = async (uid: string) =>
+    (await call("GET", "/v1/presence", `agent-${uid}`)).body.voice_training === true;
+  return { h, app, call, challenge, phone, transaction, training, billing };
+}
+
+describe("subscription billing", () => {
+  test("a deployment without stores reports billing as disabled", async () => {
+    const h = harness(),
+      d = await h.pair();
+    expect((await h.call("GET", "/v1/billing", d.device_token)).body).toEqual({ enabled: false });
+    expect((await h.call("POST", "/v1/billing/challenge", d.device_token, {})).status).toBe(404);
+    expect((await h.call("POST", "/v1/billing/webhooks/apple", null, {})).status).toBe(404);
+    expect(loadBillingConfig({})).toEqual({});
+    // Without a training free model, agents see no notice.
+    expect((await h.call("GET", "/v1/presence")).body.voice_training).toBeUndefined();
+  });
+
+  test("an attested device activates the owner's subscription", async () => {
+    const s = setup(),
+      p = await s.phone("alice");
+    expect((await s.call("GET", "/v1/billing", p.token)).body).toEqual({
+      enabled: true,
+      active: false,
+      expires_at: null,
+      apple: { product_ids: [PRODUCT] },
+    });
+    expect(await s.training("alice")).toBe(true);
+    const created = await s.call("POST", "/v1/requests", "agent-alice", { question: "q" });
+    expect(created.body.delivery.voice_training).toBe(true);
+
+    const synced = await p.sync([await s.transaction()]);
+    expect(synced.status).toBe(200);
+    expect(synced.body.active).toBe(true);
+    expect(Date.parse(synced.body.expires_at)).toBe(s.h.clock.now + 30 * 86400_000);
+    expect(await s.training("alice")).toBe(false);
+    expect(
+      (await s.call("POST", "/v1/requests", "agent-alice", { question: "q2" })).body.delivery
+        .voice_training,
+    ).toBeUndefined();
+    // The subscription simply runs out; no device has to report that.
+    s.h.advance(31 * 86400_000);
+    expect((await s.call("GET", "/v1/billing", p.token)).body.active).toBe(false);
+    expect(await s.training("alice")).toBe(true);
+  });
+
+  test("agents and MCP callers cannot use billing routes", async () => {
+    const s = setup();
+    await s.h.pair("alice");
+    expect((await s.call("GET", "/v1/billing", "agent-alice")).status).toBe(403);
+    expect((await s.call("POST", "/v1/billing/challenge", "agent-alice", {})).status).toBe(403);
+    expect((await s.call("POST", "/v1/billing/challenge", null, {})).status).toBe(401);
+  });
+
+  test("a sync needs a fresh challenge, the attested key and a valid assertion", async () => {
+    const s = setup(),
+      p = await s.phone("alice"),
+      jws = await s.transaction();
+    const send = (payload: string, extra: Record<string, unknown> = {}) =>
+      s.call("POST", "/v1/billing/apple", p.token, {
+        key_id: p.key.keyId,
+        assertion: p.key.assertion(payload),
+        payload,
+        ...extra,
+      });
+    const body = async () =>
+      JSON.stringify({ challenge: await s.challenge(p.token), transactions: [jws] });
+
+    // Unknown challenge, and a challenge issued to another device.
+    expect((await send(JSON.stringify({ challenge: "nope", transactions: [jws] }))).status).toBe(409);
+    const other = await s.phone("bob");
+    const foreign = JSON.stringify({ challenge: await s.challenge(other.token), transactions: [jws] });
+    expect((await send(foreign)).body.error.code).toBe("challenge_expired");
+
+    // A different key than the attested one must attest first.
+    const stranger = attest.device(),
+      p1 = await body();
+    const wrongKey = await s.call("POST", "/v1/billing/apple", p.token, {
+      key_id: stranger.keyId,
+      assertion: stranger.assertion(p1),
+      payload: p1,
+    });
+    expect(wrongKey.status).toBe(409);
+    expect(wrongKey.body.error.code).toBe("attestation_required");
+
+    // The assertion must cover exactly the payload that was sent.
+    const p2 = await body();
+    const tampered = await s.call("POST", "/v1/billing/apple", p.token, {
+      key_id: p.key.keyId,
+      assertion: p.key.assertion(p2),
+      payload: p2.replace(jws, jws + " "),
+    });
+    expect(tampered.body.error.code).toBe("attestation_failed");
+
+    // Wrong app and a replayed counter are rejected.
+    const p3 = await body();
+    expect(
+      (await send(p3, { assertion: p.key.assertion(p3, { appId: "TEAM123456.other.app" }) })).body
+        .error.code,
+    ).toBe("attestation_failed");
+    const p4 = await body();
+    expect((await send(p4)).status).toBe(200);
+    const p5 = await body();
+    expect(
+      (await send(p5, { assertion: p.key.assertion(p5, { counter: 1 }) })).body.error.code,
+    ).toBe("attestation_failed");
+
+    // A used challenge cannot be replayed even with a fresh assertion.
+    expect((await send(p4)).body.error.code).toBe("challenge_expired");
+    // An expired challenge is refused.
+    const p6 = await body();
+    s.h.advance(301_000);
+    expect((await send(p6)).body.error.code).toBe("challenge_expired");
+  });
+
+  test("invalid billing syncs still exhaust the per-owner quota", async () => {
+    const s = setup(), phone = await s.phone("alice");
+    const payload = JSON.stringify({ challenge: "unknown-challenge", transactions: [] });
+    const statuses: number[] = [];
+    for (let i = 0; i < 35; i++)
+      statuses.push((await s.call("POST", "/v1/billing/apple", phone.token, {
+        key_id: phone.key.keyId, assertion: phone.key.assertion(payload), payload,
+      })).status);
+    expect(statuses).toContain(409);
+    expect(statuses.at(-1)).toBe(429);
+  });
+
+  test("attestation rejects other apps, environments, keys and challenges", async () => {
+    const s = setup(),
+      d = await s.h.pair("alice"),
+      token = d.device_token;
+    const attempt = async (make: (c: string) => Record<string, unknown>) => {
+      const c = await s.challenge(token);
+      return s.call("POST", "/v1/billing/apple/attest", token, make(c));
+    };
+    const key = attest.device();
+    expect(
+      (await attempt((c) => ({ key_id: key.keyId, attestation: key.attestation(c, "TEAM123456.evil"), challenge: c }))).body.error.code,
+    ).toBe("attestation_failed");
+    const dev = attest.device("development");
+    expect(
+      (await attempt((c) => ({ key_id: dev.keyId, attestation: dev.attestation(c), challenge: c }))).body.error.code,
+    ).toBe("attestation_failed");
+    const other = attest.device();
+    expect(
+      (await attempt((c) => ({ key_id: other.keyId, attestation: key.attestation(c), challenge: c }))).body.error.code,
+    ).toBe("attestation_failed");
+    // Attested for a different challenge than the one presented.
+    const stale = key.attestation("some-other-challenge");
+    expect(
+      (await attempt((c) => ({ key_id: key.keyId, attestation: stale, challenge: c }))).body.error.code,
+    ).toBe("attestation_failed");
+    expect(
+      (await attempt((c) => ({ key_id: key.keyId, attestation: Buffer.from("junk").toString("base64"), challenge: c }))).body.error.code,
+    ).toBe("attestation_failed");
+    expect(
+      (await attempt((c) => ({ key_id: key.keyId, attestation: key.attestation(c), challenge: c }))).status,
+    ).toBe(204);
+  });
+
+  test("transactions for other apps, products, environments or signers are ignored", async () => {
+    const s = setup(),
+      p = await s.phone("alice");
+    const foreignStore = fakeAppStore();
+    const ignored = [
+      await s.transaction({ bundleId: "com.other.app" }),
+      await s.transaction({ productId: "other.product" }),
+      await s.transaction({ environment: "Sandbox" }),
+      await s.transaction({ environment: "Xcode" }),
+      await s.transaction({ originalTransactionId: "../x" }),
+      await foreignStore.sign({
+        bundleId: BUNDLE,
+        productId: PRODUCT,
+        environment: "Production",
+        originalTransactionId: "1",
+        expiresDate: s.h.clock.now + 1e9,
+      }),
+      "not-a-jws",
+      // Same header and payload, signature bytes altered.
+      (await s.transaction()).replace(/(.)(.{20})$/, (_, c, rest) => (c === "A" ? "B" : "A") + rest),
+    ];
+    const r = await p.sync(ignored);
+    expect(r.status).toBe(200);
+    expect(r.body.active).toBe(false);
+    await expect(verifyAppleJws(await s.transaction(), s.h.clock.now)).rejects.toThrow();
+  });
+
+  test("a purchased subscription follows the account that last restored it", async () => {
+    const s = setup(),
+      alice = await s.phone("alice"),
+      bob = await s.phone("bob"),
+      jws = await s.transaction();
+    expect((await alice.sync([jws])).body.active).toBe(true);
+    expect((await bob.sync([jws])).body.active).toBe(true);
+    expect((await s.call("GET", "/v1/billing", alice.token)).body.active).toBe(false);
+    // An empty report never ends a subscription.
+    expect((await bob.sync([])).body.active).toBe(true);
+  });
+
+  test("a refunded transaction cannot be replayed by its owner or another account", async () => {
+    const s = setup(), alice = await s.phone("alice"), bob = await s.phone("bob");
+    const old = await s.transaction();
+    expect((await alice.sync([old])).body.active).toBe(true);
+    const revoked = await s.transaction({ revocationDate: s.h.clock.now + 1, signedDate: s.h.clock.now + 1 });
+    expect((await alice.sync([revoked, old])).body.active).toBe(false);
+    expect((await alice.sync([old])).body.active).toBe(false);
+    expect((await bob.sync([old])).body.active).toBe(false);
+  });
+
+  test("a stale transaction or notification cannot shorten a renewal", async () => {
+    const s = setup(), phone = await s.phone("alice");
+    const old = await s.transaction({ expiresDate: s.h.clock.now + 86400_000 });
+    const later = await s.transaction({ expiresDate: s.h.clock.now + 31 * 86400_000, signedDate: s.h.clock.now + 1 });
+    await phone.sync([old]);
+    await phone.sync([later]);
+    const expected = new Date(s.h.clock.now + 31 * 86400_000).toISOString();
+    expect((await phone.sync([old])).body.expires_at).toBe(expected);
+    await s.call("POST", "/v1/billing/webhooks/apple", null, {
+      signedPayload: await store.sign({ notificationType: "DID_RENEW", data: {
+        bundleId: BUNDLE, signedTransactionInfo: old,
+      } }),
+    });
+    expect((await s.call("GET", "/v1/billing", phone.token)).body.expires_at).toBe(expected);
+  });
+
+  test("one copied family or assigned JWS moves its seat instead of multiplying it", async () => {
+    const s = setup(), alice = await s.phone("alice"), bob = await s.phone("bob");
+    for (const ownership of ["FAMILY_SHARED", "ASSIGNED"]) {
+      const shared = await s.transaction({ originalTransactionId: ownership === "ASSIGNED" ? "5000" : "6000",
+        appTransactionId: "7000", inAppOwnershipType: ownership });
+      expect((await alice.sync([shared])).body.active).toBe(true);
+      expect((await bob.sync([shared])).body.active).toBe(true);
+      expect((await s.call("GET", "/v1/billing", alice.token)).body.active).toBe(false);
+    }
+    const missingOwnership = await s.transaction({ inAppOwnershipType: undefined });
+    expect((await alice.sync([missingOwnership])).body.active).toBe(false);
+  });
+
+  test("organization-assigned and family-shared seats need no purchase on the device", async () => {
+    const s = setup(),
+      alice = await s.phone("alice"),
+      bob = await s.phone("bob");
+    // No appAccountToken, no purchase on the device: only the ownership type differs.
+    const seat = (account: string, fields: Record<string, unknown> = {}) =>
+      s.transaction({ originalTransactionId: "2000", appTransactionId: account, inAppOwnershipType: "ASSIGNED", ...fields });
+    expect((await alice.sync([await seat("3001")])).body.active).toBe(true);
+    expect((await bob.sync([await seat("3002")])).body.active).toBe(true);
+    expect((await s.call("GET", "/v1/billing", alice.token)).body.active).toBe(true);
+    // The organization takes Bob's seat back; Alice keeps hers.
+    const revoked = await seat("3002", { revocationDate: s.h.clock.now, revocationType: "ASSIGNMENT_REVOKE" });
+    expect((await bob.sync([revoked])).body.active).toBe(false);
+    expect((await s.call("GET", "/v1/billing", alice.token)).body.active).toBe(true);
+    const family = await s.transaction({ originalTransactionId: "3000", appTransactionId: "4001", inAppOwnershipType: "FAMILY_SHARED" });
+    expect((await bob.sync([family])).body.active).toBe(true);
+  });
+
+  test("App Store notifications renew, expire and refund without a device", async () => {
+    const s = setup(),
+      p = await s.phone("alice");
+    await p.sync([await s.transaction({ expiresDate: s.h.clock.now + 86400_000 })]);
+    const notify = async (fields: Record<string, unknown>, renewal?: Record<string, unknown>) =>
+      s.call("POST", "/v1/billing/webhooks/apple", null, {
+        signedPayload: await store.sign({
+          notificationType: "DID_RENEW",
+          data: {
+            bundleId: BUNDLE,
+            environment: "Production",
+            signedTransactionInfo: await s.transaction(fields),
+            ...(renewal ? { signedRenewalInfo: await store.sign(renewal) } : {}),
+          },
+        }),
+      });
+    const renewed = s.h.clock.now + 31 * 86400_000;
+    // Billing retry with a grace period keeps access until the grace period ends.
+    const grace = s.h.clock.now + 5 * 86400_000;
+    await notify({ expiresDate: s.h.clock.now - 1 }, { gracePeriodExpiresDate: grace });
+    expect(Date.parse((await s.call("GET", "/v1/billing", p.token)).body.expires_at)).toBe(grace);
+    expect((await notify({ expiresDate: renewed })).status).toBe(204);
+    expect(Date.parse((await s.call("GET", "/v1/billing", p.token)).body.expires_at)).toBe(renewed);
+    await notify({ expiresDate: renewed, revocationDate: s.h.clock.now });
+    expect((await s.call("GET", "/v1/billing", p.token)).body.active).toBe(false);
+    // A later notification for a subscription nobody holds is acknowledged and ignored.
+    expect((await notify({ originalTransactionId: "9999" })).status).toBe(204);
+    expect((await s.call("GET", "/v1/billing", p.token)).body.active).toBe(false);
+    // Unsigned or foreign notifications are refused.
+    expect((await s.call("POST", "/v1/billing/webhooks/apple", null, { signedPayload: "x.y.z" })).status).toBe(401);
+    expect(
+      (await s.call("POST", "/v1/billing/webhooks/apple", null, {
+        signedPayload: await fakeAppStore().sign({ data: {} }),
+      })).status,
+    ).toBe(401);
+  });
+
+  test("a real-sized notification with renewal info is accepted; a device transaction stays bounded", async () => {
+    const s = setup(), p = await s.phone("alice");
+    expect((await p.sync([await s.transaction()])).body.active).toBe(true);
+    // Apple's x5c is a 1076 B leaf, the 794 B WWDR G6 and the 583 B Root G3:
+    // a protected header of about 4,400 characters on each of the three JWS.
+    const header = Math.ceil((JSON.stringify({ alg: "ES256", x5c: [1076, 794, 583].map((n) => "A".repeat(Math.ceil(n / 3) * 4)) }).length * 4) / 3);
+    /** Signs with the small test chain, padded to the length Apple's chain would give. */
+    const sized = async (payload: Record<string, unknown>) => {
+      const target = header + 1 + Math.ceil((JSON.stringify(payload).length * 4) / 3) + 1 + 86;
+      const bare = await store.sign(payload);
+      return store.sign({ ...payload, pad: "x".repeat(Math.max(0, Math.floor(((target - bare.length) * 3) / 4))) });
+    };
+    const base = {
+      bundleId: BUNDLE, productId: PRODUCT, environment: "Production", originalTransactionId: "1000",
+      expiresDate: s.h.clock.now + 30 * 86400_000, signedDate: s.h.clock.now + 1, inAppOwnershipType: "PURCHASED",
+    };
+    const refunded = await sized({ ...base, revocationDate: s.h.clock.now + 1 });
+    const renewal = await sized({ originalTransactionId: "1000", autoRenewProductId: PRODUCT, autoRenewStatus: 0, environment: "Production" });
+    const notice = await sized({
+      notificationType: "REFUND",
+      data: { bundleId: BUNDLE, environment: "Production", signedTransactionInfo: refunded, signedRenewalInfo: renewal },
+    });
+    expect(notice.length).toBeGreaterThan(16_384);
+    expect((await s.call("POST", "/v1/billing/webhooks/apple", null, { signedPayload: notice })).status).toBe(204);
+    expect((await s.call("GET", "/v1/billing", p.token)).body.active).toBe(false);
+    // The wider limit is for notifications only.
+    const bob = await s.phone("bob");
+    const huge = await store.sign({ ...base, originalTransactionId: "3000", pad: "x".repeat(16_000) });
+    expect((await bob.sync([huge])).body.active).toBe(false);
+  });
+
+  test("the worker gives subscribers the standard model and everyone else the free one", async () => {
+    const s = setup();
+    const used: string[] = [];
+    const provider = (name: string) => ({
+      turn: async () => {
+        used.push(name);
+        return { reply: "ok", resolved: false, answer: null };
+      },
+    });
+    const worker = new JobWorker(s.h.service, {
+      conversation: provider("standard"),
+      freeConversation: provider("free"),
+    });
+    const voice = await s.h.setup("alice");
+    await voice.turn("one");
+    await worker.runOnce("turn");
+    // Subscribe with a second, attested phone of the same account.
+    const p = await s.phone("alice");
+    expect((await p.sync([await s.transaction()])).body.active).toBe(true);
+    await voice.turn("two");
+    await worker.runOnce("turn");
+    s.h.advance(31 * 86400_000);
+    expect(used).toEqual(["free", "standard"]);
+
+    // A deployment with one model never looks at subscriptions.
+    const single = new JobWorker(s.h.service, { conversation: provider("only") });
+    const bob = await s.h.setup("bob");
+    await bob.turn("x");
+    await single.runOnce("turn");
+    expect(used.at(-1)).toBe("only");
+  });
+
+  test("a failing free model is never replaced by the standard one", async () => {
+    const s = setup();
+    let standard = 0;
+    const worker = new JobWorker(s.h.service, {
+      conversation: { turn: async () => (standard++, { reply: "ok", resolved: false, answer: null }) },
+      freeConversation: { turn: async () => { throw new Error("down"); } },
+    });
+    const voice = await s.h.setup("alice"),
+      t = await voice.turn("one");
+    await worker.runOnce("turn");
+    expect(standard).toBe(0);
+    expect((await s.h.turn(t.turnId))!.state).toBe("failed");
+  });
+});
+
+describe("Google Play billing", () => {
+  const PACKAGE = "com.example.android",
+    hashOf = (text: string) => createHash("sha256").update(text).digest("base64url");
+  function google(overrides: { verdict?: Record<string, any>; purchases?: Record<string, any> } = {}) {
+    const calls: string[] = [];
+    let now = Date.now();
+    const state = { requestHash: "", purchases: overrides.purchases ?? {} as Record<string, any> };
+    const send = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      calls.push(`${init?.method} ${u.replace(/^https:\/\/[^/]+/, "")}`);
+      if (u.includes("oauth2")) return Response.json({ access_token: "t", expires_in: 3600 });
+      if (u.includes(":decodeIntegrityToken"))
+        return Response.json({
+          tokenPayloadExternal: {
+            requestDetails: { requestPackageName: PACKAGE, requestHash: state.requestHash, timestampMillis: String(now) },
+            appIntegrity: { appRecognitionVerdict: "PLAY_RECOGNIZED", packageName: PACKAGE },
+            deviceIntegrity: { deviceRecognitionVerdict: ["MEETS_DEVICE_INTEGRITY"] },
+            ...overrides.verdict,
+          },
+        });
+      if (u.includes(":acknowledge")) return Response.json({});
+      const token = decodeURIComponent(u.split("/tokens/")[1]!);
+      const purchase = state.purchases[token];
+      return purchase ? Response.json(purchase) : new Response("{}", { status: 404 });
+    }) as typeof fetch;
+    // A throwaway RSA key in PKCS#8, only to sign the fake token exchange.
+    const { privateKey } = require("node:crypto").generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const play = new GooglePlay({
+      packageName: PACKAGE,
+      serviceAccount: {
+        project_id: "p",
+        client_email: "billing@example.iam.gserviceaccount.com",
+        private_key: privateKey.export({ type: "pkcs8", format: "pem" }) as string,
+      },
+      pubsub: { audience: "https://example/webhook", serviceAccount: "push@example.iam.gserviceaccount.com" },
+      fetch: send,
+      now: () => now,
+    });
+    const s = setup({ google: { productIds: ["voice_monthly"], play } });
+    now = s.h.clock.now;
+    const sync = async (token: string, purchases: unknown[], hash?: string) => {
+      const payload = JSON.stringify({ challenge: await s.challenge(token), purchases });
+      state.requestHash = hash ?? hashOf(payload);
+      return s.call("POST", "/v1/billing/google", token, { integrity_token: "it", payload });
+    };
+    return { s, calls, state, sync };
+  }
+  const active = (now: number, extra: Record<string, unknown> = {}) => ({
+    subscriptionState: "SUBSCRIPTION_STATE_ACTIVE",
+    acknowledgementState: "ACKNOWLEDGEMENT_STATE_PENDING",
+    lineItems: [{ productId: "voice_monthly", expiryTime: new Date(now + 30 * 86400_000).toISOString() }],
+    ...extra,
+  });
+
+  test("a genuine Play install activates and acknowledges a purchase", async () => {
+    const g = google(),
+      d = await g.s.h.pair("alice", "android");
+    g.state.purchases.tok = active(g.s.h.clock.now);
+    const r = await g.sync(d.device_token, [{ product_id: "voice_monthly", purchase_token: "tok" }]);
+    expect(r.status).toBe(200);
+    expect(r.body.active).toBe(true);
+    expect(r.body.google).toEqual({ product_ids: ["voice_monthly"] });
+    expect(g.calls.some((c) => c.includes("/purchases/subscriptions/voice_monthly/tokens/tok:acknowledge"))).toBe(true);
+    // The raw purchase token is not stored.
+    expect(JSON.stringify([...(g.s.h.db as any).records.values()])).not.toContain("tok\"");
+    // Moves to the account that reports it next.
+    const bob = await g.s.h.pair("bob", "android");
+    expect((await g.sync(bob.device_token, [{ product_id: "voice_monthly", purchase_token: "tok" }])).body.active).toBe(true);
+    expect((await g.s.call("GET", "/v1/billing", d.device_token)).body.active).toBe(false);
+  });
+
+  test("a linked Play purchase replaces the old token across accounts", async () => {
+    const g = google(), alice = await g.s.h.pair("alice", "android"), bob = await g.s.h.pair("bob", "android");
+    g.state.purchases.old = active(g.s.h.clock.now);
+    g.state.purchases.new = active(g.s.h.clock.now + 86400_000, { linkedPurchaseToken: "old" });
+    expect((await g.sync(alice.device_token, [{ purchase_token: "old" }])).body.active).toBe(true);
+    expect((await g.sync(bob.device_token, [{ purchase_token: "new" }])).body.active).toBe(true);
+    expect((await g.s.call("GET", "/v1/billing", alice.device_token)).body.active).toBe(false);
+    expect((await g.sync(alice.device_token, [{ purchase_token: "old" }])).body.active).toBe(false);
+  });
+
+  test("integrity verdicts gate the sync", async () => {
+    for (const verdict of [
+      { appIntegrity: { appRecognitionVerdict: "UNRECOGNIZED_VERSION", packageName: PACKAGE } },
+      { deviceIntegrity: { deviceRecognitionVerdict: [] } },
+      { deviceIntegrity: {} },
+      { requestDetails: { requestPackageName: "other", requestHash: "", timestampMillis: "0" } },
+    ]) {
+      const g = google({ verdict }),
+        d = await g.s.h.pair("alice", "android");
+      g.state.purchases.tok = active(g.s.h.clock.now);
+      const r = await g.sync(d.device_token, [{ product_id: "voice_monthly", purchase_token: "tok" }]);
+      expect(r.body.error?.code).toBe("attestation_failed");
+      expect(g.calls.some((c) => c.includes("/purchases/"))).toBe(false);
+    }
+    // The token must be bound to this exact payload.
+    const g = google(),
+      d = await g.s.h.pair("alice", "android");
+    const r = await g.sync(d.device_token, [], "another-hash");
+    expect(r.body.error.code).toBe("attestation_failed");
+  });
+
+  test("expired, unknown and foreign purchases grant nothing", async () => {
+    const g = google(),
+      d = await g.s.h.pair("alice", "android"),
+      now = g.s.h.clock.now;
+    g.state.purchases.expired = active(now, { subscriptionState: "SUBSCRIPTION_STATE_EXPIRED" });
+    g.state.purchases.other = active(now, {
+      lineItems: [{ productId: "something_else", expiryTime: new Date(now + 1e9).toISOString() }],
+    });
+    const r = await g.sync(d.device_token, [
+      { product_id: "voice_monthly", purchase_token: "expired" },
+      { product_id: "voice_monthly", purchase_token: "other" },
+      { product_id: "voice_monthly", purchase_token: "missing" },
+      { product_id: "voice_monthly" },
+    ]);
+    expect(r.status).toBe(200);
+    expect(r.body.active).toBe(false);
+    expect(g.calls.some((c) => c.includes(":acknowledge"))).toBe(false);
+  });
+
+  test("Pub/Sub pushes without Google's signature are refused", async () => {
+    const g = google();
+    const r = await g.s.call("POST", "/v1/billing/webhooks/google", null, { message: { data: "" } }, {
+      authorization: "Bearer not-a-jwt",
+    });
+    expect(r.status).toBe(401);
+  });
+});
+
+const url = process.env.CLOUD_TEST_DATABASE_URL;
+describe.skipIf(!url)("subscription billing on real PostgreSQL", () => {
+  test("a linked Play token atomically removes the old owner's seat, even with a one-connection pool", async () => {
+    const admin = postgres(url!, { max: 1, onnotice: () => {} });
+    const schema = `oyobidashi_test_${crypto.randomUUID().replaceAll("-", "")}`;
+    await admin.unsafe(`CREATE SCHEMA ${schema}`);
+    const db = new PostgresDatabase(url!, 1, schema);
+    try {
+      await db.migrate();
+      const value = { store: "google" as const, product_id: "voice_monthly", expires: Date.now() + 86400_000, shared: false };
+      await db.applyGoogleBilling("google:old", "alice", value);
+      await Promise.all([
+        db.applyGoogleBilling("google:old", "alice", value),
+        db.applyGoogleBilling("google:new", "bob", value, "google:old"),
+      ]);
+      await db.applyGoogleBilling("google:old", "alice", value);
+      expect(await db.billingHolders("google:old")).toEqual([]);
+      expect(await db.billingHolders("google:new")).toEqual(["bob"]);
+      const alice = await db.transaction("alice", (tx) => tx.get("entitlement", "current"));
+      const bob = await db.transaction("bob", (tx) => tx.get("entitlement", "current"));
+      expect(alice?.sources["google:old"]).toBeUndefined();
+      expect(bob?.sources["google:new"]).toEqual(value);
+    } finally {
+      await db.close();
+      await admin.unsafe(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  });
+  test("claims, shared seats and store notifications persist across owners", async () => {
+    const admin = postgres(url!, { max: 1, onnotice: () => {} });
+    const schema = `oyobidashi_test_${crypto.randomUUID().replaceAll("-", "")}`;
+    await admin.unsafe(`CREATE SCHEMA ${schema}`);
+    // A single-connection pool catches nested checkout deadlocks in billing.
+    const db = new PostgresDatabase(url!, 1, schema);
+    try {
+      await db.migrate();
+      await db.migrate();
+      const s = setup({}, db),
+        alice = await s.phone("alice"),
+        bob = await s.phone("bob");
+      const purchased = await s.transaction();
+      expect((await alice.sync([purchased])).body.active).toBe(true);
+      // Concurrent restores of one purchase leave exactly one holder.
+      await Promise.all([alice.sync([purchased]), bob.sync([purchased])]);
+      const holders = await db.billingHolders("apple:Production:1000");
+      expect(holders.length).toBe(1);
+      const states = await Promise.all(
+        [alice, bob].map(async (p) => (await s.call("GET", "/v1/billing", p.token)).body.active),
+      );
+      expect(states.filter(Boolean).length).toBe(1);
+      expect(states[holders[0] === "alice" ? 0 : 1]).toBe(true);
+
+      const seatAlice = await s.transaction({ originalTransactionId: "2000", appTransactionId: "3001", inAppOwnershipType: "ASSIGNED" });
+      const seatBob = await s.transaction({ originalTransactionId: "2000", appTransactionId: "3002", inAppOwnershipType: "ASSIGNED" });
+      await alice.sync([seatAlice]);
+      await bob.sync([seatBob]);
+      expect(await db.billingHolders("apple:Production:2000:account:3001")).toEqual(["alice"]);
+      expect(await db.billingHolders("apple:Production:2000:account:3002")).toEqual(["bob"]);
+      // A refund notification for the shared seat reaches both holders.
+      const refund = await s.call("POST", "/v1/billing/webhooks/apple", null, {
+        signedPayload: await store.sign({
+          notificationType: "REFUND",
+          data: {
+            bundleId: BUNDLE,
+            signedTransactionInfo: await s.transaction({
+              originalTransactionId: "2000",
+              appTransactionId: "3002",
+              inAppOwnershipType: "ASSIGNED",
+              revocationDate: s.h.clock.now,
+            }),
+          },
+        }),
+      });
+      expect(refund.status).toBe(204);
+      expect(await db.billingHolders("apple:Production:2000:account:3002")).toEqual([]);
+      const worker = new JobWorker(s.h.service, {
+        conversation: { turn: async () => ({ reply: "standard", resolved: false, answer: null }) },
+        freeConversation: { turn: async () => ({ reply: "free", resolved: false, answer: null }) },
+      });
+      const voice = await s.h.setup(holders[0]!),
+        t = await voice.turn("one");
+      await worker.runOnce("turn");
+      expect((await s.h.turn(t.turnId, holders[0]!))!.reply).toBe("standard");
+    } finally {
+      await db.close();
+      await admin.unsafe(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  });
+});

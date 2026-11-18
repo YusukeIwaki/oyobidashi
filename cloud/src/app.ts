@@ -18,6 +18,8 @@ import {
 } from "./account-auth.ts";
 import { MCP_PATH, OAuthServer, type OAuthStore } from "./oauth.ts";
 import { serveMcp } from "./mcp-http.ts";
+import type { Billing } from "./billing/service.ts";
+import { VoiceSecurity } from "./voice.ts";
 
 /** Enables the hosted MCP endpoint and its OAuth authorization server. */
 export interface RemoteMcpOptions {
@@ -27,6 +29,7 @@ export interface RemoteMcpOptions {
 }
 
 export const MAX_WS_BUFFER_BYTES = 256 * 1024;
+const MAX_OWNER_CONNECTIONS = 8;
 // A legal full hello can contain 200 requests and one bounded transcript. Allow
 // that single frame; subsequent queued traffic still uses the small soft limit.
 export const MAX_WS_SNAPSHOT_BYTES = 16 * 1024 * 1024;
@@ -67,6 +70,8 @@ export class CloudApp {
     readonly accountAuth?: AccountAuth,
     readonly authScript?: () => Promise<string>,
     remote?: RemoteMcpOptions,
+    readonly billing?: Billing,
+    readonly voice?: VoiceSecurity,
   ) {
     // The consent page signs the human in with Firebase, so it needs the web configuration.
     if (remote && accountAuth)
@@ -123,6 +128,8 @@ export class CloudApp {
         const key = hash(token),
           uid = await this.service.db.findPreview(key);
         if (!uid) throw unauthorized();
+        if (await this.service.db.isBanned(uid))
+          throw new CloudError(403, "account_banned", "このアカウントは利用を停止しました。");
         return await this.service.db.transaction(uid, async (tx) => {
           await this.service.reconcile(tx);
           const preview = await tx.get("preview", key);
@@ -166,6 +173,19 @@ export class CloudApp {
           this.pairInFlight--;
         }
       }
+      // Store notifications authenticate themselves by signature, not by a caller token.
+      if (path.startsWith("/v1/billing/webhooks/") && method === "POST" && !internal) {
+        if (!this.billing?.enabled) throw missing();
+        if (path === "/v1/billing/webhooks/apple")
+          await this.billing.appleWebhook(await readBody(req));
+        else if (path === "/v1/billing/webhooks/google")
+          await this.billing.googleWebhook(
+            req.headers.get("authorization"),
+            await readBody(req),
+          );
+        else throw missing();
+        return new Response(null, { status: 204 });
+      }
       // A hosted MCP call may ask and notify; it never mints account or device credentials.
       if (
         internal &&
@@ -191,8 +211,67 @@ export class CloudApp {
           custom_token: await this.accountAuth.issueLinkToken(p.uid),
         });
       }
+      if (path === "/v1/voice" || path.startsWith("/v1/voice/")) {
+        requireRole(p, "device");
+        const device = p as Extract<Principal, { role: "device" }>;
+        if (!this.voice) throw missing();
+        if (path === "/v1/voice" && method === "GET")
+          return json(200, await this.voice.status(device));
+        if (method !== "POST") throw missing();
+        const input = await readBody(req);
+        if (path === "/v1/voice/challenge") {
+          const purpose = input.purpose;
+          if (purpose !== "apple_enroll" && purpose !== "android_enroll" && purpose !== "token") throw invalid("invalid voice challenge purpose");
+          return json(200, await this.voice.challenge(device, purpose));
+        }
+        if (path === "/v1/voice/apple/attest") {
+          await this.voice.enrollApple(device, input);
+          return new Response(null, { status: 204 });
+        }
+        if (path === "/v1/voice/android/enroll") {
+          await this.voice.enrollAndroid(device, input);
+          return new Response(null, { status: 204 });
+        }
+        if (path === "/v1/voice/token")
+          return json(200, await this.voice.token(device, input));
+        throw missing();
+      }
+      if (path === "/v1/billing" || path.startsWith("/v1/billing/")) {
+        requireRole(p, "device");
+        const device = p as Extract<Principal, { role: "device" }>;
+        const billing = this.billing;
+        if (path === "/v1/billing" && method === "GET")
+          return json(
+            200,
+            billing?.enabled
+              ? await this.service.run(p, (tx) => billing.status(tx))
+              : { enabled: false },
+          );
+        if (!billing?.enabled || method !== "POST") throw missing();
+        const input = await readBody(req);
+        if (path === "/v1/billing/challenge")
+          return json(
+            200,
+            await this.service.run(p, (tx) =>
+              billing.challenge(tx, device.deviceId),
+            ),
+          );
+        if (path === "/v1/billing/apple/attest") {
+          await billing.attestApple(device, input);
+          return new Response(null, { status: 204 });
+        }
+        if (path === "/v1/billing/apple")
+          return json(200, await billing.syncApple(device, input));
+        if (path === "/v1/billing/google")
+          return json(200, await billing.syncGoogle(device, input));
+        throw missing();
+      }
       if (path === "/v1/events" && method === "GET") {
         requireRole(p, "device");
+        const ownerConnections = (this.owners.get(p.uid)?.size ?? 0) +
+          [...this.upgrades.keys()].filter((data) => data.principal.uid === p.uid).length;
+        if (ownerConnections >= MAX_OWNER_CONNECTIONS)
+          throw new CloudError(429, "rate_limited", "too many connections for this account");
         if (this.sockets.size + this.upgrades.size >= this.maxSockets)
           throw new CloudError(
             429,
@@ -291,7 +370,7 @@ export class CloudApp {
           }
           if (match[2] === "call" && method === "POST") {
             requireRole(p, "device");
-            const r = await this.service.call(tx, id, deviceId, body);
+            const r = await this.service.call(tx, id, deviceId, body, req.headers.get("x-oyobidashi-voice-token"));
             return json(r.status, r.body);
           }
           if (match[2] === "turns" && match[3] && method === "GET") {
@@ -332,6 +411,8 @@ export class CloudApp {
                 await this.service.save(tx, r, "fallback");
               }
             await tx.releasePush(deviceId);
+            await tx.remove("voice_key", deviceId);
+            await tx.remove("voice_access", deviceId);
             await tx.remove("device", deviceId);
             await tx.remove("presence", deviceId);
             return new Response(null, { status: 204 });
@@ -339,6 +420,10 @@ export class CloudApp {
         }
         throw missing();
       });
+      if (method === "DELETE" && path === "/v1/devices/me" && this.oauth) {
+        const remaining = await this.service.db.transaction(p.uid, (tx) => tx.list("device", {}, 1));
+        if (remaining.length === 0) await this.oauth.revokeOwner(p.uid);
+      }
       if (method !== "GET") {
         this.notify(p.uid);
         void this.service.wake(p.uid);
@@ -400,6 +485,8 @@ export class CloudApp {
         "rate_limited",
         "waiting capacity reached; retry shortly",
       );
+    if ((this.waiters.get(p.uid)?.size ?? 0) >= MAX_OWNER_CONNECTIONS)
+      throw new CloudError(429, "rate_limited", "too many waits for this account");
     while (!this.closed && !signal.aborted && Date.now() < deadline) {
       await new Promise<void>((resolve) => {
         let timer: ReturnType<typeof setTimeout>;
@@ -459,6 +546,10 @@ export class CloudApp {
     }
     if (this.sockets.size >= this.maxSockets) {
       ws.close(1013, "connection capacity reached");
+      return;
+    }
+    if ((this.owners.get(ws.data.principal.uid)?.size ?? 0) >= MAX_OWNER_CONNECTIONS) {
+      ws.close(1013, "too many connections for this account");
       return;
     }
     this.sockets.add(ws);

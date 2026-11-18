@@ -71,10 +71,36 @@ export class PostgresOAuthStore implements OAuthStore {
       [uid, keep],
     );
   }
+  async listGrants(uid: string) {
+    const rows = await this.sql.unsafe(
+      "SELECT DISTINCT ON (grant_id) * FROM cloud_oauth WHERE kind='refresh' AND uid=$1 AND used_at IS NULL ORDER BY grant_id,created_at DESC,id DESC",
+      [uid],
+    );
+    return rows.map(rowFrom);
+  }
+  async revokeOwnedGrant(uid: string, grant: string) {
+    await this.sql.unsafe(
+      "DELETE FROM cloud_oauth WHERE grant_id=$2 AND EXISTS (SELECT 1 FROM cloud_oauth owner WHERE owner.grant_id=$2 AND owner.uid=$1)",
+      [uid, grant],
+    );
+  }
+  async revokeOwner(uid: string) {
+    await this.sql.unsafe(
+      "DELETE FROM cloud_oauth WHERE grant_id IN (SELECT grant_id FROM cloud_oauth WHERE uid=$1 AND grant_id IS NOT NULL)",
+      [uid],
+    );
+  }
   async countSince(kind: OAuthKind, since: number) {
     const rows = await this.sql.unsafe(
       "SELECT COUNT(*) AS n FROM cloud_oauth WHERE kind=$1 AND created_at>=$2",
       [kind, since],
+    );
+    return Number(rows[0]?.n ?? 0);
+  }
+  async countRegistrations(host: string, since: number) {
+    const rows = await this.sql.unsafe(
+      "SELECT COUNT(*) AS n FROM cloud_oauth WHERE kind='client' AND created_at>=$1 AND doc->'registration_hosts' ? $2",
+      [since, host],
     );
     return Number(rows[0]?.n ?? 0);
   }

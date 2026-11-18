@@ -212,6 +212,18 @@ describe("gateway identity, replicas and snapshots", () => {
     expect(ws.closes).toEqual([]);
   });
 
+  test("one account cannot consume the WebSocket capacity reserved for others", async () => {
+    const h = setup(), alice = await h.pair("alice"), bob = await h.pair("bob"), app = replica(h, 20);
+    for (let i = 0; i < 8; i++) await socket(h, alice.device_token, app);
+    expect(app.socketCount).toBe(8);
+    const rejected = await app.fetch(new Request("http://localhost/v1/events", {
+      headers: { authorization: `Bearer ${alice.device_token}` },
+    }), { upgrade: () => true });
+    expect(rejected!.status).toBe(429);
+    await socket(h, bob.device_token, app);
+    expect(app.socketCount).toBe(9);
+  });
+
   test("accepted upgrades reserve capacity before asynchronous open callbacks arrive", async () => {
     const h = setup(),
       d = await h.pair(),

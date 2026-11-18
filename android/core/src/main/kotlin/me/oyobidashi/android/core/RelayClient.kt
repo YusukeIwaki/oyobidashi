@@ -52,7 +52,8 @@ class RelayClient(
     private val baseUrl: String,
     private val deviceToken: String? = null,
     private val voiceTurnOptions: VoiceTurnOptions = VoiceTurnOptions(),
-) : RelayApi {
+    private val voiceTokenProvider: VoiceTokenProvider? = null,
+) : RelayApi, BillingApi {
     private val safeHttp = http.newBuilder().followRedirects(false).followSslRedirects(false).build()
     @Volatile private var idempotentTurns: Boolean? = null
 
@@ -114,9 +115,11 @@ class RelayClient(
         VoiceTurnRunner(voiceTurnOptions).resume(id, turnId) { getTurnExchange(id, it) }
 
     private suspend fun postCallExchange(id: String, body: CallEventBody): CallExchange {
-        val request = newRequest(url("requests", id, "call"))
-            .post(jsonBody(OyobidashiJson.encodeToString(CallEventBody.serializer(), body)))
-            .build()
+        val builder = newRequest(url("requests", id, "call"))
+        if (body.event == CallEvent.ANSWER || body.event == CallEvent.TURN) {
+            voiceTokenProvider?.token()?.let { builder.header("X-Oyobidashi-Voice-Token", it) }
+        }
+        val request = builder.post(jsonBody(OyobidashiJson.encodeToString(CallEventBody.serializer(), body))).build()
         val exchange = executeExchange(request)
         return decodeCallExchange(exchange.status, exchange.body)
     }
@@ -157,6 +160,50 @@ class RelayClient(
 
     override suspend fun deleteDevice() {
         execute(newRequest(url("devices", "me")).delete().build())
+    }
+
+    suspend fun voiceStatus(): VoiceStatus? = try {
+        decode(VoiceStatus.serializer(), execute(newRequest(url("voice")).get().build()))
+    } catch (e: RelayException.Api) {
+        if (e.httpStatus == 404) null else throw e
+    }
+
+    suspend fun voiceChallenge(purpose: String): VoiceChallenge =
+        decode(VoiceChallenge.serializer(), execute(newRequest(url("voice", "challenge"))
+            .post(jsonBody(OyobidashiJson.encodeToString(VoiceChallengeRequest.serializer(), VoiceChallengeRequest(purpose)))).build()))
+
+    suspend fun voiceAndroidEnroll(challenge: String, publicKey: String, integrityToken: String) {
+        execute(newRequest(url("voice", "android", "enroll"))
+            .post(jsonBody(OyobidashiJson.encodeToString(VoiceAndroidEnroll.serializer(), VoiceAndroidEnroll(challenge, publicKey, integrityToken)))).build())
+    }
+
+    suspend fun voiceAccess(challenge: String, keyId: String, signature: String): VoiceAccess =
+        decode(VoiceAccess.serializer(), execute(newRequest(url("voice", "token"))
+            .post(jsonBody(OyobidashiJson.encodeToString(VoiceTokenRequest.serializer(), VoiceTokenRequest(challenge, keyId, signature)))).build()))
+
+    /** GET /v1/billing。課金ルートが無い 404 (LAN relay 等) はエラーではなく無効として返す。 */
+    override suspend fun billingStatus(): BillingStatus {
+        return try {
+            decode(BillingStatus.serializer(), execute(newRequest(url("billing")).get().build()))
+        } catch (e: RelayException.Api) {
+            if (e.httpStatus == 404) BillingStatus.DISABLED else throw e
+        }
+    }
+
+    /** POST /v1/billing/challenge。ボディは空オブジェクト。 */
+    override suspend fun billingChallenge(): BillingChallenge {
+        val request = newRequest(url("billing", "challenge")).post(jsonBody("{}")).build()
+        return decode(BillingChallenge.serializer(), execute(request))
+    }
+
+    /** POST /v1/billing/google。[payload] はハッシュ済みの文字列をそのまま送る。 */
+    override suspend fun syncGoogle(integrityToken: String, payload: String): BillingStatus {
+        val json = buildJsonObject {
+            put("integrity_token", JsonPrimitive(integrityToken))
+            put("payload", JsonPrimitive(payload))
+        }
+        val request = newRequest(url("billing", "google")).post(jsonBody(json.toString())).build()
+        return decode(BillingStatus.serializer(), execute(request))
     }
 
     override suspend fun listRequests(status: RequestStatus?, limit: Int?): List<Request> {

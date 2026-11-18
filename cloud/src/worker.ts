@@ -7,6 +7,7 @@ import type { PushProviders } from "../../relay/src/push/types.ts";
 import { ProviderFailure } from "./provider.ts";
 import { CloudService, hash } from "./service.ts";
 import {
+  entitled,
   iso,
   liveTurn,
   turnView,
@@ -34,8 +35,19 @@ export async function abortable<T>(
   }
 }
 
+// Keep the call snapshot sent to phones and WebSocket subscribers bounded.
+// The model sees the same recent, shortened history in provider.ts.
+function boundedTranscript(entries: { role: "user" | "assistant"; text: string }[]) {
+  return entries.slice(-8).map((entry) => ({
+    role: entry.role,
+    text: Array.from(entry.text).slice(0, 2000).join(""),
+  }));
+}
+
 export interface WorkerOptions {
   conversation?: ConversationProvider;
+  /** Used instead of `conversation` for owners without an active subscription. */
+  freeConversation?: ConversationProvider;
   push?: PushProviders;
   leaseMs?: number;
   heartbeatMs?: number;
@@ -166,10 +178,22 @@ export class JobWorker {
   private async turn(j: Job, signal: AbortSignal) {
     const input = await this.fenced(j, async (tx, current) => {
       await this.service.reconcile(tx);
+      if (await tx.get("ban", "current")) {
+        await this.done(tx, current);
+        return null;
+      }
       const r = await tx.get("request", j.requestId);
       const t = j.payload.turnId
         ? await tx.get("turn", j.payload.turnId)
         : null;
+      if (this.service.voiceProofRequired && t) {
+        const access = await tx.get("voice_access", t.deviceId);
+        if (!access || access.expires <= this.service.now()) {
+          if (r) await this.failTurn(tx, r, t);
+          await this.done(tx, current);
+          return null;
+        }
+      }
       if (
         !r ||
         !t ||
@@ -197,6 +221,12 @@ export class JobWorker {
       return {
         r,
         t,
+        // Decided per turn: a subscription that starts or lapses mid-call takes effect at once.
+        conversation:
+          this.options.freeConversation &&
+          !entitled(await tx.get("entitlement", "current"), this.service.now())
+            ? this.options.freeConversation
+            : this.options.conversation,
         call: {
           ...r.call,
           transcript: [
@@ -209,10 +239,11 @@ export class JobWorker {
     if (!input) return;
     let result: ConversationResult | undefined, error: unknown;
     try {
-      if (!this.options.conversation) throw new ProviderFailure(false);
+      // Never substitute the other model: its data-use terms differ.
+      if (!input.conversation) throw new ProviderFailure(false);
       result = validateConversationResult(
         await abortable(
-          this.options.conversation.turn(input.r, input.call, signal),
+          input.conversation.turn(input.r, input.call, signal),
           signal,
         ),
       );
@@ -283,10 +314,10 @@ export class JobWorker {
       t.error = null;
       await tx.put("turn", t.id, t, this.service.now() + 30 * 86400_000);
       r.call.turn = turnView(t);
-      r.call.transcript = [
+      r.call.transcript = boundedTranscript([
         ...input.call.transcript,
         { role: "assistant", text: result.reply },
-      ];
+      ]);
       r.call.updated_at = iso(now);
       if (result.resolved) {
         r.status = "answered";
@@ -306,6 +337,10 @@ export class JobWorker {
   private async push(j: Job, signal: AbortSignal) {
     const input = await this.fenced(j, async (tx, current) => {
       await this.service.reconcile(tx);
+      if (await tx.get("ban", "current")) {
+        await this.done(tx, current);
+        return null;
+      }
       const r = await tx.get("request", j.requestId),
         d = j.payload.deviceId
           ? await tx.get("device", j.payload.deviceId)

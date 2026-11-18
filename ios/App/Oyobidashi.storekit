@@ -1,0 +1,53 @@
+{
+  "identifier": "oyobidashi-local",
+  "nonRenewingSubscriptions": [],
+  "products": [],
+  "settings": {
+    "_failTransactionsEnabled": false,
+    "_locale": {
+      "identifier": "ja_JP",
+      "languageCode": "ja",
+      "regionCode": "JP"
+    },
+    "_storefront": {
+      "countryCode": "JPN",
+      "identifier": "143462"
+    },
+    "_storeKitErrors": []
+  },
+  "subscriptionGroups": [
+    {
+      "id": "20000001",
+      "localizations": [],
+      "name": "Voice",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "150",
+          "familyShareable": true,
+          "groupNumber": 1,
+          "internalID": "20000002",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "通話の内容は学習に使われません",
+              "displayName": "学習に使わないプラン",
+              "locale": "ja_JP"
+            }
+          ],
+          "productID": "me.oyobidashi.ai.monthly",
+          "promotionalOffers": [],
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Voice Monthly",
+          "type": "RecurringSubscription",
+          "winBackOffers": []
+        }
+      ]
+    }
+  ],
+  "version": {
+    "major": 4,
+    "minor": 0
+  }
+}

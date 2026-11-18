@@ -9,6 +9,8 @@ final class AppEnvironment {
     static let shared = AppEnvironment()
 
     let model: AppModel
+    let billingStore: BillingStore
+    private let voiceAccess = VoiceAccessManager()
     let router = Router()
     let notifications: NotificationCoordinator
     let callKit: CallKitCoordinator
@@ -30,9 +32,14 @@ final class AppEnvironment {
             notifications: notifications,
             draftPersistence: UserDefaultsDraftPersistence()
         )
+        model.voiceAccessProvider = { [voiceAccess] credentials in
+            try await voiceAccess.token(for: credentials)
+        }
+        billingStore = BillingStore(model: model)
         notifications.attach(model: model, router: router)
         callKit.attach(model: model)
         connectivity.start { [weak model] in model?.connectivityChanged() }
+        billingStore.start()
     }
 }
 

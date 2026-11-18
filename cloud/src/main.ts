@@ -3,7 +3,7 @@ import { firebaseVerifier } from "./auth.ts";
 import { RedisWakeBus } from "./bus.ts";
 import { cloudConfig } from "./config.ts";
 import { PostgresDatabase } from "./postgres.ts";
-import { configuredConversation } from "./provider.ts";
+import { configuredConversations } from "./provider.ts";
 import { CloudService } from "./service.ts";
 import { JobWorker, WorkerPool } from "./worker.ts";
 import { Maintenance } from "./maintenance.ts";
@@ -11,6 +11,8 @@ import { MAX_WS_SNAPSHOT_BYTES } from "./app.ts";
 import { loadPushConfig } from "./push-config.ts";
 import { createAccountAuth } from "./account-auth.ts";
 import { PostgresOAuthStore } from "./oauth-postgres.ts";
+import { Billing, loadBillingConfig } from "./billing/service.ts";
+import { VoiceSecurity, loadVoiceConfig } from "./voice.ts";
 import { createFcmProvider } from "../../relay/src/push/fcm.ts";
 import {
   createApnsProvider,
@@ -64,6 +66,8 @@ export async function main(
   }
   const bus = new RedisWakeBus(config.redisUrl),
     service = new CloudService(db, bus);
+  service.freeVoiceTrains = process.env.VOICE_FREE_TRAINING === "1";
+  service.voiceProofRequired = true;
   const timers: ReturnType<typeof setInterval>[] = [];
   let draining = false;
   const health = async () => {
@@ -88,19 +92,24 @@ export async function main(
               Bun.file(new URL("../public/oauth.js", import.meta.url)).text(),
             ...(config.publicUrl ? { publicUrl: config.publicUrl } : {}),
           },
+          new Billing(service, loadBillingConfig(process.env)),
+          new VoiceSecurity(service, loadVoiceConfig(process.env)),
         )
       : null;
-  const conversation =
-    role === "worker" ? configuredConversation(process.env) : undefined;
+  const conversations =
+    role === "worker" ? configuredConversations(process.env) : undefined;
   const worker =
     role === "worker"
       ? new JobWorker(service, {
-          ...(conversation ? { conversation } : {}),
+          ...(conversations ? { conversation: conversations.standard } : {}),
+          ...(conversations?.free
+            ? { freeConversation: conversations.free }
+            : {}),
           push: await providers(),
           publicOrigin: config.publicUrl,
         })
       : null;
-  if (role === "worker" && !conversation)
+  if (role === "worker" && !conversations)
     console.warn(
       "[cloud] voice provider is unconfigured; text and notification delivery remain available",
     );

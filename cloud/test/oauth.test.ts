@@ -3,7 +3,6 @@ import { CloudApp } from "../src/app.ts";
 import { unauthorized } from "../src/errors.ts";
 import {
   ACCESS_TTL_MS,
-  REFRESH_GRACE_MS,
   REFRESH_TTL_MS,
   sameRedirect,
   validRedirectUri,
@@ -32,6 +31,7 @@ function remote() {
     async identify(token: string) {
       if (token.startsWith("agent-")) return { uid: token.slice(6), provider: "google.com" };
       if (token.startsWith("anon-")) return { uid: token.slice(5), provider: "anonymous" };
+      if (token.startsWith("custom-")) return { uid: token.slice(7), provider: "custom" };
       throw unauthorized();
     },
   };
@@ -155,6 +155,7 @@ describe("OAuth discovery and client registration", () => {
     expect(validRedirectUri("cursor://anysphere.cursor-mcp/oauth/callback")).toBeTruthy();
     expect(validRedirectUri("http://localhost:3000/cb")).toBeTruthy();
     expect(validRedirectUri("http://192.168.0.2/cb")).toBeNull();
+    expect(validRedirectUri("oyobidashi://pair?url=https%3A%2F%2Fapi.example&code=secret")).toBeNull();
     expect(validRedirectUri("intent://x#Intent;end")).toBeNull();
     expect(sameRedirect("http://127.0.0.1/callback", "http://127.0.0.1:51234/callback")).toBe(true);
     expect(sameRedirect("http://127.0.0.1/callback", "http://localhost:51234/callback")).toBe(false);
@@ -164,11 +165,12 @@ describe("OAuth discovery and client registration", () => {
   test("registration is throttled without leaking store failures", async () => {
     const r = remote();
     const now = r.h.clock.now;
-    for (let i = 0; i < 600; i++)
-      await r.store.insert({ kind: "client", id: `c${i}`, uid: null, grant: null, doc: { name: null, redirect_uris: [REDIRECT] }, created: now, expires: now + 1000, used: null });
+    for (let i = 0; i < 30; i++)
+      await r.store.insert({ kind: "client", id: `c${i}`, uid: null, grant: null, doc: { name: null, redirect_uris: [REDIRECT], registration_hosts: ["http://127.0.0.1"] }, created: now, expires: now + 1000, used: null });
     const limited = await r.send("POST", "/oauth/register", { json: { redirect_uris: [REDIRECT] } });
     expect(limited.status).toBe(429);
     expect(limited.body.error).toBe("slow_down");
+    expect((await r.send("POST", "/oauth/register", { json: { redirect_uris: ["https://other.example/callback"] } })).status).toBe(201);
     r.store.fail = true;
     const failed = await r.send("POST", "/oauth/register", { json: { redirect_uris: [REDIRECT] } });
     expect(failed.status).toBe(503);
@@ -201,14 +203,15 @@ describe("authorization", () => {
     const posted = await r.approve(client.client_id, undefined, "agent-alice", { redirect_uri: "https://attacker.example/cb" });
     expect(posted.response.status).toBe(400);
   });
-  test("protocol errors return to the client with its state", async () => {
+  test("invalid authorization links never redirect before consent", async () => {
     const r = remote();
     const client = await r.register();
     const noPkce = await r.send("GET", `/oauth/authorize?${new URLSearchParams({ response_type: "code", client_id: client.client_id, redirect_uri: REDIRECT, state: "keep" })}`);
-    expect(noPkce.status).toBe(302);
-    const target = new URL(noPkce.headers.get("location")!);
-    expect(target.origin + target.pathname).toBe(REDIRECT);
-    expect(Object.fromEntries(target.searchParams)).toMatchObject({ error: "invalid_request", state: "keep", iss: ORIGIN });
+    expect(noPkce.status).toBe(400);
+    expect(noPkce.headers.get("location")).toBeNull();
+    const noResponseType = await r.send("GET", `/oauth/authorize?client_id=${client.client_id}`);
+    expect(noResponseType.status).toBe(400);
+    expect(noResponseType.headers.get("location")).toBeNull();
     const plain = await r.approve(client.client_id, undefined, "agent-alice", { code_challenge_method: "plain" });
     expect(new URL(plain.response.body.redirect_to).searchParams.get("error")).toBe("invalid_request");
     const wrongResource = await r.approve(client.client_id, undefined, "agent-alice", { resource: "https://other.example/v1/mcp" });
@@ -221,6 +224,7 @@ describe("authorization", () => {
     expect((await r.send("POST", "/oauth/authorize", { json: body, headers: { origin: ORIGIN } })).status).toBe(401);
     expect((await r.send("POST", "/oauth/authorize", { token: "forged", json: body, headers: { origin: ORIGIN } })).status).toBe(401);
     expect((await r.send("POST", "/oauth/authorize", { token: "anon-alice", json: body, headers: { origin: ORIGIN } })).status).toBe(403);
+    expect((await r.send("POST", "/oauth/authorize", { token: "custom-alice", json: body, headers: { origin: ORIGIN } })).status).toBe(403);
     expect((await r.send("POST", "/oauth/authorize", { token: "agent-alice", json: body, headers: { origin: "https://attacker.example" } })).status).toBe(403);
     expect((await r.send("POST", "/oauth/authorize", { token: "agent-alice", json: body })).status).toBe(403);
     expect([...r.store.rows.values()].some((row) => row.kind === "code")).toBe(false);
@@ -273,23 +277,50 @@ describe("tokens", () => {
     expect((await r.exchange(client.client_id, code)).body.error).toBe("invalid_grant");
     expect((await r.rpc(first.body.access_token, { jsonrpc: "2.0", id: 1, method: "tools/list" })).status).toBe(401);
   });
-  test("refresh rotates, tolerates an immediate retry and treats late reuse as theft", async () => {
+  test("refresh rotates once and any replay revokes its token family", async () => {
     const r = remote();
     const { client, tokens } = await r.connect();
     const refresh = (token: string, clientId = client.client_id) =>
       r.send("POST", "/oauth/token", { form: { grant_type: "refresh_token", client_id: clientId, refresh_token: token } });
-    expect((await refresh(tokens.refresh_token, (await r.register()).client_id)).body.error).toBe("invalid_grant");
-    // That attempt consumed the token; the rightful client retries within the grace period.
     const second = await refresh(tokens.refresh_token);
     expect(second.status).toBe(200);
     expect(second.body.refresh_token).not.toBe(tokens.refresh_token);
-    const third = await refresh(second.body.refresh_token);
-    expect(third.status).toBe(200);
-    r.h.advance(REFRESH_GRACE_MS + 1);
+    expect((await refresh(tokens.refresh_token)).body.error).toBe("invalid_grant");
     expect((await refresh(second.body.refresh_token)).body.error).toBe("invalid_grant");
-    expect((await refresh(third.body.refresh_token)).body.error).toBe("invalid_grant");
-    expect((await r.rpc(third.body.access_token, { jsonrpc: "2.0", id: 1, method: "tools/list" })).status).toBe(401);
+    expect((await r.rpc(second.body.access_token, { jsonrpc: "2.0", id: 1, method: "tools/list" })).status).toBe(401);
     expect((await refresh("kmr_unknown")).body.error).toBe("invalid_grant");
+  });
+  test("the owner can inspect and revoke only their own MCP approvals", async () => {
+    const r = remote();
+    const alice = await r.connect("agent-alice");
+    const bob = await r.connect("agent-bob");
+    const list = (token: string) => r.send("GET", "/oauth/grants", { token });
+    const a = await list("agent-alice");
+    const b = await list("agent-bob");
+    expect(a.body.grants).toHaveLength(1);
+    expect(a.body.grants[0]).toMatchObject({ name: "Claude Code", redirect_uri: REDIRECT });
+    expect(b.body.grants).toHaveLength(1);
+    expect(a.body.grants[0].id).not.toBe(b.body.grants[0].id);
+    expect((await r.send("DELETE", `/oauth/grants/${b.body.grants[0].id}`, { token: "agent-alice", headers: { origin: ORIGIN } })).status).toBe(204);
+    expect((await list("agent-bob")).body.grants).toHaveLength(1);
+    expect((await r.send("DELETE", `/oauth/grants/${a.body.grants[0].id}`, { token: "agent-alice" })).status).toBe(403);
+    expect((await r.send("DELETE", `/oauth/grants/${a.body.grants[0].id}`, { token: "agent-alice", headers: { origin: ORIGIN } })).status).toBe(204);
+    expect((await list("agent-alice")).body.grants).toHaveLength(0);
+    expect((await r.rpc(alice.tokens.access_token, { jsonrpc: "2.0", id: 1, method: "tools/list" })).status).toBe(401);
+    expect((await r.rpc(bob.tokens.access_token, { jsonrpc: "2.0", id: 1, method: "tools/list" })).status).toBe(200);
+    expect((await r.send("GET", "/oauth/connections")).body).toContain('data-mode="connections"');
+  });
+  test("removing the final phone revokes the owner's MCP approval", async () => {
+    const r = remote();
+    const { tokens } = await r.connect();
+    const first = await r.h.pair("alice");
+    const second = await r.h.pair("alice");
+    const listed = () => r.rpc(tokens.access_token, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    expect((await listed()).status).toBe(200);
+    expect((await r.send("DELETE", "/v1/devices/me", { token: first.device_token })).status).toBe(204);
+    expect((await listed()).status).toBe(200);
+    expect((await r.send("DELETE", "/v1/devices/me", { token: second.device_token })).status).toBe(204);
+    expect((await listed()).status).toBe(401);
   });
   test("access tokens expire, refresh tokens idle out and revocation ends the approval", async () => {
     const r = remote();

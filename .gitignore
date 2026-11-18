@@ -33,6 +33,7 @@ google-services.json
 GoogleService-Info.plist
 .env
 .env.*
+.envrc
 *.db
 *.db-shm
 *.db-wal
@@ -75,3 +76,4 @@ docs/evidence/
 ios/project.local.yml
 .mcp.json
 .codex/config.toml
+DerivedData/

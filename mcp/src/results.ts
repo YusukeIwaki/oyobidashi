@@ -19,6 +19,7 @@ export interface ToolOutput {
   recent_events?: unknown;
   now?: string;
   warning?: string;
+  privacy_notice?: string;
   error_code?: string;
 }
 
@@ -34,8 +35,13 @@ export const NO_DEVICE_WARNING =
   "Tell the user (in your normal reply) to pair their phone with the relay (show the pairing QR code with the relay CLI and scan it with the oyobidashi app). " +
   "A device paired later will still see this request while it is pending.";
 
+export const PRIVACY_NOTICE =
+  "Voice calls on this account may be used to improve AI models. For a request delivered as a call, keep personal data, credentials and confidential business details out of question, context and choices; use text delivery for anything sensitive.";
+
 function result(text: string, output: ToolOutput, isError = false): ToolResult {
-  const full = output.warning ? `${text}\n\nWARNING: ${output.warning}` : text;
+  let full = text;
+  if (output.warning) full = `${full}\n\nWARNING: ${output.warning}`;
+  if (output.privacy_notice) full = `${full}\n\n${output.privacy_notice}`;
   return { content: [{ type: "text", text: full }], structuredContent: output, isError };
 }
 
@@ -72,13 +78,14 @@ function telemetryLine(request: RelayRequest): string | undefined {
 /** Result for a request in whatever state it is in. `waitedSeconds` is only used for the pending text. */
 export function requestResult(
   request: RelayRequest,
-  opts: { waitedSeconds?: number; warning?: string | undefined; feedback?: unknown } = {},
+  opts: { waitedSeconds?: number; warning?: string | undefined; feedback?: unknown; voiceTraining?: boolean | undefined } = {},
 ): ToolResult {
   const id = request.id;
   const base: ToolOutput = { status: request.status, request_id: id };
   addTelemetry(base, request);
   if (opts.feedback !== null && opts.feedback !== undefined) base.feedback = opts.feedback;
   if (opts.warning) base.warning = opts.warning;
+  if (opts.voiceTraining) base.privacy_notice = PRIVACY_NOTICE;
 
   switch (request.status) {
     case "answered": {
@@ -193,6 +200,7 @@ export function presenceResult(presence: RelayPresence): ToolResult {
   const events = presence.recent_events ?? [];
   const output: ToolOutput = { status: "ok", devices, recent_events: events };
   if (presence.now) output.now = presence.now;
+  if (presence.voice_training) output.privacy_notice = PRIVACY_NOTICE;
 
   const lines: string[] = [];
   if (devices.length === 0) {

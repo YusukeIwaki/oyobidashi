@@ -6,6 +6,8 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.os.Build
 import android.provider.Settings
+import me.oyobidashi.android.billing.BillingManager
+import me.oyobidashi.android.billing.VoiceAccessManager
 import me.oyobidashi.android.call.CallManager
 import me.oyobidashi.android.core.Availability
 import me.oyobidashi.android.core.ConnectionState
@@ -94,6 +96,14 @@ class AppGraph(private val app: Application) {
     val presence: StateFlow<DevicePresence> = _presence.asStateFlow()
     val presenceSyncError = MutableStateFlow<String?>(null)
 
+    /** プラン (課金) の同期。プロジェクト番号が未設定なら何もしない。 */
+    val billingManager = BillingManager(
+        app,
+        scope,
+        api = { _session.value?.api },
+        cloudProjectNumber = BuildConfig.GOOGLE_CLOUD_PROJECT_NUMBER,
+    )
+
     /** ネイティブ通話の統括。セッションの有無にかかわらず存在し、未ペアリング時は無操作。 */
     val callManager = CallManager(
         context = app,
@@ -125,7 +135,9 @@ class AppGraph(private val app: Application) {
     }
 
     private fun startSession(credentials: Credentials) {
-        val api = RelayClient(http, credentials.baseUrl, credentials.deviceToken)
+        val voiceApi = RelayClient(http, credentials.baseUrl, credentials.deviceToken)
+        val voiceAccess = VoiceAccessManager(app, voiceApi, credentials.baseUrl, BuildConfig.GOOGLE_CLOUD_PROJECT_NUMBER)
+        val api = RelayClient(http, credentials.baseUrl, credentials.deviceToken, voiceTokenProvider = voiceAccess)
         val repository = RequestsRepository(api, notifier, onSignedOut = {
             signedOutByServer.value = true
             endSessionLocally()
@@ -158,6 +170,7 @@ class AppGraph(private val app: Application) {
         }
         syncPushToken()
         syncPresence()
+        billingManager.refresh()
     }
 
     /** サーバーには何もせず、端末側の資格情報・下書き・通知を消す。 */
@@ -173,6 +186,7 @@ class AppGraph(private val app: Application) {
         presenceStore.clear()
         _presence.value = DevicePresence()
         presenceSyncError.value = null
+        billingManager.clear()
         notifier.cancelAll()
     }
 
@@ -294,6 +308,7 @@ class AppGraph(private val app: Application) {
             scope.launch { current.repository.refresh() }
             syncPushToken()
             syncPresence()
+            billingManager.refresh()
         } else {
             current.events.stop()
         }

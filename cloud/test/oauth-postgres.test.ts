@@ -69,6 +69,29 @@ suite("real PostgreSQL OAuth store", () => {
     expect(await store.get("refresh", "r2")).not.toBeNull();
     expect(await store.get("client", "c1")).not.toBeNull();
   });
+  test("an owner can list and revoke only their grants, and registration quota is per host", async () => {
+    const store = await setup();
+    await store.insert(row({ kind: "client", id: "c1", uid: null, grant: null,
+      doc: { registration_hosts: ["app.example", "callback.example"] } }));
+    await store.insert(row({ kind: "client", id: "c2", uid: null, grant: null,
+      doc: { registration_hosts: ["other.example"] } }));
+    await store.insert(row({ kind: "refresh", id: "alice-r", grant: "ga" }));
+    await store.insert(row({ kind: "access", id: "alice-a", grant: "ga" }));
+    await store.insert(row({ kind: "refresh", id: "bob-r", uid: "bob", grant: "gb" }));
+    expect((await store.listGrants("alice")).map((r: OAuthRow) => r.grant)).toEqual(["ga"]);
+    expect(await store.countRegistrations("app.example", 1000)).toBe(1);
+    expect(await store.countRegistrations("other.example", 1000)).toBe(1);
+    expect(await store.countRegistrations("missing.example", 1000)).toBe(0);
+    await store.revokeOwnedGrant("alice", "gb");
+    expect(await store.get("refresh", "bob-r")).not.toBeNull();
+    await store.revokeOwnedGrant("alice", "ga");
+    expect(await store.get("refresh", "alice-r")).toBeNull();
+    expect(await store.get("access", "alice-a")).toBeNull();
+    await store.insert(row({ kind: "refresh", id: "alice-r2", grant: "ga2" }));
+    await store.revokeOwner("alice");
+    expect(await store.get("refresh", "alice-r2")).toBeNull();
+    expect(await store.get("refresh", "bob-r")).not.toBeNull();
+  });
   test("trimming keeps a user's newest approvals and other users untouched", async () => {
     const store = await setup();
     for (let i = 1; i <= 4; i++) {

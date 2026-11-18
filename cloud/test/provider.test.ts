@@ -3,6 +3,8 @@ import type { Call, RequestObject } from "../../relay/src/types.ts";
 import {
   apiConversation,
   configuredConversation,
+  configuredConversations,
+  modelTranscript,
   ProviderFailure,
 } from "../src/provider.ts";
 
@@ -33,6 +35,13 @@ const call: Call = {
     { role: "user", text: "はい" },
   ],
 };
+test("the model receives at most eight bounded voice messages", () => {
+  const many = { transcript: Array.from({ length: 100 }, (_, i) => ({ role: "user", text: `${i}:` + "あ".repeat(10_000) })) };
+  const bounded = modelTranscript(many);
+  expect(bounded).toHaveLength(8);
+  expect(bounded[0]!.text.startsWith("92:")).toBe(true);
+  expect(bounded.every((entry) => Array.from(entry.text).length <= 2000)).toBe(true);
+});
 const resolved = {
   reply: "承知しました。お伝えします。",
   resolved: true,
@@ -102,7 +111,7 @@ describe.each(["anthropic", "meta"] as const)(
           expect(body.model).toBe("test-model");
           expect(body.max_tokens).toBe(selected === "meta" ? 4096 : 1024);
           if (selected === "meta") {
-            expect(body.output_config.effort).toBe("low");
+            expect(body.output_config.effort).toBe("medium");
             expect(body.output_config.format.schema.required).toEqual([
               "reply",
               "resolved",
@@ -416,3 +425,83 @@ describe("voice provider configuration", () => {
     ).toEqual(resolved);
   });
 });
+
+describe.each(["anthropic", "meta"] as const)(
+  "configuredConversations (%s)",
+  (selected) => {
+    const env = (freeModel?: string) =>
+      selected === "meta"
+        ? {
+            VOICE_PROVIDER: "meta",
+            MODEL_API_KEY: "SECRET_API_KEY",
+            META_MODEL: "standard-model",
+            ...(freeModel !== undefined
+              ? { VOICE_MODEL_FREE: freeModel }
+              : {}),
+          }
+        : {
+            ANTHROPIC_API_KEY: "SECRET_API_KEY",
+            ANTHROPIC_MODEL: "standard-model",
+            ...(freeModel !== undefined
+              ? { VOICE_MODEL_FREE: freeModel }
+              : {}),
+          };
+    const expectedUrl =
+      selected === "meta"
+        ? "https://api.meta.ai/v1/messages"
+        : "https://api.anthropic.com/v1/messages";
+    const headerName = selected === "meta" ? "authorization" : "x-api-key";
+    const headerValue =
+      selected === "meta" ? "Bearer SECRET_API_KEY" : "SECRET_API_KEY";
+    test("free provider sends the free model with the same key and URL", async () => {
+      const seen: { url: string; model: string; header: string | null }[] =
+        [];
+      const conversations = configuredConversations(
+        env("free-model"),
+        fetcher(async (u, init) => {
+          seen.push({
+            url: String(u),
+            model: JSON.parse(String(init?.body)).model,
+            header: new Headers(init?.headers).get(headerName),
+          });
+          return json(payload());
+        }),
+      );
+      expect(conversations).toBeDefined();
+      expect(conversations!.free).toBeDefined();
+      expect(
+        await conversations!.standard.turn(
+          request,
+          call,
+          new AbortController().signal,
+        ),
+      ).toEqual(resolved);
+      expect(
+        await conversations!.free!.turn(
+          request,
+          call,
+          new AbortController().signal,
+        ),
+      ).toEqual(resolved);
+      expect(seen).toEqual([
+        { url: expectedUrl, model: "standard-model", header: headerValue },
+        { url: expectedUrl, model: "free-model", header: headerValue },
+      ]);
+    });
+    test("unset VOICE_MODEL_FREE yields no free provider", () => {
+      const conversations = configuredConversations(env());
+      expect(conversations?.standard).toBeDefined();
+      expect(conversations?.free).toBeUndefined();
+    });
+    test("empty VOICE_MODEL_FREE yields no free provider", () => {
+      const conversations = configuredConversations(env(""));
+      expect(conversations?.standard).toBeDefined();
+      expect(conversations?.free).toBeUndefined();
+    });
+    test("identical VOICE_MODEL_FREE yields no free provider", () => {
+      const conversations = configuredConversations(env("standard-model"));
+      expect(conversations?.standard).toBeDefined();
+      expect(conversations?.free).toBeUndefined();
+    });
+  },
+);

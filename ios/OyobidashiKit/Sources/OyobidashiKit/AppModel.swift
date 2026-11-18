@@ -97,6 +97,7 @@ public final class AppModel: AnswerSubmitting {
     public let callReconciler = CallReconciler()
     @ObservationIgnored private var sendingVoiceRequests: Set<String> = []
     @ObservationIgnored private var finishingVoiceRequests: Set<String> = []
+    @ObservationIgnored public var voiceAccessProvider: (@MainActor (Credentials) async throws -> String?)?
     public private(set) var presenceAvailability: PresenceAvailability = .available
     public private(set) var presenceUntil: Date?
     public private(set) var presenceNote: String?
@@ -429,9 +430,11 @@ public final class AppModel: AnswerSubmitting {
     }
 
     public func performCallAction(requestID: String, body: CallEventBody) async -> CallActionOutcome {
-        guard let client, let credentials else { return .unauthorized }
+        guard let credentials else { return .unauthorized }
         do {
-            let resp = try await client.callAction(requestID: requestID, body: body)
+            let voiceToken = (body.event == .answer || body.event == .turn) ? try await voiceAccessProvider?(credentials) : nil
+            let activeClient = RelayClient(endpoint: credentials.endpoint, deviceToken: credentials.deviceToken, transport: transport, voiceTurnPolicy: voiceTurnPolicy, voiceAccessToken: voiceToken)
+            let resp = try await activeClient.callAction(requestID: requestID, body: body)
             guard self.credentials == credentials else { return .failed(.cancelled) }
             if isPaired {
                 store.upsert(resp.request)

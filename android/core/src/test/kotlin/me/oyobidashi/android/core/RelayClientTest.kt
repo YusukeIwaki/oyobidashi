@@ -24,6 +24,18 @@ class RelayClientTest {
         .connectTimeout(2, TimeUnit.SECONDS).readTimeout(500, TimeUnit.MILLISECONDS).build()
     private val token = "kd_test_token"
 
+    @Test fun voiceProofStatusAndHeader() = runBlocking {
+        server.enqueue(json("""{"enabled":true,"supported":true,"platform":"android","uid":"alice","device_id":"dev_1"}"""))
+        val provider = object : VoiceTokenProvider { override suspend fun token() = "kv_test" }
+        val client = RelayClient(http, baseUrl(), token, voiceTokenProvider = provider)
+        assertEquals("dev_1", client.voiceStatus()?.deviceId)
+        assertEquals("voice-token\nalice\ndev_1\nnonce", VoiceProofMessage.token("alice", "dev_1", "nonce"))
+        server.enqueue(json("""{"error":{"code":"voice_proof_required","message":"proof"}}""", 403))
+        expect<RelayException.Api> { client.postCall("r", CallEventBody(CallEvent.ANSWER)) }
+        server.takeRequest()
+        assertEquals("kv_test", server.takeRequest().getHeader("X-Oyobidashi-Voice-Token"))
+    }
+
     @Before fun setUp() { server = MockWebServer().also { it.start() } }
     @After fun tearDown() { runCatching { server.shutdown() } }
 

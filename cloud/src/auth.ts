@@ -91,6 +91,8 @@ export async function authenticate(
     const tokenHash = hash(token),
       found = await db.findDevice(tokenHash);
     if (!found) throw unauthorized();
+    if (await db.isBanned(found.uid))
+      throw new CloudError(403, "account_banned", "このアカウントは利用を停止しました。");
     return {
       uid: found.uid,
       role: "device",
@@ -98,7 +100,10 @@ export async function authenticate(
       tokenHash,
     };
   }
-  return { uid: await verifier.verify(token), role: "agent" };
+  const uid = await verifier.verify(token);
+  if (await db.isBanned(uid))
+    throw new CloudError(403, "account_banned", "このアカウントは利用を停止しました。");
+  return { uid, role: "agent" };
 }
 export function requireRole(p: Principal, role: "agent" | "device") {
   if (p.role !== role)

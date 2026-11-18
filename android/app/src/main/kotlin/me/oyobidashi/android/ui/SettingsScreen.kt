@@ -1,6 +1,7 @@
 package me.oyobidashi.android.ui
 
 import android.Manifest
+import android.app.Activity
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -40,6 +42,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -67,6 +70,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 @Composable
 fun SettingsScreen(vm: MainViewModel, session: Session) {
     val state by session.repository.state.collectAsState()
+    val billing by vm.billingState.collectAsState()
+    LaunchedEffect(session) { vm.refreshBilling() }
     val isOyobidashiCloud = session.credentials.baseUrl.toHttpUrlOrNull()?.host == "api.oyobidashi.me"
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -130,6 +135,51 @@ fun SettingsScreen(vm: MainViewModel, session: Session) {
                             modifier = Modifier.padding(start = 56.dp, bottom = 8.dp),
                             colors = androidx.compose.material3.ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
                         ) { Text(if (vm.unpairBusy) "解除中…" else "ペアリングを解除") }
+                    }
+                }
+                val planStatus = billing.status
+                if (vm.billingConfigured && planStatus?.enabled == true) {
+                    item { SectionHeading(Texts.PLAN) }
+                    item {
+                        SettingsGroup {
+                            Column(
+                                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                if (planStatus.active) {
+                                    Text(Texts.BILLING_ACTIVE)
+                                    val expiry = Texts.billingExpiry(planStatus.expiresAt)
+                                    if (expiry.isNotEmpty()) {
+                                        Text(expiry, style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    val productId = billing.productId ?: planStatus.google?.productIds?.firstOrNull()
+                                    if (productId != null) {
+                                        TextButton(onClick = {
+                                            val url = "https://play.google.com/store/account/subscriptions?sku=" +
+                                                Uri.encode(productId) + "&package=" + Uri.encode(context.packageName)
+                                            try {
+                                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                            } catch (_: RuntimeException) {
+                                                Toast.makeText(context, Texts.BILLING_MANAGE_FAILED, Toast.LENGTH_LONG).show()
+                                            }
+                                        }) { Text(Texts.BILLING_MANAGE) }
+                                    }
+                                } else {
+                                    Text(Texts.BILLING_INACTIVE)
+                                    billing.formattedPrice?.let { price ->
+                                        Text(price, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                    Button(onClick = {
+                                        (context as? Activity)?.let { vm.purchasePlan(it) }
+                                    }) { Text(Texts.BILLING_SUBSCRIBE) }
+                                }
+                                billing.syncError?.let { message ->
+                                    Text(message, style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
                     }
                 }
                 item { SectionHeading("権限") }

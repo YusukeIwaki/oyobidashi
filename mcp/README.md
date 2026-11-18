@@ -266,4 +266,4 @@ PCの変更や資格情報の喪失時には、以前リンクしたアカウン
 
 質問作成では`Idempotency-Key`を付けます。クラウドで応答が失われた場合だけ、同じキーで1回再試行します。LAN relayへの作成や、任意の5xx応答を受けた更新は自動で繰り返しません。MCPの結果・エラーへトークンやペアリングコードを含めず、ペアリングURLは`pair-cloud.sh`を実行した対話ターミナルにだけ表示します。
 
-クラウド運用のFirebase設定・署名鍵・音声APIの制限は[cloud/README.md](../cloud/README.md)を参照してください。現在のMeta標準モデル設定は`MODEL_API_KEY`・`META_MODEL=muse-spark-1.2`です。米国西部のRailway workerと実iPhoneを使い、通知からの返信、音声の確認質問と再回答、お礼の読み上げと自動終話、MCPへの解決済み回答の返却まで確認しました。[検証記録](../docs/VALIDATION.md)
+クラウド運用のFirebase設定・署名鍵・音声APIの制限は[cloud/README.md](../cloud/README.md)を参照してください。米国西部のRailway workerと実iPhoneを使い、通知からの返信、音声の確認質問と再回答、お礼の読み上げと自動終話、MCPへの解決済み回答の返却まで確認しました。[検証記録](../docs/VALIDATION.md)

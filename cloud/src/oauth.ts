@@ -13,12 +13,10 @@ export const ACCESS_TTL_MS = 3600_000;
 export const REFRESH_TTL_MS = 180 * 86400_000;
 export const CODE_TTL_MS = 300_000;
 export const CLIENT_TTL_MS = 400 * 86400_000;
-/** A refresh retried after a lost response is honoured this long before it counts as replay. */
-export const REFRESH_GRACE_MS = 60_000;
 const USED_REFRESH_RETENTION_MS = 7 * 86400_000;
 const USED_CODE_RETENTION_MS = 600_000;
 const MAX_GRANTS_PER_USER = 30;
-const MAX_REGISTRATIONS_PER_HOUR = 600;
+const MAX_REGISTRATIONS_PER_DESTINATION_HOUR = 30;
 
 export type OAuthKind = "client" | "code" | "access" | "refresh";
 export interface OAuthRow {
@@ -27,7 +25,7 @@ export interface OAuthRow {
   id: string;
   uid: string | null;
   grant: string | null;
-  doc: { client?: string; name?: string | null; redirect_uris?: string[]; redirect_uri?: string; challenge?: string };
+  doc: { client?: string; name?: string | null; redirect_uris?: string[]; redirect_uri?: string; challenge?: string; registration_hosts?: string[] };
   created: number;
   expires: number;
   used: number | null;
@@ -42,7 +40,11 @@ export interface OAuthStore {
   revokeGrant(grant: string): Promise<void>;
   /** Keeps a user's `keep` most recent approvals and revokes the rest. */
   trimGrants(uid: string, keep: number): Promise<void>;
+  listGrants(uid: string): Promise<OAuthRow[]>;
+  revokeOwnedGrant(uid: string, grant: string): Promise<void>;
+  revokeOwner(uid: string): Promise<void>;
   countSince(kind: OAuthKind, since: number): Promise<number>;
+  countRegistrations(host: string, since: number): Promise<number>;
   cleanup(now: number): Promise<void>;
 }
 
@@ -64,7 +66,7 @@ export interface AccessGrant {
 const secret = (prefix: string) =>
   prefix + crypto.getRandomValues(new Uint8Array(32)).toBase64({ alphabet: "base64url", omitPadding: true });
 const LOOPBACK = ["localhost", "127.0.0.1", "[::1]"];
-const BLOCKED_SCHEMES = new Set(["javascript:", "data:", "vbscript:", "file:", "blob:", "about:", "ftp:", "ws:", "wss:", "mailto:", "tel:", "sms:", "intent:", "view-source:", "filesystem:"]);
+const BLOCKED_SCHEMES = new Set(["javascript:", "data:", "vbscript:", "file:", "blob:", "about:", "ftp:", "ws:", "wss:", "mailto:", "tel:", "sms:", "intent:", "view-source:", "filesystem:", "oyobidashi:"]);
 const CORS = {
   "access-control-allow-origin": "*",
   "access-control-expose-headers": "www-authenticate, mcp-session-id, mcp-protocol-version",
@@ -138,7 +140,7 @@ function page(title: string, attributes: Record<string, string>, body: string, s
   const data = Object.entries(attributes).map(([k, v]) => ` data-${k}="${escapeHtml(v)}"`).join("");
   return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>お呼び出し — ${escapeHtml(title)}</title><style>${PAGE_STYLE}</style>${script ? '<script type="module" src="/oauth.js"></script>' : ""}</head><body><main${data}>${body}</main></body></html>`;
 }
-const INTERACTIVE_BODY = `<h1 id="heading"></h1><p id="explanation">準備しています…</p><dl id="details" hidden></dl><div id="providers"></div><div id="pairing" hidden><div id="qr"></div><p id="pairing-hint"></p></div><div id="actions"></div><p id="status" role="status" aria-live="polite"></p><footer>ご自身で始めた操作のときだけ進めてください。心当たりがなければ、この画面を閉じてください。</footer>`;
+const INTERACTIVE_BODY = `<h1 id="heading"></h1><p id="explanation">準備しています…</p><dl id="details" hidden></dl><div id="providers"></div><div id="pairing" hidden><div id="qr"></div><p id="pairing-hint"></p></div><div id="actions"></div><p id="status" role="status" aria-live="polite"></p><footer>ご自身で始めた操作のときだけ進めてください。心当たりがなければ、この画面を閉じてください。<br><a href="/oauth/connections">接続済みアプリを確認・取り消す</a></footer>`;
 
 export function oauthPageHeaders(type: string): Record<string, string> {
   const headers = authPageHeaders(type);
@@ -165,6 +167,9 @@ type Checked =
 export class OAuthServer {
   private registering = 0;
   constructor(private readonly deps: OAuthDeps) {}
+  async revokeOwner(uid: string) {
+    await this.deps.store.revokeOwner(uid);
+  }
   private get now() {
     return this.deps.service.now();
   }
@@ -214,6 +219,9 @@ export class OAuthServer {
       if (path === "/.well-known/oauth-authorization-server" || path === `/.well-known/oauth-authorization-server${MCP_PATH}`)
         return withCors(json(200, this.serverMetadata(req)));
       if (path === "/oauth/authorize") return this.authorizePage(req, url);
+      if (path === "/oauth/connections")
+        return html(200, page("接続済みアプリ", { mode: "connections" }, INTERACTIVE_BODY, true));
+      if (path === "/oauth/grants") return this.grants(req);
       if (path === "/pair")
         return html(200, page("スマホをペアリング", { mode: "pair" }, INTERACTIVE_BODY, true));
       if (path === "/oauth.js") {
@@ -234,7 +242,41 @@ export class OAuthServer {
           return oauthError(503, "temporarily_unavailable", "please retry shortly");
         }
     }
+    if (method === "DELETE" && /^\/oauth\/grants\/[0-9a-f-]{36}$/.test(path))
+      return this.removeGrant(req, path.slice("/oauth/grants/".length));
     return undefined;
+  }
+
+  private async human(req: Request) {
+    const token = /^Bearer +(\S+)$/i.exec((req.headers.get("authorization") ?? "").trim())?.[1];
+    if (!token) throw unauthorized();
+    const identity = this.deps.verifier.identify
+      ? await this.deps.verifier.identify(token)
+      : { uid: await this.deps.verifier.verify(token), provider: null };
+    if (!["google.com", "apple.com", "github.com"].includes(identity.provider ?? ""))
+      throw new CloudError(403, "forbidden", "sign in with Google, Apple or GitHub");
+    if (await this.deps.service.db.isBanned(identity.uid))
+      throw new CloudError(403, "account_banned", "this account is disabled");
+    return identity.uid;
+  }
+
+  private async grants(req: Request) {
+    const uid = await this.human(req);
+    const rows = await this.deps.store.listGrants(uid);
+    return json(200, { grants: rows.filter((r) => r.expires > this.now).map((r) => ({
+      id: r.grant,
+      name: r.doc.name ?? null,
+      redirect_uri: r.doc.redirect_uri ?? null,
+      last_used_at: new Date(r.created).toISOString(),
+    })) });
+  }
+
+  private async removeGrant(req: Request, grant: string) {
+    if (req.headers.get("origin") !== this.origin(req))
+      throw new CloudError(403, "forbidden", "this endpoint is only available to the account page");
+    const uid = await this.human(req);
+    await this.deps.store.revokeOwnedGrant(uid, grant);
+    return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
   }
 
   private resourceMetadata(req: Request) {
@@ -290,12 +332,17 @@ export class OAuthServer {
         name = Array.from(body.client_name.replace(/[\p{C}\s]+/gu, " ").trim()).slice(0, 80).join("") || null;
       }
       const now = this.now;
-      if ((await this.deps.store.countSince("client", now - 3600_000)) >= MAX_REGISTRATIONS_PER_HOUR)
-        return oauthError(429, "slow_down", "too many registrations; retry later");
+      const hosts = [...new Set(redirects.map((uri) => {
+        const url = new URL(uri);
+        return `${url.protocol}//${url.hostname}`;
+      }))];
+      for (const host of hosts)
+        if ((await this.deps.store.countRegistrations(host, now - 3600_000)) >= MAX_REGISTRATIONS_PER_DESTINATION_HOUR)
+          return oauthError(429, "slow_down", "too many registrations for this destination; retry later");
       const id = secret("kmc_");
       await this.deps.store.insert({
         kind: "client", id, uid: null, grant: null,
-        doc: { name, redirect_uris: redirects },
+        doc: { name, redirect_uris: redirects, registration_hosts: hosts },
         created: now, expires: now + CLIENT_TTL_MS, used: null,
       });
       return withCors(json(201, {
@@ -355,14 +402,9 @@ export class OAuthServer {
   private async authorizePage(req: Request, url: URL): Promise<Response> {
     const checked = await this.check(req, Object.fromEntries(url.searchParams));
     if (checked.kind === "page") return errorPage(400, checked.message);
-    if (checked.kind === "redirect")
-      return new Response(null, {
-        status: 302,
-        headers: {
-          location: this.result(req, checked.redirect, { error: checked.error, error_description: checked.description, state: checked.state }),
-          "cache-control": "no-store",
-        },
-      });
+    // A GET is never allowed to navigate to a client-controlled URI before the
+    // human has signed in and made an explicit decision on our own page.
+    if (checked.kind === "redirect") return errorPage(400, checked.description);
     return html(200, page("接続の許可", {
       mode: "authorize",
       client: checked.client.doc.name ?? "",
@@ -391,19 +433,12 @@ export class OAuthServer {
       return json(200, { redirect_to: this.result(req, checked.redirect, { error: "access_denied", error_description: "the user declined", state: checked.state }) });
     if (body.decision !== "approve") throw invalid("decision is invalid");
 
-    const token = /^Bearer +(\S+)$/i.exec((req.headers.get("authorization") ?? "").trim())?.[1];
-    if (!token) throw unauthorized();
-    const identity = this.deps.verifier.identify
-      ? await this.deps.verifier.identify(token)
-      : { uid: await this.deps.verifier.verify(token), provider: null };
-    // An anonymous account cannot be recovered once this client loses its tokens.
-    if (identity.provider === "anonymous")
-      throw new CloudError(403, "forbidden", "sign in with Google, Apple or GitHub to connect an MCP client");
-    await this.deps.service.db.transaction(identity.uid, (tx) => this.deps.service.oauthAttempt(tx));
+    const uid = await this.human(req);
+    await this.deps.service.db.transaction(uid, (tx) => this.deps.service.oauthAttempt(tx));
     const code = secret("kmo_"),
       now = this.now;
     await this.deps.store.insert({
-      kind: "code", id: hash(code), uid: identity.uid, grant: crypto.randomUUID(),
+      kind: "code", id: hash(code), uid, grant: crypto.randomUUID(),
       doc: { client: checked.client.id, name: checked.client.doc.name ?? null, redirect_uri: checked.redirect, challenge: checked.challenge },
       created: now, expires: now + CODE_TTL_MS, used: null,
     });
@@ -437,11 +472,11 @@ export class OAuthServer {
       }
     return out;
   }
-  private async issue(uid: string, grant: string, client: string, name: string | null): Promise<Response> {
+  private async issue(uid: string, grant: string, client: string, name: string | null, redirectUri: string | null): Promise<Response> {
     const access = secret("kma_"),
       refresh = secret("kmr_"),
       now = this.now;
-    const row = { uid, grant, doc: { client, name }, created: now, used: null };
+    const row = { uid, grant, doc: { client, name, redirect_uri: redirectUri ?? undefined }, created: now, used: null };
     await this.deps.store.insert({ ...row, kind: "access", id: hash(access), expires: now + ACCESS_TTL_MS });
     await this.deps.store.insert({ ...row, kind: "refresh", id: hash(refresh), expires: now + REFRESH_TTL_MS });
     await this.deps.store.extend("client", client, now + CLIENT_TTL_MS);
@@ -480,7 +515,7 @@ export class OAuthServer {
         (p.redirect_uri !== undefined && p.redirect_uri !== row.doc.redirect_uri)
       )
         return grantError("authorization code does not match this request");
-      const response = await this.issue(row.uid, row.grant, p.client_id, row.doc.name ?? null);
+      const response = await this.issue(row.uid, row.grant, p.client_id, row.doc.name ?? null, row.doc.redirect_uri ?? null);
       await store.trimGrants(row.uid, MAX_GRANTS_PER_USER);
       return response;
     }
@@ -491,18 +526,16 @@ export class OAuthServer {
       if (!row) {
         const used = await store.get("refresh", id);
         if (!used || used.used === null) return grantError("refresh token is invalid");
-        if (now - used.used > REFRESH_GRACE_MS) {
-          // Rotated tokens are single-use; a late second use means one copy was stolen.
-          if (used.grant) await store.revokeGrant(used.grant);
-          return grantError("refresh token was already used");
-        }
-        row = used;
+        // A retry cannot mint a second live token family. Without a durable
+        // encrypted response cache, the only safe response is to revoke.
+        if (used.grant) await store.revokeGrant(used.grant);
+        return grantError("refresh token was already used");
       }
       if (row.expires <= now || !row.uid || !row.grant || row.doc.client !== p.client_id)
         return grantError("refresh token does not match this request");
       const client = await store.get("client", p.client_id);
       if (!client || client.expires <= now) return oauthError(400, "invalid_client", "client registration expired");
-      return this.issue(row.uid, row.grant, p.client_id, row.doc.name ?? null);
+      return this.issue(row.uid, row.grant, p.client_id, row.doc.name ?? null, row.doc.redirect_uri ?? null);
     }
     return oauthError(400, "unsupported_grant_type", "grant_type must be authorization_code or refresh_token");
   }

@@ -11,6 +11,14 @@ export class ProviderFailure extends Error {
     super("conversation provider unavailable");
   }
 }
+
+/** Keep one voice turn's model input bounded even during a long call. */
+export function modelTranscript(call: { transcript: { role: string; text: string }[] }) {
+  return call.transcript.slice(-8).map((entry) => ({
+    role: entry.role,
+    text: Array.from(entry.text).slice(0, 2000).join(""),
+  }));
+}
 export function apiConversation(options: {
   apiKey: string;
   model: string;
@@ -48,7 +56,7 @@ export function apiConversation(options: {
               ...(meta
                 ? {
                     output_config: {
-                      effort: "low",
+                      effort: "medium",
                       format: {
                         type: "json_schema",
                         schema: {
@@ -74,7 +82,7 @@ export function apiConversation(options: {
                     question: request.question,
                     context: request.context,
                     choices: request.choices,
-                    transcript: call.transcript,
+                    transcript: modelTranscript(call),
                   }),
                 },
               ],
@@ -128,17 +136,49 @@ export function apiConversation(options: {
   };
 }
 
-/** Explicit provider selection prevents sending one provider's key to another. */
-export function configuredConversation(
-  env: Record<string, string | undefined>,
-  send?: typeof fetch,
-): ConversationProvider | undefined {
+function voiceProviderConfig(env: Record<string, string | undefined>): {
+  provider: "anthropic" | "meta";
+  apiKey: string | undefined;
+  model: string | undefined;
+} {
   const provider = env.VOICE_PROVIDER ?? "anthropic";
   if (provider !== "anthropic" && provider !== "meta")
     throw new Error("VOICE_PROVIDER must be anthropic or meta");
   const apiKey =
     provider === "meta" ? env.MODEL_API_KEY : env.ANTHROPIC_API_KEY;
   const model = provider === "meta" ? env.META_MODEL : env.ANTHROPIC_MODEL;
+  return { provider, apiKey, model };
+}
+
+/** Explicit provider selection prevents sending one provider's key to another. */
+export function configuredConversation(
+  env: Record<string, string | undefined>,
+  send?: typeof fetch,
+): ConversationProvider | undefined {
+  const { provider, apiKey, model } = voiceProviderConfig(env);
   if (!apiKey) return undefined;
   return apiConversation({ provider, apiKey, model: model ?? "", fetch: send });
+}
+
+export function configuredConversations(
+  env: Record<string, string | undefined>,
+  send?: typeof fetch,
+): { standard: ConversationProvider; free?: ConversationProvider } | undefined {
+  const { provider, apiKey, model } = voiceProviderConfig(env);
+  if (!apiKey) return undefined;
+  const standard = apiConversation({
+    provider,
+    apiKey,
+    model: model ?? "",
+    fetch: send,
+  });
+  const freeModel = env.VOICE_MODEL_FREE;
+  if (!freeModel || freeModel === model) return { standard };
+  const free = apiConversation({
+    provider,
+    apiKey,
+    model: freeModel,
+    fetch: send,
+  });
+  return { standard, free };
 }

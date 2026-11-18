@@ -29,6 +29,20 @@ async function until(check: () => boolean) {
 }
 
 describe("leased voice jobs", () => {
+  test("phone snapshots retain only eight recent, shortened transcript entries", async () => {
+    const h = harness(), s = await h.setup();
+    const worker = new JobWorker(h.service, {
+      conversation: { turn: async () => ({ reply: "応答", resolved: false, answer: null }) },
+    });
+    for (let i = 0; i < 6; i++) {
+      expect((await s.turn(String(i) + "あ".repeat(i < 2 ? 3000 : 1999))).status).toBe(202);
+      expect(await worker.runOnce("turn")).toBe(true);
+    }
+    const request = (await h.call("GET", `/v1/requests/${s.id}`, s.d.device_token)).body.request;
+    expect(request.call.transcript).toHaveLength(8);
+    expect(request.call.transcript[0].text.startsWith("2")).toBe(true);
+    expect(request.call.transcript.every((entry: { text: string }) => Array.from(entry.text).length <= 2000)).toBe(true);
+  });
   test("identical client turn UUIDs from two users enqueue independent jobs", async () => {
     const h = harness(),
       a = await h.setup(),

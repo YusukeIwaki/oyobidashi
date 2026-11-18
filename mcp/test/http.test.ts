@@ -45,6 +45,38 @@ test("tool calls use the injected connection, the client's name and never the se
   expect(called.result.structuredContent.warning).not.toContain("relay CLI");
 });
 
+test("hosted ask_human and get_human_status surface privacy_notice only when voice_training is true", async () => {
+  const notice = "Voice calls on this account may be used to improve AI models. For a request delivered as a call, keep personal data, credentials and confidential business details out of question, context and choices; use text delivery for anything sensitive.";
+  const pending = fixture("request_pending.json");
+  const flaggedFetch: FetchLike = async (url) => {
+    if (url.endsWith("/v1/presence")) return Response.json({ devices: [], recent_events: [], now: "2026-11-15T14:00:00.000Z", voice_training: true });
+    return Response.json({ request: pending, delivery: { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, voice_training: true } }, { status: 201 });
+  };
+  const asked = await result(await post(flaggedFetch, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "ask_human", arguments: { question: "進めますか？", wait_seconds: 0 } } }));
+  expect(asked.result.structuredContent.privacy_notice).toBe(notice);
+  expect(asked.result.content[0].text).toContain(notice);
+  const status = await result(await post(flaggedFetch, { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "get_human_status", arguments: {} } }));
+  expect(status.result.structuredContent.privacy_notice).toBe(notice);
+  expect(status.result.content[0].text).toContain(notice);
+
+  const plainFetch: FetchLike = async (url) => {
+    if (url.endsWith("/v1/presence")) return Response.json({ devices: [], recent_events: [], now: "2026-11-15T14:00:00.000Z" });
+    return Response.json({ request: pending, delivery: { paired_devices: 1, websocket_delivered: 1, push_attempted: 0 } }, { status: 201 });
+  };
+  const askedPlain = await result(await post(plainFetch, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "ask_human", arguments: { question: "進めますか？", wait_seconds: 0 } } }));
+  expect("privacy_notice" in askedPlain.result.structuredContent).toBe(false);
+  expect(askedPlain.result.content[0].text).not.toContain(notice);
+  const statusPlain = await result(await post(plainFetch, { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "get_human_status", arguments: {} } }));
+  expect("privacy_notice" in statusPlain.result.structuredContent).toBe(false);
+  expect(statusPlain.result.content[0].text).not.toContain(notice);
+
+  const listed = await result(await post(unused, { jsonrpc: "2.0", id: 5, method: "tools/list" }));
+  const askTool = listed.result.tools.find((t: { name: string }) => t.name === "ask_human");
+  expect(askTool.outputSchema.properties.privacy_notice.description).toContain("model training");
+  const presenceTool = listed.result.tools.find((t: { name: string }) => t.name === "get_human_status");
+  expect(presenceTool.outputSchema.properties.privacy_notice.description).toContain("model training");
+});
+
 test("a disconnecting client ends its waiting tool call", async () => {
   const pending = fixture("request_pending.json");
   let polls = 0;

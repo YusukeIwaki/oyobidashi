@@ -108,6 +108,31 @@ describe("RelayClient over real HTTP (fake relay on Bun.serve)", () => {
       expect(result.request.id).toBe("req_01JCXYZ");
       expect(result.delivery?.paired_devices).toBe(2);
     });
+
+    test("voice_training on delivery is carried through; absent means false", async () => {
+      const makeClient = (configure?: (relay: FakeRelay) => void) => {
+        const clock = new FakeClock();
+        const relay = new FakeRelay(clock);
+        configure?.(relay);
+        return new RelayClient({ baseUrl: "http://relay.test", agentToken: relay.token, clock, fetch: relay.fetch });
+      };
+      expect((await makeClient((r) => (r.delivery = { paired_devices: 1, websocket_delivered: 0, push_attempted: 1, voice_training: true })).createRequest({ kind: "question", question: "q" })).delivery?.voice_training).toBe(true);
+      expect((await makeClient().createRequest({ kind: "question", question: "q" })).delivery?.voice_training ?? false).toBe(false);
+      expect((await makeClient((r) => (r.delivery = { paired_devices: 1, websocket_delivered: 0, push_attempted: 1, voice_training: false })).createRequest({ kind: "question", question: "q" })).delivery?.voice_training).toBe(false);
+    });
+  });
+
+  describe("GET /v1/presence", () => {
+    test("voice_training on presence is carried through; absent means false", async () => {
+      const makeClient = (configure?: (relay: FakeRelay) => void) => {
+        const clock = new FakeClock();
+        const relay = new FakeRelay(clock);
+        configure?.(relay);
+        return new RelayClient({ baseUrl: "http://relay.test", agentToken: relay.token, clock, fetch: relay.fetch });
+      };
+      expect((await makeClient((r) => (r.presence = { ...r.presence, voice_training: true })).getPresence()).voice_training).toBe(true);
+      expect((await makeClient().getPresence()).voice_training ?? false).toBe(false);
+    });
   });
 
   describe("GET /v1/requests/{id}?wait=N", () => {

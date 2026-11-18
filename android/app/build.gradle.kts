@@ -19,6 +19,12 @@ fun firebaseValue(key: String): String {
     return "\"" + value.trim().replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 }
 
+fun playValue(key: String): String {
+    val name = "oyobidashi.play.$key"
+    val value = localProps.getProperty(name) ?: providers.gradleProperty(name).orNull ?: ""
+    return "\"" + value.trim().replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+}
+
 fun releaseSigningValue(key: String): String? {
     val name = "oyobidashi.release.$key"
     return (localProps.getProperty(name) ?: providers.gradleProperty(name).orNull)?.trim()?.takeIf { it.isNotEmpty() }
@@ -39,6 +45,8 @@ android {
         buildConfigField("String", "FIREBASE_APPLICATION_ID", firebaseValue("applicationId"))
         buildConfigField("String", "FIREBASE_API_KEY", firebaseValue("apiKey"))
         buildConfigField("String", "FIREBASE_SENDER_ID", firebaseValue("senderId"))
+        // Play Integrity (standard) 用の Google Cloud プロジェクト番号。未設定なら課金同期はしない。
+        buildConfigField("String", "GOOGLE_CLOUD_PROJECT_NUMBER", playValue("cloudProjectNumber"))
     }
 
     // リリース署名も local.properties (または -P / gradle.properties) から任意で受け取る。
@@ -100,6 +108,11 @@ dependencies {
 
     // Push (google-services プラグインは使わない。初期化は PushTokens で手動)
     implementation("com.google.firebase:firebase-messaging:24.1.0")
+
+    // 課金 (Play Billing) と端末検証 (Play Integrity standard)。
+    // billing-ktx は 8.1 以降が Kotlin 2.2 メタデータで、このプロジェクトの Kotlin 2.1 では読めないため 8.0.0 を使う。
+    implementation("com.android.billingclient:billing-ktx:8.0.0")
+    implementation("com.google.android.play:integrity:1.6.0")
 
     // QR 読み取り (CameraX + ML Kit 同梱モデル: Play 開発者サービスのダウンロード不要)
     implementation("androidx.camera:camera-camera2:1.4.1")

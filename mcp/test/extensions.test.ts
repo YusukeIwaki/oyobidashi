@@ -156,6 +156,76 @@ describe("get_human_status", () => {
     expect(result.isError).toBe(true);
     expect(result.structuredContent?.error_code).toBe("internal");
   });
+
+  test("voice_training true adds privacy_notice to structuredContent and text; absent adds nothing", async () => {
+    const notice = "Voice calls on this account may be used to improve AI models. For a request delivered as a call, keep personal data, credentials and confidential business details out of question, context and choices; use text delivery for anything sensitive.";
+    const withFlag = await setup();
+    withFlag.relay.presence = { devices: [], recent_events: [], now: "2026-11-15T14:00:00.000Z", voice_training: true };
+    const flagged = await withFlag.call("get_human_status", {});
+    expect(flagged.isError).toBeFalsy();
+    expect(flagged.structuredContent?.privacy_notice).toBe(notice);
+    expect(textOf(flagged)).toContain(notice);
+    await harness!.close();
+
+    const without = await setup();
+    without.relay.presence = { devices: [], recent_events: [], now: "2026-11-15T14:00:00.000Z" };
+    const plain = await without.call("get_human_status", {});
+    expect(plain.isError).toBeFalsy();
+    expect("privacy_notice" in plain.structuredContent!).toBe(false);
+    expect(textOf(plain)).not.toContain(notice);
+  });
+});
+
+describe("ask_human privacy_notice", () => {
+  const notice = "Voice calls on this account may be used to improve AI models. For a request delivered as a call, keep personal data, credentials and confidential business details out of question, context and choices; use text delivery for anything sensitive.";
+
+  test("pending create with voice_training adds privacy_notice; without flag it is absent", async () => {
+    const withFlag = await setup();
+    withFlag.relay.delivery = { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, voice_training: true };
+    const flagged = await withFlag.call("ask_human", { question: "Deploy now?", wait_seconds: 0 });
+    expect(flagged.isError).toBeFalsy();
+    expect(flagged.structuredContent?.status).toBe("pending");
+    expect(flagged.structuredContent?.privacy_notice).toBe(notice);
+    expect(textOf(flagged)).toContain(notice);
+    await harness!.close();
+
+    const without = await setup();
+    const plain = await without.call("ask_human", { question: "Deploy now?", wait_seconds: 0 });
+    expect(plain.isError).toBeFalsy();
+    expect(plain.structuredContent?.status).toBe("pending");
+    expect("privacy_notice" in plain.structuredContent!).toBe(false);
+    expect(textOf(plain)).not.toContain(notice);
+  });
+
+  test("answered create with voice_training adds privacy_notice", async () => {
+    const { relay, call } = await setup();
+    relay.delivery = { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, voice_training: true };
+    relay.resolveAfter(0);
+    const result = await call("ask_human", { question: "Deploy now?" });
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent?.status).toBe("answered");
+    expect(result.structuredContent?.privacy_notice).toBe(notice);
+    expect(textOf(result)).toContain(notice);
+  });
+
+  test("cancelled and expired creates with voice_training add privacy_notice", async () => {
+    const cancelledSetup = await setup();
+    cancelledSetup.relay.delivery = { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, voice_training: true };
+    cancelledSetup.relay.resolveAfter(0, fixture("event_request_updated.json").request);
+    const cancelled = await cancelledSetup.call("ask_human", { question: "q" });
+    expect(cancelled.structuredContent?.status).toBe("cancelled");
+    expect(cancelled.structuredContent?.privacy_notice).toBe(notice);
+    expect(textOf(cancelled)).toContain(notice);
+    await harness!.close();
+
+    const expiredSetup = await setup();
+    expiredSetup.relay.delivery = { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, voice_training: true };
+    expiredSetup.relay.resolveAfter(0, { ...fixture("request_pending.json"), status: "expired" });
+    const expired = await expiredSetup.call("ask_human", { question: "q" });
+    expect(expired.structuredContent?.status).toBe("expired");
+    expect(expired.structuredContent?.privacy_notice).toBe(notice);
+    expect(textOf(expired)).toContain(notice);
+  });
 });
 
 describe("update_request", () => {

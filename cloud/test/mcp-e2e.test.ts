@@ -9,7 +9,13 @@ import { MemoryOAuthStore } from "./oauth-memory.ts";
 const h = harness();
 const app = new CloudApp(
   h.service,
-  h.app.verifier,
+  {
+    ...h.app.verifier,
+    identify: async (token: string) => ({
+      uid: await h.app.verifier.verify(token),
+      provider: "google.com",
+    }),
+  },
   10_000,
   {
     publicConfig: {

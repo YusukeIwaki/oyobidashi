@@ -1,5 +1,6 @@
 package me.oyobidashi.android.ui
 
+import android.app.Activity
 import android.app.Application
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +41,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var unpairBusy by mutableStateOf(false)
         private set
     var unpairError by mutableStateOf<String?>(null)
+
+    // ---- プラン ----
+    val billingState = graph.billingManager.state
+    val billingConfigured: Boolean get() = graph.billingManager.configured
+
+    fun refreshBilling() = graph.billingManager.refresh()
+
+    fun purchasePlan(activity: Activity) = graph.billingManager.launchBillingFlow(activity)
 
     fun onPairingLink(uri: String) {
         when (val result = PairingUri.parse(uri)) {

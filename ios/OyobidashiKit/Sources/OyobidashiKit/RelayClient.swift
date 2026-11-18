@@ -28,13 +28,15 @@ public struct RelayClient: Sendable {
     private let transport: any HTTPTransport
     private let timeout: TimeInterval
     private let voiceTurnPolicy: VoiceTurnPolicy
+    private let voiceAccessToken: String?
 
-    public init(endpoint: RelayEndpoint, deviceToken: String?, transport: any HTTPTransport = URLSessionTransport(), timeout: TimeInterval = 20, voiceTurnPolicy: VoiceTurnPolicy = VoiceTurnPolicy()) {
+    public init(endpoint: RelayEndpoint, deviceToken: String?, transport: any HTTPTransport = URLSessionTransport(), timeout: TimeInterval = 20, voiceTurnPolicy: VoiceTurnPolicy = VoiceTurnPolicy(), voiceAccessToken: String? = nil) {
         self.endpoint = endpoint
         self.deviceToken = deviceToken
         self.transport = transport
         self.timeout = timeout
         self.voiceTurnPolicy = voiceTurnPolicy
+        self.voiceAccessToken = voiceAccessToken
     }
 
     // MARK: Endpoints
@@ -125,6 +127,80 @@ public struct RelayClient: Sendable {
     }
     public func failCall(requestID: String) async throws -> CallActionResponse {
         try await callAction(requestID: requestID, body: CallEventBody(event: .failed))
+    }
+
+    // MARK: Billing
+
+    public func voiceStatus() async throws -> VoiceStatus? {
+        do { return try await perform("GET", ["v1", "voice"]) }
+        catch RelayError.notFound { return nil }
+    }
+
+    public func voiceChallenge(_ purpose: String) async throws -> VoiceChallenge {
+        try await perform("POST", ["v1", "voice", "challenge"], body: VoiceChallengeRequest(purpose: purpose))
+    }
+
+    public func voiceAppleAttest(challenge: String, keyID: String, attestation: Data) async throws {
+        _ = try await rawWithBody("POST", ["v1", "voice", "apple", "attest"], body: VoiceAppleAttestRequest(challenge: challenge, keyID: keyID, attestation: attestation.base64EncodedString()))
+    }
+
+    public func voiceToken(challenge: String, keyID: String, signature: Data) async throws -> VoiceAccess {
+        try await perform("POST", ["v1", "voice", "token"], body: VoiceTokenRequest(challenge: challenge, keyID: keyID, signature: signature.base64EncodedString()))
+    }
+
+    // MARK: Billing
+
+    /// `GET /v1/billing` (device auth)。404 は billing 無効として扱い、エラーにしない。
+    public func billingStatus() async throws -> BillingStatus {
+        do {
+            return try await perform("GET", ["v1", "billing"])
+        } catch let error as RelayError {
+            if error == .notFound { return .disabled }
+            if case .unexpectedResponse(let status, _, _) = error, status == 404 { return .disabled }
+            throw error
+        }
+    }
+
+    /// `POST /v1/billing/challenge` (device auth)
+    public func billingChallenge() async throws -> BillingChallenge {
+        try await perform("POST", ["v1", "billing", "challenge"], body: BillingChallengeRequest())
+    }
+
+    /// `POST /v1/billing/apple/attest` (device auth) → 204
+    public func attestApple(keyID: String, attestation: Data, challenge: String) async throws {
+        let body: Data
+        do {
+            body = try OyobidashiJSON.makeEncoder().encode(
+                AttestAppleRequest(keyID: keyID, attestation: attestation.base64EncodedString(), challenge: challenge)
+            )
+        } catch {
+            throw RelayError.invalidRequest(message: "encode failed: \(error)")
+        }
+        _ = try await raw("POST", ["v1", "billing", "apple", "attest"], bodyData: body, authorized: true)
+    }
+
+    /// `POST /v1/billing/apple` (device auth)。`payload` は組み立て済みの文字列をそのまま送る。
+    public func syncApple(keyID: String, assertion: Data, payload: String) async throws -> BillingStatus {
+        let body: Data
+        do {
+            body = try OyobidashiJSON.makeEncoder().encode(
+                SyncAppleRequest(keyID: keyID, assertion: assertion.base64EncodedString(), payload: payload)
+            )
+        } catch {
+            throw RelayError.invalidRequest(message: "encode failed: \(error)")
+        }
+        let (data, response) = try await sendRequest("POST", ["v1", "billing", "apple"], bodyData: body, authorized: true)
+        guard (200..<300).contains(response.statusCode) else {
+            if let envelope = try? JSONDecoder().decode(ErrorEnvelope.self, from: data), envelope.error.code == "attestation_required" {
+                throw BillingError.attestationRequired
+            }
+            throw RelayError.from(status: response.statusCode, body: data)
+        }
+        do {
+            return try OyobidashiJSON.makeDecoder().decode(BillingStatus.self, from: data)
+        } catch {
+            throw RelayError.decoding(String(describing: error))
+        }
     }
 
     /// `GET /healthz` (認証不要)
@@ -299,10 +375,10 @@ public struct RelayClient: Sendable {
         try await exchange(method, segments, query: query, bodyData: bodyData, authorized: authorized).0
     }
 
-    private func exchange(
+    private func sendRequest(
         _ method: String, _ segments: [String], query: [URLQueryItem] = [], bodyData: Data?, authorized: Bool,
         deadline: TimeInterval? = nil
-    ) async throws -> (Data, Int) {
+    ) async throws -> (Data, HTTPURLResponse) {
         try Task.checkCancellationWrapped()
         var request = URLRequest(url: endpoint.url(segments: segments, query: query))
         request.httpMethod = method
@@ -318,6 +394,9 @@ public struct RelayClient: Sendable {
             guard let deviceToken, !deviceToken.isEmpty else { throw RelayError.unauthorized }
             request.setValue("Bearer \(deviceToken)", forHTTPHeaderField: "Authorization")
         }
+        if segments.last == "call", let voiceAccessToken {
+            request.setValue(voiceAccessToken, forHTTPHeaderField: "X-Oyobidashi-Voice-Token")
+        }
         if let bodyData {
             request.httpBody = bodyData
             request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
@@ -332,6 +411,16 @@ public struct RelayClient: Sendable {
         }
         try Task.checkCancellationWrapped()
         if let deadline, voiceTurnPolicy.now() >= deadline { throw RelayError.turnPending }
+        return (data, response)
+    }
+
+    private func exchange(
+        _ method: String, _ segments: [String], query: [URLQueryItem] = [], bodyData: Data?, authorized: Bool,
+        deadline: TimeInterval? = nil
+    ) async throws -> (Data, Int) {
+        let (data, response) = try await sendRequest(
+            method, segments, query: query, bodyData: bodyData, authorized: authorized, deadline: deadline
+        )
         guard (200..<300).contains(response.statusCode) else {
             throw RelayError.from(status: response.statusCode, body: data)
         }
@@ -342,6 +431,28 @@ public struct RelayClient: Sendable {
 private extension Task where Success == Never, Failure == Never {
     static func checkCancellationWrapped() throws {
         if isCancelled { throw RelayError.cancelled }
+    }
+}
+
+private struct BillingChallengeRequest: Encodable {}
+
+private struct AttestAppleRequest: Encodable {
+    var keyID: String
+    var attestation: String
+    var challenge: String
+    enum CodingKeys: String, CodingKey {
+        case attestation, challenge
+        case keyID = "key_id"
+    }
+}
+
+private struct SyncAppleRequest: Encodable {
+    var keyID: String
+    var assertion: String
+    var payload: String
+    enum CodingKeys: String, CodingKey {
+        case assertion, payload
+        case keyID = "key_id"
     }
 }
 

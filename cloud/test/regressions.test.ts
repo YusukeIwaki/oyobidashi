@@ -80,7 +80,7 @@ describe("cloud recovery regressions", () => {
     });
     expect(old.status).toBe(201);
     for (let i = 0; i < 205; i++) {
-      if (i % 50 === 0) h.advance(61_000);
+      if (i % 10 === 0) h.advance(61_000);
       const note = await h.call("POST", "/v1/requests", "agent-alice", {
         kind: "notification",
         question: "recent notification",
@@ -208,7 +208,8 @@ describe("cloud recovery regressions", () => {
     await h.call("PUT", "/v1/devices/me", device.device_token, {
       push_token: "synthetic-quota-token",
     });
-    for (let i = 0; i < 60; i++)
+    for (let i = 0; i < 60; i++) {
+      if (i > 0 && i % 10 === 0) h.advance(61_000);
       expect(
         (
           await h.call("POST", "/v1/requests", "agent-alice", {
@@ -217,6 +218,7 @@ describe("cloud recovery regressions", () => {
           })
         ).status,
       ).toBe(201);
+    }
     const rejected = await h.call("POST", "/v1/requests", "agent-alice", {
       kind: "notification",
       question: "over quota",

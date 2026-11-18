@@ -11,10 +11,10 @@ const url = process.env.CLOUD_TEST_DATABASE_URL;
 const suite = describe.skipIf(!url);
 const resources: { db: PostgresDatabase; schema: string }[] = [];
 const admin = url ? postgres(url, { max: 2, onnotice: () => {} }) : null;
-async function setup() {
+async function setup(poolSize = 10) {
   const schema = `oyobidashi_test_${crypto.randomUUID().replaceAll("-", "")}`;
   await admin!.unsafe(`CREATE SCHEMA ${schema}`);
-  const db = new PostgresDatabase(url!, 10, schema);
+  const db = new PostgresDatabase(url!, poolSize, schema);
   resources.push({ db, schema });
   await db.migrate();
   return { h: harness(db), db, schema };
@@ -28,6 +28,22 @@ afterAll(async () => {
 });
 
 suite("real PostgreSQL concurrency and forced failure", () => {
+  test("voice abuse ban commits and is enforced across API pools", async () => {
+    const { h, schema } = await setup(1);
+    const s = await h.setup();
+    const worker = new JobWorker(h.service, { conversation: { turn: async () => ({ reply: "次", resolved: false, answer: null }) } });
+    for (let i = 0; i < 2; i++) {
+      expect((await s.turn("あ".repeat(2001))).status).toBe(202);
+      expect(await worker.runOnce("turn")).toBe(true);
+    }
+    expect((await s.turn("あ".repeat(2001))).body.error.code).toBe("account_banned");
+    const anotherPool = new PostgresDatabase(url!, 1, schema);
+    try {
+      expect(await anotherPool.isBanned("alice")).toBe(true);
+      const other = harness(anotherPool);
+      expect((await other.call("GET", "/v1/requests", "agent-alice")).body.error.code).toBe("account_banned");
+    } finally { await anotherPool.close(); }
+  });
   test("reinstallation rotates both tokens and fences an in-flight registration from the old account", async () => {
     const { h, db } = await setup();
     const clientId = "synthetic-device-stable-identity-0001";
