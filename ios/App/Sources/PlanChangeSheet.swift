@@ -102,7 +102,11 @@ struct PlanChangeSheet: View {
         switch store.planPresentation.action(for: selection) {
         case .none: break
         case .purchase:
-            Task { await store.purchase { try await purchase($0) } }
+            Task {
+                await store.purchase { product, accountID in
+                    try await purchase(product, options: [.appAccountToken(accountID)])
+                }
+            }
         case .manageSubscriptions: showingManagement = true
         }
     }
@@ -126,6 +130,7 @@ private struct PlanPickerContent: View {
                 ForEach(BillingPlanPresentation.Plan.allCases) { plan in
                     PlanOptionCard(
                         plan: plan,
+                        privacyNotice: presentation.privacyNotice(for: plan),
                         price: plan.priceText(displayPrice: displayPrice),
                         isLoading: plan == .standard && isLoadingProducts,
                         isSelected: selection == plan,
@@ -217,6 +222,7 @@ private struct PlanPickerContent: View {
 
 private struct PlanOptionCard: View {
     let plan: BillingPlanPresentation.Plan
+    let privacyNotice: String
     let price: String?
     let isLoading: Bool
     let isSelected: Bool
@@ -242,7 +248,7 @@ private struct PlanOptionCard: View {
                         .foregroundStyle(isSelected ? PagerTheme.orange : PagerTheme.inkSoft)
                         .accessibilityHidden(true)
                 }
-                Text(plan.privacyNotice)
+                Text(privacyNotice)
                     .font(.subheadline)
                     .foregroundStyle(PagerTheme.inkSoft)
                 if isCurrent {

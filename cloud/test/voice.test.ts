@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { CloudApp } from "../src/app.ts";
-import { VoiceSecurity } from "../src/voice.ts";
+import { VoiceSecurity, loadVoiceConfig } from "../src/voice.ts";
+import { OFFICIAL_CLOUD_ORIGIN, requiresVoiceProof } from "../src/config.ts";
 import { JobWorker } from "../src/worker.ts";
 import { fakeAppAttest } from "./billing-fixtures.ts";
 import { harness } from "./helpers.ts";
@@ -41,6 +42,43 @@ function setup() {
 }
 
 describe("cloud voice proof", () => {
+  test("self-hosted cloud voice works with the paired device token alone", async () => {
+    const h = harness();
+    h.service.voiceProofRequired = requiresVoiceProof({}, "https://cloud.example");
+    const d = await h.pair("alice", "android");
+    expect((await h.call("GET", "/v1/voice", d.device_token)).status).toBe(404);
+    const result = await h.call("POST", "/v1/requests", "agent-alice", {
+      question: "q", priority: "high", delivery_mode: "call",
+    });
+    const path = `/v1/requests/${result.body.request.id}/call`;
+    expect((await h.call("POST", path, null, { event: "answer" })).status).toBe(401);
+    expect((await h.call("POST", path, d.device_token, { event: "answer" })).status).toBe(200);
+    const turnId = crypto.randomUUID();
+    const turn = await h.call("POST", path, d.device_token, { event: "turn", text: "yes", turn_id: turnId, async: true });
+    expect(turn.status).toBe(202);
+    const worker = new JobWorker(h.service, {
+      conversation: { turn: async () => ({ reply: "ok", resolved: true, answer: "yes" }) },
+    });
+    expect(await worker.runOnce("turn")).toBe(true);
+    const completed = await h.call("GET", `/v1/requests/${result.body.request.id}/turns/${turnId}`, d.device_token);
+    expect(completed.body.request.status).toBe("answered");
+    expect(requiresVoiceProof({ VOICE_REQUIRE_DEVICE_PROOF: "0" }, OFFICIAL_CLOUD_ORIGIN)).toBe(true);
+    expect(requiresVoiceProof({ VOICE_REQUIRE_DEVICE_PROOF: "1" }, "https://cloud.example")).toBe(true);
+  });
+
+  test("empty Compose overrides preserve the App Attest fallback", () => {
+    const compose = {
+      VOICE_APPLE_TEAM_ID: "",
+      VOICE_APPLE_BUNDLE_ID: "",
+      VOICE_APP_ATTEST_ENVIRONMENTS: "",
+      APPLE_TEAM_ID: "TEAM123456",
+      APPLE_IAP_BUNDLE_ID: "com.example.app",
+    };
+    expect(loadVoiceConfig(compose).apple).toEqual({ appId: APP_ID, environments: ["production"] });
+    expect(loadVoiceConfig({ ...compose, APPLE_APP_ATTEST_ENVIRONMENTS: "development" }).apple?.environments)
+      .toEqual(["development"]);
+  });
+
   test("a scripted phone cannot answer or enqueue model work before App Attest", async () => {
     const s = setup(), d = await s.h.pair();
     const request = await s.h.call("POST", "/v1/requests", "agent-alice", { question: "q", priority: "high", delivery_mode: "call" });

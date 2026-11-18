@@ -28,6 +28,41 @@ afterAll(async () => {
 });
 
 suite("real PostgreSQL concurrency and forced failure", () => {
+  test("API pools share the same rolling voice budget", async () => {
+    const { h, db, schema } = await setup(1);
+    const call = await h.setup();
+    const now = h.clock.now;
+    await db.transaction("alice", (tx) => tx.put("voice_turn_usage", "current", {
+      recent: Array.from({ length: 29 }, (_, i) => ({
+        at: now - (29 - i) * 90_000,
+        oversized: false,
+      })),
+    }, now + 60 * 60_000));
+    const anotherPool = new PostgresDatabase(url!, 1, schema);
+    try {
+      const other = harness(anotherPool);
+      const path = `/v1/requests/${call.id}/call`;
+      const body = () => ({ event: "turn", turn_id: crypto.randomUUID(), text: "確認", async: true });
+      const [a, b] = await Promise.all([
+        h.call("POST", path, call.d.device_token, body()),
+        other.call("POST", path, call.d.device_token, body()),
+      ]);
+      expect([a.status, b.status].sort()).toEqual([202, 409]);
+      const worker = new JobWorker(h.service, {
+        conversation: { turn: async () => ({ reply: "次", resolved: false, answer: null }) },
+      });
+      expect(await worker.runOnce("turn")).toBe(true);
+      const blocked = await other.call("POST", path, call.d.device_token, body());
+      expect(blocked.status).toBe(409);
+      expect(blocked.body.error.code).toBe("call_ended");
+      expect(await worker.runOnce("turn")).toBe(false);
+      expect((await h.call("GET", `/v1/requests/${call.id}`)).body.request).toMatchObject({
+        status: "pending", delivery_mode: "text",
+      });
+    } finally {
+      await anotherPool.close();
+    }
+  });
   test("voice abuse ban commits and is enforced across API pools", async () => {
     const { h, schema } = await setup(1);
     const s = await h.setup();

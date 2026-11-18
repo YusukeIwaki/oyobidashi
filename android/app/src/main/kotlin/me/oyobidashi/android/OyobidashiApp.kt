@@ -100,7 +100,7 @@ class AppGraph(private val app: Application) {
     val billingManager = BillingManager(
         app,
         scope,
-        api = { _session.value?.api },
+        api = { _session.value?.api?.takeIf { it.isOfficialCloud } },
         cloudProjectNumber = BuildConfig.GOOGLE_CLOUD_PROJECT_NUMBER,
     )
 

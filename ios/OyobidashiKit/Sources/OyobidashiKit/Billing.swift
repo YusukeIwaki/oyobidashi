@@ -9,22 +9,28 @@ public struct BillingStatus: Codable, Equatable, Sendable {
     public var active: Bool
     public var expiresAt: Date?
     public var activeStores: Set<String>?
+    public var purchaseAccountID: UUID?
     public var apple: BillingStoreProducts?
     public var google: BillingStoreProducts?
+    public var voiceTraining: BillingVoiceTraining?
 
     enum CodingKeys: String, CodingKey {
         case enabled, active, apple, google
         case expiresAt = "expires_at"
         case activeStores = "active_stores"
+        case purchaseAccountID = "purchase_account_id"
+        case voiceTraining = "voice_training"
     }
 
-    public init(enabled: Bool, active: Bool = false, expiresAt: Date? = nil, apple: BillingStoreProducts? = nil, google: BillingStoreProducts? = nil, activeStores: Set<String>? = nil) {
+    public init(enabled: Bool, active: Bool = false, expiresAt: Date? = nil, apple: BillingStoreProducts? = nil, google: BillingStoreProducts? = nil, activeStores: Set<String>? = nil, purchaseAccountID: UUID? = nil, voiceTraining: BillingVoiceTraining? = nil) {
         self.enabled = enabled
         self.active = active
         self.expiresAt = expiresAt
         self.activeStores = activeStores
+        self.purchaseAccountID = purchaseAccountID
         self.apple = apple
         self.google = google
+        self.voiceTraining = voiceTraining
     }
 
     public init(from decoder: Decoder) throws {
@@ -33,11 +39,23 @@ public struct BillingStatus: Codable, Equatable, Sendable {
         active = try c.decodeIfPresent(Bool.self, forKey: .active) ?? false
         expiresAt = try c.decodeIfPresent(Date.self, forKey: .expiresAt)
         activeStores = try c.decodeIfPresent(Set<String>.self, forKey: .activeStores)
+        purchaseAccountID = try c.decodeIfPresent(UUID.self, forKey: .purchaseAccountID)
         apple = try c.decodeIfPresent(BillingStoreProducts.self, forKey: .apple)
         google = try c.decodeIfPresent(BillingStoreProducts.self, forKey: .google)
+        voiceTraining = try c.decodeIfPresent(BillingVoiceTraining.self, forKey: .voiceTraining)
     }
 
     public static let disabled = BillingStatus(enabled: false)
+}
+
+public struct BillingVoiceTraining: Codable, Equatable, Sendable {
+    public var free: Bool?
+    public var plus: Bool?
+
+    public init(free: Bool?, plus: Bool?) {
+        self.free = free
+        self.plus = plus
+    }
 }
 
 public struct BillingStoreProducts: Codable, Equatable, Sendable {

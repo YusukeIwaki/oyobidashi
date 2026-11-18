@@ -16,8 +16,9 @@ import {
   authPageHeaders,
   type AccountAuth,
 } from "./account-auth.ts";
-import { MCP_PATH, OAuthServer, type OAuthStore } from "./oauth.ts";
+import { MCP_PATH, OAuthServer, requestOrigin, type OAuthStore } from "./oauth.ts";
 import { serveMcp } from "./mcp-http.ts";
+import { OFFICIAL_CLOUD_ORIGIN } from "./config.ts";
 import type { Billing } from "./billing/service.ts";
 import { VoiceSecurity } from "./voice.ts";
 
@@ -61,6 +62,7 @@ export class CloudApp {
   private dirty = new Set<string>();
   private closed = false;
   private pairInFlight = 0;
+  private billingWebhookInFlight = 0;
   private waiters = new Map<string, Set<() => void>>();
   private readonly oauth?: OAuthServer;
   constructor(
@@ -175,15 +177,24 @@ export class CloudApp {
       }
       // Store notifications authenticate themselves by signature, not by a caller token.
       if (path.startsWith("/v1/billing/webhooks/") && method === "POST" && !internal) {
-        if (!this.billing?.enabled) throw missing();
-        if (path === "/v1/billing/webhooks/apple")
-          await this.billing.appleWebhook(await readBody(req));
-        else if (path === "/v1/billing/webhooks/google")
-          await this.billing.googleWebhook(
-            req.headers.get("authorization"),
-            await readBody(req),
-          );
-        else throw missing();
+        if (!this.billing?.enabled || requestOrigin(req) !== OFFICIAL_CLOUD_ORIGIN) throw missing();
+        // Signature verification is deliberately expensive; bound how much of
+        // it unauthenticated traffic can run at once. Stores retry on 429.
+        if (this.billingWebhookInFlight >= 16)
+          throw new CloudError(429, "rate_limited", "please retry shortly");
+        this.billingWebhookInFlight++;
+        try {
+          if (path === "/v1/billing/webhooks/apple")
+            await this.billing.appleWebhook(await readBody(req));
+          else if (path === "/v1/billing/webhooks/google")
+            await this.billing.googleWebhook(
+              req.headers.get("authorization"),
+              await readBody(req),
+            );
+          else throw missing();
+        } finally {
+          this.billingWebhookInFlight--;
+        }
         return new Response(null, { status: 204 });
       }
       // A hosted MCP call may ask and notify; it never mints account or device credentials.
@@ -239,7 +250,7 @@ export class CloudApp {
       if (path === "/v1/billing" || path.startsWith("/v1/billing/")) {
         requireRole(p, "device");
         const device = p as Extract<Principal, { role: "device" }>;
-        const billing = this.billing;
+        const billing = requestOrigin(req) === OFFICIAL_CLOUD_ORIGIN ? this.billing : undefined;
         if (path === "/v1/billing" && method === "GET")
           return json(
             200,

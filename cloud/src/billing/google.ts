@@ -11,6 +11,7 @@ export interface GooglePurchase {
   expires: number;
   productId: string;
   acknowledged: boolean;
+  accountId?: string;
   linkedPurchaseToken?: string;
 }
 
@@ -128,8 +129,14 @@ export class GooglePlay {
     const item = Array.isArray(s.lineItems) ? s.lineItems[0] : undefined;
     const productId = typeof item?.productId === "string" ? item.productId : "";
     const expiry = Date.parse(item?.expiryTime ?? "");
+    const previous = s.outOfAppPurchaseContext;
+    const accountId = s.externalAccountIdentifiers?.obfuscatedExternalAccountId
+      ?? previous?.expiredExternalAccountIdentifiers?.obfuscatedExternalAccountId;
+    const linkedToken = s.linkedPurchaseToken ?? previous?.expiredPurchaseToken;
     // ACTIVE and IN_GRACE_PERIOD keep access; CANCELED keeps it until the paid period ends.
-    const entitled = [
+    // A license-tester (test) purchase is never paid access, however Google
+    // otherwise describes it; it must not be acknowledged as a real purchase.
+    const entitled = s.testPurchase == null && [
       "SUBSCRIPTION_STATE_ACTIVE",
       "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
       "SUBSCRIPTION_STATE_CANCELED",
@@ -138,8 +145,9 @@ export class GooglePlay {
       productId,
       expires: entitled && Number.isFinite(expiry) ? expiry : 0,
       acknowledged: s.acknowledgementState === "ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED",
-      ...(typeof s.linkedPurchaseToken === "string" && s.linkedPurchaseToken.length <= 2000
-        ? { linkedPurchaseToken: s.linkedPurchaseToken } : {}),
+      ...(accountId != null ? { accountId: typeof accountId === "string" ? accountId : "" } : {}),
+      ...(typeof linkedToken === "string" && linkedToken.length <= 2000
+        ? { linkedPurchaseToken: linkedToken } : {}),
     };
   }
 

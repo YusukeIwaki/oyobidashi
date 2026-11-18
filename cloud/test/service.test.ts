@@ -299,31 +299,66 @@ describe("commit boundaries and validation", () => {
     expect((await h.call("GET", "/v1/presence", "agent-alice")).status).toBe(403);
     expect((await h.call("POST", "/v1/requests", "agent-bob", { question: "other owner" })).status).toBe(201);
   });
-  test("ninety distinct rapid voice turns ban an account, retries do not add to the count", async () => {
-    const h = harness(), s = await h.setup();
+  test("the rolling voice budget spans calls and devices and leaves text replies available", async () => {
+    const h = harness();
+    const hour = 60 * 60_000;
+    const firstAt = (Math.floor(h.clock.now / hour) + 1) * hour - 120_000;
+    h.advance(firstAt - h.clock.now);
+    let providerCalls = 0;
     const worker = new JobWorker(h.service, {
-      conversation: { turn: async () => ({ reply: "次へ", resolved: false, answer: null }) },
+      conversation: { turn: async () => {
+        providerCalls++;
+        return { reply: "次へ", resolved: false, answer: null };
+      } },
     });
-    let current = s;
-    for (let i = 0; i < 89; i++) {
-      if (i > 0 && i % 29 === 0) {
-        await h.call("POST", `/v1/requests/${current.id}/call`, current.d.device_token, { event: "hangup" });
-        h.advance(60_000);
-        const next = await h.call("POST", "/v1/requests", "agent-alice", { question: "次の質問", priority: "high", delivery_mode: "call" });
-        const id = next.body.request.id as string;
-        await h.call("POST", `/v1/requests/${id}/call`, current.d.device_token, { event: "answer" });
-        current = { ...current, id, turn: async (text = "はい", turnId = crypto.randomUUID()) => {
-          const response = await h.call("POST", `/v1/requests/${id}/call`, current.d.device_token, { event: "turn", text, turn_id: turnId, async: true });
-          return { ...response, turnId };
-        } };
-      }
-      const id = crypto.randomUUID();
-      expect((await current.turn("はい", id)).status).toBe(202);
-      expect((await current.turn("はい", id)).status).toBe(202);
+    const first = await h.setup();
+    const accept = async (call: typeof first) => {
+      const result = await call.turn();
+      expect(result.status).toBe(202);
+      expect((await call.turn("はい", result.turnId)).status).toBe(202);
       expect(await worker.runOnce("turn")).toBe(true);
-    }
-    expect((await current.turn("はい")).body.error.code).toBe("account_banned");
-    expect((await h.db.transaction("alice", (tx) => tx.get("ban", "current")))?.reason).toBe("voice_velocity");
+      h.advance(15_000);
+      return result.turnId;
+    };
+    for (let i = 0; i < 15; i++) await accept(first);
+    await h.call("POST", `/v1/requests/${first.id}/call`, first.d.device_token, { event: "hangup" });
+    const second = await h.setup();
+    expect(second.d.device_token).not.toBe(first.d.device_token);
+    for (let i = 0; i < 14; i++) await accept(second);
+    const lastTurnId = await accept(second);
+    expect((await second.turn("はい", lastTurnId)).status).toBe(200);
+    const overBudget = await second.turn();
+    expect(overBudget.status).toBe(409);
+    expect(overBudget.body.error.code).toBe("call_ended");
+    expect(await worker.runOnce("turn")).toBe(false);
+    expect(providerCalls).toBe(30);
+    expect(await h.db.isBanned("alice")).toBe(false);
+
+    const ask = () => h.call("POST", "/v1/requests", "agent-alice", {
+      question: "ご確認ください", priority: "high", delivery_mode: "call",
+    });
+    const blocked = await ask();
+    expect(blocked.body.request.delivery_mode).toBe("text");
+    expect(blocked.body.request.call).toBeNull();
+    const updated = await h.call("PATCH", `/v1/requests/${blocked.body.request.id}`, "agent-alice", {
+      priority: "urgent", delivery_mode: "call",
+    });
+    expect(updated.body.request.delivery_mode).toBe("text");
+    const reply = await h.call("POST", `/v1/requests/${second.id}/answer`, second.d.device_token, {
+      text: "確認しました", input_method: "text",
+    });
+    expect(reply.body.request).toMatchObject({ status: "answered", delivery_mode: "text" });
+    const other = await h.setup("bob");
+    expect((await other.turn()).status).toBe(202);
+    expect(await worker.runOnce("turn")).toBe(true);
+
+    h.advance(firstAt + hour - h.clock.now - 1);
+    expect((await ask()).body.request.delivery_mode).toBe("text");
+    h.advance(1);
+    const recovered = await h.setup();
+    expect((await recovered.turn()).status).toBe(202);
+    expect(await worker.runOnce("turn")).toBe(true);
+    expect((await recovered.turn()).body.error.code).toBe("call_ended");
   });
   test("machine-like distinct turn IDs during one pending model call trigger a durable ban", async () => {
     const h = harness(), s = await h.setup();

@@ -33,16 +33,16 @@ export interface VoiceConfig {
 /** Store configuration is shared, but voice enrollment works without a purchase. */
 export function loadVoiceConfig(env: Record<string, string | undefined>, send?: typeof fetch): VoiceConfig {
   const config: VoiceConfig = {};
-  const team = env.VOICE_APPLE_TEAM_ID ?? env.APPLE_TEAM_ID;
-  const bundle = env.VOICE_APPLE_BUNDLE_ID ?? env.APPLE_IAP_BUNDLE_ID;
+  const team = env.VOICE_APPLE_TEAM_ID?.trim() || env.APPLE_TEAM_ID?.trim();
+  const bundle = env.VOICE_APPLE_BUNDLE_ID?.trim() || env.APPLE_IAP_BUNDLE_ID?.trim();
   if (team && bundle) {
-    const environments = (env.VOICE_APP_ATTEST_ENVIRONMENTS ?? env.APPLE_APP_ATTEST_ENVIRONMENTS ?? "production").split(",").map((item) => item.trim());
+    const environments = (env.VOICE_APP_ATTEST_ENVIRONMENTS?.trim() || env.APPLE_APP_ATTEST_ENVIRONMENTS?.trim() || "production").split(",").map((item) => item.trim());
     if (!environments.length || environments.some((item) => item !== "production" && item !== "development"))
       throw new Error("VOICE_APP_ATTEST_ENVIRONMENTS is invalid");
     config.apple = { appId: `${team}.${bundle}`, environments: environments as ("production" | "development")[] };
   }
-  const packageName = env.VOICE_ANDROID_PACKAGE_NAME ?? env.GOOGLE_PLAY_PACKAGE_NAME;
-  const account = env.VOICE_GOOGLE_SERVICE_ACCOUNT_JSON ?? env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON;
+  const packageName = env.VOICE_ANDROID_PACKAGE_NAME?.trim() || env.GOOGLE_PLAY_PACKAGE_NAME?.trim();
+  const account = env.VOICE_GOOGLE_SERVICE_ACCOUNT_JSON?.trim() || env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON?.trim();
   if (packageName && account) {
     let serviceAccount;
     try { serviceAccount = parseServiceAccount(account); }

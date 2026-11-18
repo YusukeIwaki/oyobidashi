@@ -43,6 +43,7 @@ GoogleService-Info.plist
 
 # ローカルの一時検証
 /cloud/test/abuse-probe.test.ts
+/cloud/test/abuse-probe.local.ts
 
 # iOS
 ios/**/.build/

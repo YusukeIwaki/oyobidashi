@@ -59,7 +59,7 @@ struct SettingsView: View {
                     LabeledContent("バージョン", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-")
                 }
             }
-            .task(id: model.credentials?.endpoint) { await billingStore.refreshAndSync() }
+            .task(id: model.credentials) { await billingStore.refreshAndSync() }
             .task(id: billingStore.status?.expiresAt) { await billingStore.refreshAtExpiration() }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { Task { await billingStore.refreshAndSync() } }
@@ -100,7 +100,7 @@ struct SettingsView: View {
     }
 
     private var isOyobidashiCloud: Bool {
-        model.credentials?.endpoint.host.lowercased() == "api.oyobidashi.me"
+        model.credentials?.endpoint.isOfficialCloud == true
     }
 
     private var connectionText: String {

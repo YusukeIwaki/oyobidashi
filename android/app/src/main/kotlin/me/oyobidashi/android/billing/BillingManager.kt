@@ -132,12 +132,15 @@ class BillingManager(
                     refreshInternal(client)
                     val plan = monthlyPlan ?: return@withFeedback
                     if (api() !== client || _state.value.status?.active != false) return@withFeedback
+                    val accountId = _state.value.status?.purchaseAccountId
+                        ?: error("purchase account unavailable")
                     val params = BillingFlowParams.ProductDetailsParams.newBuilder()
                         .setProductDetails(plan.details)
                         .setOfferToken(plan.offerToken)
                         .build()
                     val flowParams = BillingFlowParams.newBuilder()
                         .setProductDetailsParamsList(listOf(params))
+                        .setObfuscatedAccountId(accountId)
                         .build()
                     purchaseApi = client
                     val result = try {

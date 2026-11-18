@@ -43,10 +43,10 @@ internal fun PlanDialog(
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (!status.active) {
                     Text("FREE", style = MaterialTheme.typography.titleMedium)
-                    Text(Texts.BILLING_INACTIVE)
+                    Text(Texts.billingVoiceTraining(status.voiceTraining?.free))
                     Text("PLUS", style = MaterialTheme.typography.titleMedium)
                 }
-                Text(Texts.BILLING_ACTIVE)
+                Text(Texts.billingVoiceTraining(status.voiceTraining?.plus))
                 if (status.active) {
                     val expiry = Texts.billingExpiry(status.expiresAt)
                     if (expiry.isNotEmpty()) Text(expiry)

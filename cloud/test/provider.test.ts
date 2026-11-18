@@ -6,6 +6,7 @@ import {
   configuredConversations,
   modelTranscript,
   ProviderFailure,
+  voiceModels,
 } from "../src/provider.ts";
 
 const request: RequestObject = {
@@ -457,7 +458,7 @@ describe.each(["anthropic", "meta"] as const)(
       const seen: { url: string; model: string; header: string | null }[] =
         [];
       const conversations = configuredConversations(
-        env("free-model"),
+        voiceModels(env("free-model"), true),
         fetcher(async (u, init) => {
           seen.push({
             url: String(u),
@@ -489,19 +490,37 @@ describe.each(["anthropic", "meta"] as const)(
       ]);
     });
     test("unset VOICE_MODEL_FREE yields no free provider", () => {
-      const conversations = configuredConversations(env());
+      const conversations = configuredConversations(voiceModels(env(), true));
       expect(conversations?.standard).toBeDefined();
       expect(conversations?.free).toBeUndefined();
     });
     test("empty VOICE_MODEL_FREE yields no free provider", () => {
-      const conversations = configuredConversations(env(""));
+      const conversations = configuredConversations(voiceModels(env(""), true));
       expect(conversations?.standard).toBeDefined();
       expect(conversations?.free).toBeUndefined();
     });
     test("identical VOICE_MODEL_FREE yields no free provider", () => {
-      const conversations = configuredConversations(env("standard-model"));
+      const conversations = configuredConversations(voiceModels(env("standard-model"), true));
       expect(conversations?.standard).toBeDefined();
       expect(conversations?.free).toBeUndefined();
     });
   },
 );
+
+test("voice training follows the model selected for each deployment and plan", () => {
+  const env = {
+    ANTHROPIC_MODEL: "standard",
+    VOICE_MODEL_FREE: "free",
+    VOICE_STANDARD_TRAINING: "0",
+    VOICE_FREE_TRAINING: "1",
+  };
+  const official = voiceModels(env, true);
+  expect(official.freeModel).toBe("free");
+  expect(official.training).toEqual({ free: true, plus: false });
+  const selfHosted = voiceModels(env, false);
+  expect(selfHosted.freeModel).toBeUndefined();
+  expect(selfHosted.training).toEqual({ free: false, plus: false });
+  expect(voiceModels({ ...env, VOICE_MODEL_FREE: "standard" }, true).training)
+    .toEqual({ free: false, plus: false });
+  expect(voiceModels({}, false).training).toEqual({ free: null, plus: null });
+});

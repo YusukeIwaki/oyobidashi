@@ -1,3 +1,15 @@
+export const OFFICIAL_CLOUD_ORIGIN = "https://api.oyobidashi.me";
+
+export function requiresVoiceProof(
+  env: Record<string, string | undefined>,
+  publicUrl?: string,
+) {
+  const value = env.VOICE_REQUIRE_DEVICE_PROOF?.trim();
+  if (value && value !== "0" && value !== "1")
+    throw new Error("VOICE_REQUIRE_DEVICE_PROOF must be 0 or 1");
+  return publicUrl === OFFICIAL_CLOUD_ORIGIN || value === "1";
+}
+
 export type CloudConfig = ReturnType<typeof cloudConfig>;
 export function cloudConfig(
   env: Record<string, string | undefined> = process.env,

@@ -35,6 +35,8 @@ export type Principal =
   | { uid: string; role: "device"; deviceId: string; tokenHash: string };
 const priorities = ["low", "normal", "high", "urgent"] as const;
 const modes = ["auto", "actions", "text", "call"] as const;
+const VOICE_TURNS_PER_HOUR = 30;
+const VOICE_WINDOW_MS = 60 * 60_000;
 const uuid =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const publicDevice = (d: Device) => ({
@@ -50,8 +52,10 @@ export class CloudService {
     readonly bus: WakeBus,
     readonly now: () => number = Date.now,
   ) {}
-  /** Set by deployments whose free voice model trains on conversations. */
-  freeVoiceTrains = false;
+  voiceTrainingPolicy: { free: boolean | null; plus: boolean | null } = {
+    free: null,
+    plus: null,
+  };
   voiceProofRequired = false;
   async run<T>(p: Principal, fn: (tx: Transaction) => Promise<T>): Promise<T> {
     return this.db.transaction(p.uid, async (tx) => {
@@ -90,25 +94,9 @@ export class CloudService {
     q.count++;
     await tx.put("quota", key, q, (window + 1) * 60_000);
   }
-  /** Counts only distinct, accepted speech turns. Retries never increment it. */
-  private async voiceAbuse(tx: Transaction, text: string) {
-    const minute = Math.floor(this.now() / 60_000);
-    const usage = (await tx.get("voice_usage", "current")) ?? { buckets: [] };
-    usage.buckets = usage.buckets.filter((bucket) => bucket.minute >= minute - 9);
-    let bucket = usage.buckets.find((item) => item.minute === minute);
-    if (!bucket) {
-      bucket = { minute, turns: 0, longTurns: 0 };
-      usage.buckets.push(bucket);
-    }
-    bucket.turns++;
-    if (Array.from(text).length > 2000) bucket.longTurns++;
-    await tx.put("voice_usage", "current", usage, this.now() + 11 * 60_000);
-    const turns = usage.buckets.reduce((sum, item) => sum + item.turns, 0);
-    const longTurns = usage.buckets.filter((item) => item.minute >= minute - 4)
-      .reduce((sum, item) => sum + item.longTurns, 0);
-    const reason = turns >= 90 ? "voice_velocity" : longTurns >= 3 ? "voice_oversize" : null;
-    if (reason) await tx.put("ban", "current", { at: this.now(), reason });
-    return reason;
+  private async recentVoiceTurns(tx: Transaction, now: number) {
+    const usage = await tx.get("voice_turn_usage", "current");
+    return (usage?.recent ?? []).filter((turn) => turn.at > now - VOICE_WINDOW_MS);
   }
 
   /** Distinct turn IDs sent faster than a person can speak, including while a turn is pending. */
@@ -135,10 +123,10 @@ export class CloudService {
   }
   /** True when this owner's voice calls may be used for model training. */
   async voiceTraining(tx: Transaction) {
-    return (
-      this.freeVoiceTrains &&
-      !entitled(await tx.get("entitlement", "current"), this.now())
-    );
+    const { free, plus } = this.voiceTrainingPolicy;
+    if (free === plus) return free === true;
+    const active = entitled(await tx.get("entitlement", "current"), this.now());
+    return (active ? plus : free) === true;
   }
   async oauthAttempt(tx: Transaction) {
     await this.quota(tx, "oauth_authorize", 20);
@@ -289,6 +277,9 @@ export class CloudService {
     requested: RequestedMode,
   ) {
     const now = this.now();
+    if (requested === "call" && !r.call &&
+        (await this.recentVoiceTurns(tx, now)).length >= VOICE_TURNS_PER_HOUR)
+      return "text";
     const presence = (await tx.list("presence", {}, 33)).map((p) =>
       p.until && Date.parse(p.until) <= now
         ? { ...p, availability: "available" as const }
@@ -653,15 +644,32 @@ export class CloudService {
       return { status: 403, body: { error: { code: "account_banned", message: "このアカウントは利用を停止しました。" } } };
     if (liveTurn(c.turn))
       return { status: 409, body: { error: { code: "turn_in_progress", message: "応答を準備しています。少しお待ちください。" } } };
-    if ((c.turn_count ?? 0) >= 30)
-      throw conflict("call_too_long", "テキストで会話を続けてください。");
     if (b.async !== true)
       throw conflict(
         "client_upgrade_required",
         "音声通話にはアプリの更新が必要です。テキストで返信できます。",
       );
-    if (await this.voiceAbuse(tx, text!))
+    const now = this.now();
+    const recent = await this.recentVoiceTurns(tx, now);
+    if (recent.length >= VOICE_TURNS_PER_HOUR) {
+      await this.endCall(tx, r, "failed", true);
+      await this.save(tx, r, "fallback");
+      return {
+        status: 409,
+        body: { error: { code: "call_ended", message: "直近1時間の音声利用の上限に達しました。テキストで返信できます。" } },
+      };
+    }
+    if ((c.turn_count ?? 0) >= 30)
+      throw conflict("call_too_long", "テキストで会話を続けてください。");
+    const oversized = Array.from(text!).length > 2000;
+    const fiveMinuteStart = Math.floor(now / 60_000) * 60_000 - 4 * 60_000;
+    if (oversized && recent.filter((turn) => turn.oversized && turn.at >= fiveMinuteStart).length >= 2) {
+      await tx.put("ban", "current", { at: now, reason: "voice_oversize" });
       return { status: 403, body: { error: { code: "account_banned", message: "このアカウントは利用を停止しました。" } } };
+    }
+    // Admission, turn creation and the model job commit together. Replays return above.
+    recent.push({ at: now, oversized });
+    await tx.put("voice_turn_usage", "current", { recent }, now + VOICE_WINDOW_MS);
     c.turn_count = (c.turn_count ?? 0) + 1;
     const t: Turn = {
       id: turnId!,
@@ -673,11 +681,10 @@ export class CloudService {
       reply: null,
       resolved: false,
       error: null,
-      deadline: Math.min(this.now() + 90_000, Date.parse(r.expires_at)),
+      deadline: Math.min(now + 90_000, Date.parse(r.expires_at)),
     };
-    await this.quota(tx, "turn", 60);
     c.turn = turnView(t);
-    c.updated_at = iso(this.now());
+    c.updated_at = iso(now);
     // Save only once, in the same database transaction as the job. The user text
     // is appended by successful completion, so retries never duplicate history.
     await tx.put("turn", t.id, t);
@@ -688,7 +695,7 @@ export class CloudService {
       requestId: id,
       payload: { turnId: t.id },
       deadline: t.deadline,
-      available: this.now(),
+      available: now,
     });
     return { status: 202, body: this.envelope(r, t) };
   }

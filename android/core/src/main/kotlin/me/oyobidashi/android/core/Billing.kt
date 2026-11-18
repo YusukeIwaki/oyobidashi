@@ -27,6 +27,8 @@ data class BillingStatus(
     @SerialName("active_stores") val activeStores: Set<String>? = null,
     val apple: BillingProducts? = null,
     val google: BillingProducts? = null,
+    @SerialName("purchase_account_id") val purchaseAccountId: String? = null,
+    @SerialName("voice_training") val voiceTraining: BillingVoiceTraining? = null,
 ) {
     val expiresInstant: Instant? get() = parseTimestamp(expiresAt)
 
@@ -35,6 +37,12 @@ data class BillingStatus(
         val DISABLED: BillingStatus = BillingStatus()
     }
 }
+
+@Serializable
+data class BillingVoiceTraining(
+    val free: Boolean? = null,
+    val plus: Boolean? = null,
+)
 
 /** POST /v1/billing/challenge のレスポンス。challenge は単回・5分間だけ有効。 */
 @Serializable

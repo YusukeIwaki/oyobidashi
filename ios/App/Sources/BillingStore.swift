@@ -34,13 +34,18 @@ final class BillingStore: ObservableObject {
     }
 
     private var client: RelayClient? {
-        model.credentials.map { RelayClient(endpoint: $0.endpoint, deviceToken: $0.deviceToken) }
+        guard let credentials = model.credentials, credentials.endpoint.isOfficialCloud else { return nil }
+        return RelayClient(endpoint: credentials.endpoint, deviceToken: credentials.deviceToken)
     }
 
     var productIDs: [String] { status?.apple?.productIDs ?? [] }
     var product: Product? { products.first }
     var planPresentation: BillingPlanPresentation {
-        BillingPlanPresentation(status: status ?? .disabled, renewalPeriods: renewalPeriods, isAssigned: isAssigned)
+        guard let displayedCredentials, displayedCredentials == model.credentials,
+              displayedCredentials.endpoint.isOfficialCloud else {
+            return BillingPlanPresentation(status: .disabled)
+        }
+        return BillingPlanPresentation(status: status ?? .disabled, renewalPeriods: renewalPeriods, isAssigned: isAssigned)
     }
 
     func start() {
@@ -128,13 +133,23 @@ final class BillingStore: ObservableObject {
         await refreshAndSync()
     }
 
-    func purchase(using startPurchase: @MainActor (Product) async throws -> Product.PurchaseResult) async {
-        guard let product, let credentials = model.credentials, !isWorking else { return }
+    func purchase(using startPurchase: @MainActor (Product, UUID) async throws -> Product.PurchaseResult) async {
+        guard let product, let credentials = model.credentials, displayedCredentials == credentials,
+              let client, !isWorking else { return }
         isWorking = true
         clearFeedback()
         defer { isWorking = false }
         do {
-            switch try await startPurchase(product) {
+            let latest = try await client.billingStatus()
+            guard model.credentials == credentials else { return }
+            statusRevision += 1
+            status = latest
+            guard latest.enabled, !latest.active, latest.apple?.productIDs.contains(product.id) == true else { return }
+            guard let accountID = latest.purchaseAccountID else {
+                errorMessage = "購入に必要なアカウント情報を取得できませんでした。"
+                return
+            }
+            switch try await startPurchase(product, accountID) {
             case .success(let verification):
                 guard case .verified = verification else {
                     errorMessage = "購入を確認できませんでした"
@@ -152,24 +167,26 @@ final class BillingStore: ObservableObject {
                 break
             }
         } catch {
-            errorMessage = Self.message(for: error)
+            if model.credentials == credentials { errorMessage = Self.message(for: error) }
         }
     }
 
     func restore() async {
-        guard !isWorking else { return }
+        guard planPresentation.isEnabled, let credentials = model.credentials, !isWorking else { return }
         isWorking = true
         clearFeedback()
         defer { isWorking = false }
         do {
             try await AppStore.sync()
+            guard model.credentials == credentials else { return }
             await refreshAndSync()
+            guard model.credentials == credentials else { return }
             if errorMessage == nil && productErrorMessage == nil {
                 let restored = status?.active == true && (status?.activeStores?.contains("apple") ?? true)
                 noticeMessage = restored ? "購入情報を確認しました。" : "App Storeで復元できる購入は見つかりませんでした。"
             }
         } catch {
-            errorMessage = Self.message(for: error)
+            if model.credentials == credentials { errorMessage = Self.message(for: error) }
         }
     }
 
@@ -200,9 +217,9 @@ final class BillingStore: ObservableObject {
     }
 
     private func performSync(including purchase: VerificationResult<Transaction>?) async {
-        let credentials = model.credentials
-        if status == nil { await refresh() }
-        guard let credentials, model.credentials == credentials,
+        guard let credentials = model.credentials, credentials.endpoint.isOfficialCloud else { return }
+        if status == nil || displayedCredentials != credentials { await refresh() }
+        guard model.credentials == credentials, displayedCredentials == credentials,
               let client, let status, status.enabled, let apple = status.apple else { return }
         let ids = Set(apple.productIDs)
         var jws: [String] = []

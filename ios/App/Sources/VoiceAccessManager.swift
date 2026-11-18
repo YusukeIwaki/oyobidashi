@@ -9,7 +9,7 @@ actor VoiceAccessManager {
 
     func token(for credentials: Credentials) async throws -> String? {
         let client = RelayClient(endpoint: credentials.endpoint, deviceToken: credentials.deviceToken)
-        guard let status = try await client.voiceStatus() else { return nil } // LAN relay
+        guard let status = try await client.voiceStatus() else { return nil }
         guard status.enabled && status.supported && status.platform == "ios" else { throw RelayError.forbidden }
         let scope = credentials.endpoint.description + ":" + status.uid + ":" + status.deviceID
         if let cached, cached.scope == scope, cached.expires > Date().addingTimeInterval(30) {

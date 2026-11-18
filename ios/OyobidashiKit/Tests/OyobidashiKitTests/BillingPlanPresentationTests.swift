@@ -6,7 +6,7 @@ final class BillingPlanPresentationTests: XCTestCase {
     private var end: Date { now.addingTimeInterval(86_400) }
 
     private func paid(_ periods: [BillingRenewalPeriod] = [], assigned: Bool = false, expiresAt: Date? = nil) -> BillingPlanPresentation {
-        BillingPlanPresentation(status: .init(enabled: true, active: true, expiresAt: expiresAt ?? end), renewalPeriods: periods, isAssigned: assigned, now: now)
+        BillingPlanPresentation(status: .init(enabled: true, active: true, expiresAt: expiresAt ?? end, voiceTraining: .init(free: true, plus: false)), renewalPeriods: periods, isAssigned: assigned, now: now)
     }
 
     func testDisabledDeploymentDoesNotOfferPlansOrRestore() {
@@ -17,9 +17,9 @@ final class BillingPlanPresentationTests: XCTestCase {
     }
 
     func testFreePlanShowsRequestedSummaryAndUpgradeAction() {
-        let p = BillingPlanPresentation(status: .init(enabled: true), now: now)
+        let p = BillingPlanPresentation(status: .init(enabled: true, voiceTraining: .init(free: true, plus: false)), now: now)
         XCTAssertEqual(p.title, "FREE")
-        XCTAssertEqual(p.privacyNotice, "通話の内容がAIモデルの学習に使われます。")
+        XCTAssertEqual(p.privacyNotice, "通話の内容がAIモデルの学習に使われる場合があります。")
         XCTAssertEqual(p.changeTitle, "変更")
         XCTAssertEqual(p.restoreTitle, "購入を復元")
         XCTAssertEqual(p.actionTitle(for: .free), "現在のプラン")
@@ -32,7 +32,7 @@ final class BillingPlanPresentationTests: XCTestCase {
     func testRenewingPlanShowsPaidSummaryAndRenewalDate() {
         let p = paid([.init(expiresAt: end, willAutoRenew: true)])
         XCTAssertEqual(p.title, "PLUS")
-        XCTAssertEqual(p.privacyNotice, "通話の内容がAIモデルの学習に使われません。")
+        XCTAssertEqual(p.privacyNotice, "通話の内容はAIモデルの学習に使われません。")
         XCTAssertEqual(p.nextRenewalDate, end)
         XCTAssertEqual(p.periodDescription { _ in "11月30日" }, "次回更新日：11月30日")
         XCTAssertNil(p.freePlanStartsAt)
@@ -81,7 +81,7 @@ final class BillingPlanPresentationTests: XCTestCase {
     func testExpiredServerStatusShowsFreeDespiteCachedRenewalInformation() {
         let p = BillingPlanPresentation(status: .init(enabled: true, active: false, expiresAt: end), renewalPeriods: [.init(expiresAt: end, willAutoRenew: false)], now: now)
         XCTAssertEqual(p.title, "FREE")
-        XCTAssertEqual(p.privacyNotice, "通話の内容がAIモデルの学習に使われます。")
+        XCTAssertEqual(p.privacyNotice, "通話の学習利用は確認できません。")
         XCTAssertNil(p.freePlanStartsAt)
         XCTAssertNil(p.periodDescription { _ in "終了日" })
         XCTAssertEqual(p.action(for: .standard), .purchase)
@@ -93,6 +93,14 @@ final class BillingPlanPresentationTests: XCTestCase {
         XCTAssertNil(p.nextRenewalDate)
         XCTAssertEqual(p.periodDescription { _ in "11月30日" }, "現在の有効期限：11月30日")
         XCTAssertEqual(p.action(for: .free), .manageSubscriptions)
+    }
+
+    func testBothPlansCanShareTheSameTrainingTerms() throws {
+        let json = Data(#"{"enabled":true,"voice_training":{"free":false,"plus":false}}"#.utf8)
+        let status = try OyobidashiJSON.makeDecoder().decode(BillingStatus.self, from: json)
+        let p = BillingPlanPresentation(status: status, now: now)
+        XCTAssertEqual(p.privacyNotice(for: .free), "通話の内容はAIモデルの学習に使われません。")
+        XCTAssertEqual(p.privacyNotice(for: .standard), p.privacyNotice(for: .free))
     }
 
     func testMissingRenewalDoesNotClaimCancellation() {

@@ -42,7 +42,7 @@ class VoiceAccessManager(
     }
 
     private suspend fun issueToken(): String? {
-        val status = api.voiceStatus() ?: return null // LAN relay
+        val status = api.voiceStatus() ?: return null
         if (!status.enabled || !status.supported || status.platform != "android")
             throw RelayException.Protocol("この端末ではクラウド音声を利用できません")
         val scope = baseUrl + ":" + status.uid + ":" + status.deviceId

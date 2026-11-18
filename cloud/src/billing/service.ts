@@ -6,7 +6,8 @@ import {
   entitled,
   iso,
   newerAppleProof,
-  type EntitlementSource,
+  type AppleBillingProof,
+  type GoogleBillingProof,
   type Transaction,
 } from "../types.ts";
 import {
@@ -15,6 +16,7 @@ import {
   verifyAssertion,
   verifyAttestation,
 } from "./apple.ts";
+import { purchaseAccountId } from "./account.ts";
 import { GooglePlay } from "./google.ts";
 
 export interface BillingConfig {
@@ -110,15 +112,6 @@ const b64 = (value: string | null) => {
 const sha256 = (value: string | Uint8Array) =>
   createHash("sha256").update(value).digest();
 
-interface Update {
-  source: string;
-  value: EntitlementSource;
-  revoked: boolean;
-  periodEnd?: number;
-  signedDate?: number;
-  linkedSource?: string;
-}
-
 export class Billing {
   constructor(
     readonly service: CloudService,
@@ -139,6 +132,8 @@ export class Billing {
     const expires = Math.max(0, ...activeSources.map((source) => source.expires));
     return {
       enabled: true,
+      voice_training: this.service.voiceTrainingPolicy,
+      purchase_account_id: purchaseAccountId(tx.uid),
       active: entitled(e, now),
       expires_at: expires > now ? iso(expires) : null,
       active_stores: [...new Set(activeSources.map((source) => source.store))].sort(),
@@ -248,26 +243,26 @@ export class Billing {
       }
       await tx.put("attest", p.deviceId, key);
     });
-    const updates = new Map<string, Update>();
+    const updates = new Map<string, AppleBillingProof>();
     for (const jws of payload.items) {
-      const u = await this.appleTransaction(jws);
-      const previous = u && updates.get(u.source);
-      if (u && (!previous || newerAppleProof(previous as Required<Update> & { periodEnd: number; signedDate: number }, u as Required<Update> & { periodEnd: number; signedDate: number })))
-        updates.set(u.source, u);
+      let transaction: Record<string, unknown>;
+      try {
+        transaction = await verifyAppleJws(jws as string, this.now(), apple.storeRoot);
+      } catch {
+        continue;
+      }
+      const update = this.appleTransaction(transaction);
+      if (update && newerAppleProof(updates.get(update.source) ?? null, update.proof))
+        updates.set(update.source, update.proof);
     }
-    for (const u of updates.values()) await this.hold(p.uid, u);
+    for (const [source, proof] of updates)
+      await this.service.db.applyAppleBilling(source, p.uid, proof, this.now());
     return this.service.db.transaction(p.uid, (tx) => this.status(tx));
   }
 
-  /** Verified, relevant StoreKit transaction, or null when it must be ignored. */
-  private async appleTransaction(jws: unknown, graceUntil = 0): Promise<Update | null> {
+  /** Accepts only verified, relevant StoreKit transactions. */
+  private appleTransaction(t: Record<string, unknown>, graceUntil = 0): { source: string; proof: AppleBillingProof } | null {
     const apple = this.config.apple!;
-    let t: Record<string, unknown>;
-    try {
-      t = await verifyAppleJws(jws as string, this.now(), apple.storeRoot);
-    } catch {
-      return null;
-    }
     if (
       t.bundleId !== apple.bundleId ||
       typeof t.productId !== "string" ||
@@ -283,86 +278,26 @@ export class Billing {
       return null;
     const revoked = t.revocationDate !== undefined && t.revocationDate !== null;
     const shared = t.inAppOwnershipType !== "PURCHASED";
-    // An assigned or family-shared transaction belongs to one Apple Account.
-    // A copied JWS must move that seat, never fan it out to arbitrary UIDs.
+    // Key a shared or assigned seat by the beneficiary, independently of the buyer.
     if (shared && (typeof t.appTransactionId !== "string" || !/^[0-9]{1,40}$/.test(t.appTransactionId)))
       return null;
     return {
       source: `apple:${t.environment}:${t.originalTransactionId}${shared ? `:account:${t.appTransactionId}` : ""}`,
-      revoked,
-      periodEnd: t.expiresDate,
-      signedDate: t.signedDate,
-      value: {
-        store: "apple",
-        product_id: t.productId,
-        expires: revoked ? 0 : Math.max(t.expiresDate, graceUntil),
-        // Family-shared and organization-assigned seats have no single purchaser.
-        shared,
+      proof: {
+        revoked,
+        periodEnd: t.expiresDate,
+        signedDate: t.signedDate,
+        ...(!shared && t.appAccountToken != null
+          ? { accountId: typeof t.appAccountToken === "string" ? t.appAccountToken.toLowerCase() : "" }
+          : {}),
+        value: {
+          store: "apple",
+          product_id: t.productId,
+          expires: revoked ? 0 : Math.max(t.expiresDate, graceUntil),
+          shared,
+        },
       },
     };
-  }
-
-  /** Gives `uid` the subscription, or takes it away when it is revoked or lapsed. */
-  private async hold(uid: string, u: Update) {
-    const db = this.service.db;
-    if (u.value.store === "apple") {
-      await db.applyAppleBilling(u.source, uid, {
-        value: u.value, periodEnd: u.periodEnd!, signedDate: u.signedDate!, revoked: u.revoked,
-      });
-      return;
-    }
-    if (u.value.expires <= this.now()) {
-      if (u.revoked) await db.billingRelease(u.source, uid);
-      await this.write(uid, u, !u.revoked && await db.billingHeld(u.source, uid));
-      return;
-    }
-    if (u.value.store === "google") {
-      await db.applyGoogleBilling(u.source, uid, u.value, u.linkedSource);
-      return;
-    }
-    if (u.linkedSource) {
-      const oldHolders = await db.billingSupersede(u.linkedSource, u.source);
-      for (const other of oldHolders)
-        await this.write(other, { ...u, source: u.linkedSource }, false);
-    }
-    const displaced = await db.billingClaim(u.source, uid, !u.value.shared);
-    if (displaced === null) return;
-    await this.write(uid, u, true);
-    for (const other of displaced) await this.write(other, u, false);
-  }
-  /**
-   * Brings one owner's record in line with the claims table, which is the
-   * source of truth. Concurrent restores of one purchase therefore converge on
-   * the last claimant instead of removing it from everyone.
-   */
-  private async write(uid: string, u: Update, held: boolean) {
-    await this.service.db.transaction(uid, async (tx) => {
-      const e = (await tx.get("entitlement", "current")) ?? { sources: {} };
-      if (!held && !e.sources[u.source]) return;
-      if (held && !u.revoked) e.sources[u.source] = u.value;
-      else delete e.sources[u.source];
-      // Lapsed sources are kept briefly so a late renewal notice still finds its holder.
-      for (const [k, s] of Object.entries(e.sources))
-        if (s.expires < this.now() - 60 * 86400_000) delete e.sources[k];
-      await tx.put("entitlement", "current", e);
-    });
-  }
-  /** Store notifications carry no user; they refresh whoever holds the subscription. */
-  private async refreshHolders(u: Update) {
-    if (u.value.store === "apple") {
-      await this.service.db.applyAppleBilling(u.source, null, {
-        value: u.value, periodEnd: u.periodEnd!, signedDate: u.signedDate!, revoked: u.revoked,
-      });
-      return;
-    }
-    if (u.linkedSource && !u.revoked && u.value.expires > this.now()) {
-      for (const uid of await this.service.db.billingHolders(u.linkedSource))
-        await this.service.db.applyGoogleBilling(u.source, uid, u.value, u.linkedSource);
-    }
-    for (const uid of await this.service.db.billingHolders(u.source)) {
-      if (u.revoked) await this.service.db.billingRelease(u.source, uid);
-      await this.write(uid, u, !u.revoked);
-    }
   }
 
   async syncGoogle(p: Extract<Principal, { role: "device" }>, body: Record<string, unknown>) {
@@ -380,8 +315,12 @@ export class Billing {
       for (const item of payload.items) {
         const purchaseToken = (item as { purchase_token?: unknown } | null)?.purchase_token;
         if (typeof purchaseToken !== "string" || purchaseToken.length > 2000) continue;
-        const u = await this.googlePurchase(purchaseToken, true);
-        if (u) await this.hold(p.uid, u);
+        const purchase = await this.googlePurchase(purchaseToken);
+        if (!purchase) continue;
+        const { source, acknowledged, proof } = purchase;
+        const active = await this.service.db.applyGoogleBilling(source, p.uid, proof, this.now());
+        if (active && !acknowledged)
+          await google.play.acknowledge(proof.value.product_id, purchaseToken);
       }
     } catch (e) {
       if (e instanceof VerificationError) throw failed();
@@ -390,7 +329,11 @@ export class Billing {
     }
     return this.service.db.transaction(p.uid, (tx) => this.status(tx));
   }
-  private async googlePurchase(purchaseToken: string, acknowledge: boolean): Promise<Update | null> {
+  private async googlePurchase(purchaseToken: string): Promise<{
+    source: string;
+    proof: GoogleBillingProof;
+    acknowledged: boolean;
+  } | null> {
     const google = this.config.google!;
     let purchase;
     try {
@@ -400,18 +343,19 @@ export class Billing {
       throw e;
     }
     if (!google.productIds.includes(purchase.productId)) return null;
-    if (acknowledge && purchase.expires > this.now() && !purchase.acknowledged)
-      await google.play.acknowledge(purchase.productId, purchaseToken);
     return {
       // The token is a bearer secret for the purchase; only its digest is stored.
       source: `google:${hash(purchaseToken)}`,
-      ...(purchase.linkedPurchaseToken ? { linkedSource: `google:${hash(purchase.linkedPurchaseToken)}` } : {}),
-      revoked: purchase.expires === 0,
-      value: {
-        store: "google",
-        product_id: purchase.productId,
-        expires: purchase.expires,
-        shared: false,
+      acknowledged: purchase.acknowledged,
+      proof: {
+        accountId: purchase.accountId,
+        ...(purchase.linkedPurchaseToken ? { linkedSource: `google:${hash(purchase.linkedPurchaseToken)}` } : {}),
+        value: {
+          store: "google",
+          product_id: purchase.productId,
+          expires: purchase.expires,
+          shared: false,
+        },
       },
     };
   }
@@ -430,16 +374,31 @@ export class Billing {
     }
     const data = notice.data as Record<string, unknown> | undefined;
     if (!data || data.bundleId !== apple.bundleId || !data.signedTransactionInfo) return;
+    let transaction: Record<string, unknown>;
+    try {
+      transaction = await verifyAppleJws(data.signedTransactionInfo as string, this.now(), apple.storeRoot);
+    } catch {
+      return;
+    }
+    if (typeof data.environment === "string" && data.environment !== transaction.environment) return;
     let grace = 0;
     if (data.signedRenewalInfo)
       try {
         const renewal = await verifyAppleJws(data.signedRenewalInfo as string, this.now(), apple.storeRoot);
-        if (typeof renewal.gracePeriodExpiresDate === "number") grace = renewal.gracePeriodExpiresDate;
+        // Renewal info may only extend the subscription it belongs to. A grace
+        // period signed for another transaction must never revive this one.
+        if (
+          renewal.originalTransactionId === transaction.originalTransactionId &&
+          renewal.environment === transaction.environment &&
+          renewal.autoRenewProductId === transaction.productId &&
+          typeof renewal.gracePeriodExpiresDate === "number"
+        )
+          grace = renewal.gracePeriodExpiresDate;
       } catch {
         /* the transaction alone still decides */
       }
-    const u = await this.appleTransaction(data.signedTransactionInfo, grace);
-    if (u) await this.refreshHolders(u);
+    const update = this.appleTransaction(transaction, grace);
+    if (update) await this.service.db.applyAppleBilling(update.source, null, update.proof, this.now());
   }
 
   async googleWebhook(authorization: string | null, body: Record<string, unknown>) {
@@ -452,13 +411,13 @@ export class Billing {
       throw new CloudError(401, "unauthorized", "invalid notification");
     }
     if (!token) return;
-    let u: Update | null;
+    let purchase;
     try {
       // The message is only a hint; Google's API is the source of truth.
-      u = await this.googlePurchase(token, false);
+      purchase = await this.googlePurchase(token);
     } catch {
       throw new CloudError(503, "temporarily_unavailable", "please retry");
     }
-    if (u) await this.refreshHolders(u);
+    if (purchase) await this.service.db.applyGoogleBilling(purchase.source, null, purchase.proof, this.now());
   }
 }

@@ -4,6 +4,7 @@ import { CloudApp } from "../src/app.ts";
 import { Billing, loadBillingConfig, type BillingConfig } from "../src/billing/service.ts";
 import { GooglePlay } from "../src/billing/google.ts";
 import { verifyAppleJws } from "../src/billing/apple.ts";
+import { OFFICIAL_CLOUD_ORIGIN } from "../src/config.ts";
 import { unauthorized } from "../src/errors.ts";
 import { JobWorker } from "../src/worker.ts";
 import { fakeAppAttest, fakeAppStore } from "./billing-fixtures.ts";
@@ -22,7 +23,7 @@ afterAll(() => attest.dispose());
 
 function setup(config: Partial<BillingConfig> = {}, database?: Database) {
   const h = harness(database);
-  h.service.freeVoiceTrains = true;
+  h.service.voiceTrainingPolicy = { free: true, plus: false };
   const billing = new Billing(h.service, {
     apple: {
       bundleId: BUNDLE,
@@ -57,7 +58,7 @@ function setup(config: Partial<BillingConfig> = {}, database?: Database) {
     headers: Record<string, string> = {},
   ) => {
     const response = (await app.fetch(
-      new Request(`http://localhost${path}`, {
+      new Request(`${OFFICIAL_CLOUD_ORIGIN}${path}`, {
         method,
         headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -128,6 +129,8 @@ describe("subscription billing", () => {
       active: false,
       expires_at: null,
       active_stores: [],
+      purchase_account_id: expect.any(String),
+      voice_training: { free: true, plus: false },
       apple: { product_ids: [PRODUCT] },
     });
     expect(await s.training("alice")).toBe(true);
@@ -155,6 +158,20 @@ describe("subscription billing", () => {
     expect((await s.call("GET", "/v1/billing", "agent-alice")).status).toBe(403);
     expect((await s.call("POST", "/v1/billing/challenge", "agent-alice", {})).status).toBe(403);
     expect((await s.call("POST", "/v1/billing/challenge", null, {})).status).toBe(401);
+  });
+
+  test("billing stays disabled on the legacy hostname even on the official deployment", async () => {
+    const s = setup();
+    const d = await s.h.pair();
+    const request = (path: string, method: string) =>
+      s.app.fetch(new Request(`https://oyobidashi.up.railway.app${path}`, {
+        method,
+        headers: { authorization: `Bearer ${d.device_token}` },
+        ...(method === "POST" ? { body: "{}" } : {}),
+      }));
+    expect(await (await request("/v1/billing", "GET"))?.json()).toEqual({ enabled: false });
+    expect((await request("/v1/billing/challenge", "POST"))?.status).toBe(404);
+    expect((await request("/v1/billing/webhooks/apple", "POST"))?.status).toBe(404);
   });
 
   test("a sync needs a fresh challenge, the attested key and a valid assertion", async () => {
@@ -290,16 +307,29 @@ describe("subscription billing", () => {
     await expect(verifyAppleJws(await s.transaction(), s.h.clock.now)).rejects.toThrow();
   });
 
-  test("a purchased subscription follows the account that last restored it", async () => {
+  test("an existing purchase remains with its registered owner when restored", async () => {
     const s = setup(),
       alice = await s.phone("alice"),
       bob = await s.phone("bob"),
       jws = await s.transaction();
     expect((await alice.sync([jws])).body.active).toBe(true);
-    expect((await bob.sync([jws])).body.active).toBe(true);
-    expect((await s.call("GET", "/v1/billing", alice.token)).body.active).toBe(false);
-    // An empty report never ends a subscription.
-    expect((await bob.sync([])).body.active).toBe(true);
+    expect((await bob.sync([jws])).body.active).toBe(false);
+    const replacement = await s.phone("alice");
+    expect((await replacement.sync([jws])).body.active).toBe(true);
+    expect((await alice.sync([])).body.active).toBe(true);
+  });
+
+  test("a StoreKit purchase with an account token first activates only for that account", async () => {
+    const s = setup(), alice = await s.phone("alice"), bob = await s.phone("bob");
+    const status = async (token: string) => (await s.call("GET", "/v1/billing", token)).body;
+    const accountId: string = (await status(alice.token)).purchase_account_id;
+    expect(accountId).toMatch(/^[0-9a-f-]{36}$/);
+    expect((await status(bob.token)).purchase_account_id).not.toBe(accountId);
+    const replacement = await s.phone("alice");
+    expect((await status(replacement.token)).purchase_account_id).toBe(accountId);
+    const jws = await s.transaction({ appAccountToken: accountId.toUpperCase() });
+    expect((await bob.sync([jws])).body.active).toBe(false);
+    expect((await replacement.sync([jws])).body.active).toBe(true);
   });
 
   test("a refunded transaction cannot be replayed by its owner or another account", async () => {
@@ -328,17 +358,17 @@ describe("subscription billing", () => {
     expect((await s.call("GET", "/v1/billing", phone.token)).body.expires_at).toBe(expected);
   });
 
-  test("one copied family or assigned JWS moves its seat instead of multiplying it", async () => {
+  test("a family or assigned seat stays with its registered owner", async () => {
     const s = setup(), alice = await s.phone("alice"), bob = await s.phone("bob");
     for (const ownership of ["FAMILY_SHARED", "ASSIGNED"]) {
       const shared = await s.transaction({ originalTransactionId: ownership === "ASSIGNED" ? "5000" : "6000",
         appTransactionId: "7000", inAppOwnershipType: ownership });
       expect((await alice.sync([shared])).body.active).toBe(true);
-      expect((await bob.sync([shared])).body.active).toBe(true);
-      expect((await s.call("GET", "/v1/billing", alice.token)).body.active).toBe(false);
+      expect((await bob.sync([shared])).body.active).toBe(false);
+      expect((await s.call("GET", "/v1/billing", alice.token)).body.active).toBe(true);
     }
     const missingOwnership = await s.transaction({ inAppOwnershipType: undefined });
-    expect((await alice.sync([missingOwnership])).body.active).toBe(false);
+    expect((await bob.sync([missingOwnership])).body.active).toBe(false);
   });
 
   test("organization-assigned and family-shared seats need no purchase on the device", async () => {
@@ -378,7 +408,7 @@ describe("subscription billing", () => {
     const renewed = s.h.clock.now + 31 * 86400_000;
     // Billing retry with a grace period keeps access until the grace period ends.
     const grace = s.h.clock.now + 5 * 86400_000;
-    await notify({ expiresDate: s.h.clock.now - 1 }, { gracePeriodExpiresDate: grace });
+    await notify({ expiresDate: s.h.clock.now - 1 }, { originalTransactionId: "1000", autoRenewProductId: PRODUCT, environment: "Production", gracePeriodExpiresDate: grace });
     expect(Date.parse((await s.call("GET", "/v1/billing", p.token)).body.expires_at)).toBe(grace);
     expect((await notify({ expiresDate: renewed })).status).toBe(204);
     expect(Date.parse((await s.call("GET", "/v1/billing", p.token)).body.expires_at)).toBe(renewed);
@@ -394,6 +424,40 @@ describe("subscription billing", () => {
         signedPayload: await fakeAppStore().sign({ data: {} }),
       })).status,
     ).toBe(401);
+  });
+
+  test("a grace period signed for another subscription does not revive an expired one", async () => {
+    const s = setup(),
+      p = await s.phone("alice");
+    await p.sync([await s.transaction({ expiresDate: s.h.clock.now + 1 })]);
+    s.h.advance(2);
+    expect((await s.call("GET", "/v1/billing", p.token)).body.active).toBe(false);
+    const grace = s.h.clock.now + 5 * 86400_000;
+    const notice = async (renewal: Record<string, unknown>) =>
+      s.call("POST", "/v1/billing/webhooks/apple", null, {
+        signedPayload: await store.sign({
+          notificationType: "DID_FAIL_TO_RENEW",
+          data: {
+            bundleId: BUNDLE,
+            environment: "Production",
+            signedTransactionInfo: await s.transaction({ expiresDate: s.h.clock.now - 1, signedDate: s.h.clock.now + 1 }),
+            signedRenewalInfo: await store.sign(renewal),
+          },
+        }),
+      });
+    // Another subscription's grace, another product's grace and another
+    // environment's grace all leave the expired subscription expired.
+    for (const renewal of [
+      { originalTransactionId: "9999", autoRenewProductId: PRODUCT, environment: "Production", gracePeriodExpiresDate: grace },
+      { originalTransactionId: "1000", autoRenewProductId: "other.product", environment: "Production", gracePeriodExpiresDate: grace },
+      { originalTransactionId: "1000", autoRenewProductId: PRODUCT, environment: "Sandbox", gracePeriodExpiresDate: grace },
+    ]) {
+      expect((await notice(renewal)).status).toBe(204);
+      expect((await s.call("GET", "/v1/billing", p.token)).body.active).toBe(false);
+    }
+    // The matching renewal info still extends its own subscription.
+    expect((await notice({ originalTransactionId: "1000", autoRenewProductId: PRODUCT, environment: "Production", gracePeriodExpiresDate: grace })).status).toBe(204);
+    expect(Date.parse((await s.call("GET", "/v1/billing", p.token)).body.expires_at)).toBe(grace);
   });
 
   test("a real-sized notification with renewal info is accepted; a device transaction stays bounded", async () => {
@@ -540,10 +604,9 @@ describe("Google Play billing", () => {
     expect(g.calls.some((c) => c.includes("/purchases/subscriptions/voice_monthly/tokens/tok:acknowledge"))).toBe(true);
     // The raw purchase token is not stored.
     expect(JSON.stringify([...(g.s.h.db as any).records.values()])).not.toContain("tok\"");
-    // Moves to the account that reports it next.
     const bob = await g.s.h.pair("bob", "android");
-    expect((await g.sync(bob.device_token, [{ product_id: "voice_monthly", purchase_token: "tok" }])).body.active).toBe(true);
-    expect((await g.s.call("GET", "/v1/billing", d.device_token)).body.active).toBe(false);
+    expect((await g.sync(bob.device_token, [{ purchase_token: "tok" }])).body.active).toBe(false);
+    expect((await g.s.call("GET", "/v1/billing", d.device_token)).body.active).toBe(true);
   });
 
   test("both platforms see the same owner's active subscription stores", async () => {
@@ -604,14 +667,50 @@ describe("Google Play billing", () => {
     }
   });
 
-  test("a linked Play purchase replaces the old token across accounts", async () => {
+  test("Play verifies the account ID before registering or acknowledging a purchase", async () => {
     const g = google(), alice = await g.s.h.pair("alice", "android"), bob = await g.s.h.pair("bob", "android");
-    g.state.purchases.old = active(g.s.h.clock.now);
-    g.state.purchases.new = active(g.s.h.clock.now + 86400_000, { linkedPurchaseToken: "old" });
+    const status = (await g.s.call("GET", "/v1/billing", alice.device_token)).body;
+    g.state.purchases.bound = active(g.s.h.clock.now, {
+      externalAccountIdentifiers: { obfuscatedExternalAccountId: status.purchase_account_id },
+    });
+    const purchases = [{ purchase_token: "bound" }];
+    expect((await g.sync(bob.device_token, purchases)).body.active).toBe(false);
+    expect(g.calls.some((c) => c.includes(":acknowledge"))).toBe(false);
+    expect((await g.sync(alice.device_token, purchases)).body.active).toBe(true);
+    expect(g.calls.some((c) => c.includes(":acknowledge"))).toBe(true);
+  });
+
+  test("a linked Play purchase can replace its predecessor only for the same owner", async () => {
+    const g = google(), alice = await g.s.h.pair("alice", "android"), bob = await g.s.h.pair("bob", "android");
+    const current = g.s.h.clock.now;
+    g.state.purchases.old = active(current);
+    g.state.purchases.new = active(current + 86400_000, { linkedPurchaseToken: "old" });
     expect((await g.sync(alice.device_token, [{ purchase_token: "old" }])).body.active).toBe(true);
-    expect((await g.sync(bob.device_token, [{ purchase_token: "new" }])).body.active).toBe(true);
-    expect((await g.s.call("GET", "/v1/billing", alice.device_token)).body.active).toBe(false);
+    expect((await g.sync(bob.device_token, [{ purchase_token: "new" }])).body.active).toBe(false);
+    expect(g.calls.some((c) => c.includes("/tokens/new:acknowledge"))).toBe(false);
+    expect((await g.sync(alice.device_token, [{ purchase_token: "new" }])).body.expires_at).toBe(
+      g.state.purchases.new.lineItems[0].expiryTime,
+    );
+    g.state.purchases.new = active(current, { subscriptionState: "SUBSCRIPTION_STATE_EXPIRED" });
+    expect((await g.sync(alice.device_token, [{ purchase_token: "new" }])).body.active).toBe(false);
     expect((await g.sync(alice.device_token, [{ purchase_token: "old" }])).body.active).toBe(false);
+    g.state.purchases.new = active(current);
+    expect((await g.sync(bob.device_token, [{ purchase_token: "new" }])).body.active).toBe(false);
+    expect((await g.sync(alice.device_token, [{ purchase_token: "new" }])).body.active).toBe(true);
+  });
+
+  test("a Play resubscription from the store uses the previous purchase owner after expiry", async () => {
+    const g = google(), alice = await g.s.h.pair("alice", "android"), bob = await g.s.h.pair("bob", "android");
+    const current = g.s.h.clock.now;
+    g.state.purchases.old = active(current);
+    await g.sync(alice.device_token, [{ purchase_token: "old" }]);
+    g.state.purchases.old = active(current, { subscriptionState: "SUBSCRIPTION_STATE_EXPIRED" });
+    expect((await g.sync(alice.device_token, [{ purchase_token: "old" }])).body.active).toBe(false);
+    g.state.purchases.new = active(current, {
+      outOfAppPurchaseContext: { expiredPurchaseToken: "old" },
+    });
+    expect((await g.sync(bob.device_token, [{ purchase_token: "new" }])).body.active).toBe(false);
+    expect((await g.sync(alice.device_token, [{ purchase_token: "new" }])).body.active).toBe(true);
   });
 
   test("integrity verdicts gate the sync", async () => {
@@ -654,6 +753,16 @@ describe("Google Play billing", () => {
     expect(g.calls.some((c) => c.includes(":acknowledge"))).toBe(false);
   });
 
+  test("a Play test purchase grants nothing and is not acknowledged", async () => {
+    const g = google(),
+      d = await g.s.h.pair("alice", "android");
+    g.state.purchases.testtok = active(g.s.h.clock.now, { testPurchase: {} });
+    const r = await g.sync(d.device_token, [{ product_id: "voice_monthly", purchase_token: "testtok" }]);
+    expect(r.status).toBe(200);
+    expect(r.body.active).toBe(false);
+    expect(g.calls.some((c) => c.includes(":acknowledge"))).toBe(false);
+  });
+
   test("Pub/Sub pushes without Google's signature are refused", async () => {
     const g = google();
     const r = await g.s.call("POST", "/v1/billing/webhooks/google", null, { message: { data: "" } }, {
@@ -664,7 +773,7 @@ describe("Google Play billing", () => {
 });
 
 describe.skipIf(!url)("subscription billing on real PostgreSQL", () => {
-  test("a linked Play token atomically removes the old owner's seat, even with a one-connection pool", async () => {
+  test("a linked Play token atomically replaces access for its recorded owner, even with a one-connection pool", async () => {
     const admin = postgres(url!, { max: 1, onnotice: () => {} });
     const schema = `oyobidashi_test_${crypto.randomUUID().replaceAll("-", "")}`;
     await admin.unsafe(`CREATE SCHEMA ${schema}`);
@@ -672,18 +781,21 @@ describe.skipIf(!url)("subscription billing on real PostgreSQL", () => {
     try {
       await db.migrate();
       const value = { store: "google" as const, product_id: "voice_monthly", expires: Date.now() + 86400_000, shared: false };
-      await db.applyGoogleBilling("google:old", "alice", value);
-      await Promise.all([
-        db.applyGoogleBilling("google:old", "alice", value),
-        db.applyGoogleBilling("google:new", "bob", value, "google:old"),
+      const now = Date.now();
+      await db.applyGoogleBilling("google:old", "alice", { value }, now);
+      const successor = { value, linkedSource: "google:old" };
+      const outcomes = await Promise.all([
+        db.applyGoogleBilling("google:old", "alice", { value }, now),
+        db.applyGoogleBilling("google:new", "bob", successor, now),
+        db.applyGoogleBilling("google:new", null, successor, now),
       ]);
-      await db.applyGoogleBilling("google:old", "alice", value);
-      expect(await db.billingHolders("google:old")).toEqual([]);
-      expect(await db.billingHolders("google:new")).toEqual(["bob"]);
+      expect(outcomes).toEqual([true, false, true]);
+      expect(await db.applyGoogleBilling("google:old", "alice", { value }, now)).toBe(false);
+      expect(await db.billingHolders("google:new")).toEqual(["alice"]);
       const alice = await db.transaction("alice", (tx) => tx.get("entitlement", "current"));
       const bob = await db.transaction("bob", (tx) => tx.get("entitlement", "current"));
-      expect(alice?.sources["google:old"]).toBeUndefined();
-      expect(bob?.sources["google:new"]).toEqual(value);
+      expect(alice?.sources).toEqual({ "google:new": value });
+      expect(bob).toBeNull();
     } finally {
       await db.close();
       await admin.unsafe(`DROP SCHEMA ${schema} CASCADE`);
@@ -707,7 +819,7 @@ describe.skipIf(!url)("subscription billing on real PostgreSQL", () => {
       // Concurrent restores of one purchase leave exactly one holder.
       await Promise.all([alice.sync([purchased]), bob.sync([purchased])]);
       const holders = await db.billingHolders("apple:Production:1000");
-      expect(holders.length).toBe(1);
+      expect(holders).toEqual(["alice"]);
       const states = await Promise.all(
         [alice, bob].map(async (p) => (await s.call("GET", "/v1/billing", p.token)).body.active),
       );
@@ -720,7 +832,7 @@ describe.skipIf(!url)("subscription billing on real PostgreSQL", () => {
       await bob.sync([seatBob]);
       expect(await db.billingHolders("apple:Production:2000:account:3001")).toEqual(["alice"]);
       expect(await db.billingHolders("apple:Production:2000:account:3002")).toEqual(["bob"]);
-      // A refund notification for the shared seat reaches both holders.
+      // Refunding Bob's seat removes access but preserves its ownership.
       const refund = await s.call("POST", "/v1/billing/webhooks/apple", null, {
         signedPayload: await store.sign({
           notificationType: "REFUND",
@@ -736,7 +848,8 @@ describe.skipIf(!url)("subscription billing on real PostgreSQL", () => {
         }),
       });
       expect(refund.status).toBe(204);
-      expect(await db.billingHolders("apple:Production:2000:account:3002")).toEqual([]);
+      expect(await db.billingHolders("apple:Production:2000:account:3002")).toEqual(["bob"]);
+      expect((await s.call("GET", "/v1/billing", bob.token)).body.active).toBe(false);
       const worker = new JobWorker(s.h.service, {
         conversation: { turn: async () => ({ reply: "standard", resolved: false, answer: null }) },
         freeConversation: { turn: async () => ({ reply: "free", resolved: false, answer: null }) },

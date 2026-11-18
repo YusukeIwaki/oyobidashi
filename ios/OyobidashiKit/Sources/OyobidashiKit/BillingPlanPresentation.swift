@@ -20,11 +20,6 @@ public struct BillingPlanPresentation: Equatable, Sendable {
         public var title: String {
             self == .free ? "FREE" : "PLUS"
         }
-        public var privacyNotice: String {
-            self == .free
-                ? "通話の内容がAIモデルの学習に使われます。"
-                : "通話の内容がAIモデルの学習に使われません。"
-        }
         public func priceText(displayPrice: String?) -> String? {
             self == .free ? nil : displayPrice.map { "\($0)/月" }
         }
@@ -42,9 +37,11 @@ public struct BillingPlanPresentation: Equatable, Sendable {
     public let expiresAt: Date?
     public let nextRenewalDate: Date?
     public let freePlanStartsAt: Date?
+    private let voiceTraining: BillingVoiceTraining?
 
     public init(status: BillingStatus, renewalPeriods: [BillingRenewalPeriod] = [], isAssigned: Bool = false, now: Date = Date()) {
         isEnabled = status.enabled
+        voiceTraining = status.voiceTraining
         currentPlan = status.enabled && status.active ? .standard : .free
         self.isAssigned = isAssigned
         hasGoogleSubscription = status.active && status.activeStores?.contains("google") == true
@@ -69,7 +66,15 @@ public struct BillingPlanPresentation: Equatable, Sendable {
     }
 
     public var title: String { currentPlan.title }
-    public var privacyNotice: String { currentPlan.privacyNotice }
+    public var privacyNotice: String { privacyNotice(for: currentPlan) }
+
+    public func privacyNotice(for plan: Plan) -> String {
+        switch plan == .free ? voiceTraining?.free : voiceTraining?.plus {
+        case true?: return "通話の内容がAIモデルの学習に使われる場合があります。"
+        case false?: return "通話の内容はAIモデルの学習に使われません。"
+        case nil: return "通話の学習利用は確認できません。"
+        }
+    }
     public var changeTitle: String { "変更" }
     public var restoreTitle: String { "購入を復元" }
 

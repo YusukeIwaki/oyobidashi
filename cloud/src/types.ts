@@ -53,7 +53,7 @@ export interface Feedback {
   event: string;
   at: string;
 }
-/** One store subscription held by this owner. `shared` sources may have other holders. */
+/** One store subscription or beneficiary seat held by this owner. */
 export interface EntitlementSource {
   store: "apple" | "google";
   product_id: string;
@@ -62,10 +62,16 @@ export interface EntitlementSource {
 }
 export interface AppleBillingProof {
   value: EntitlementSource;
+  accountId?: string;
   /** End of the signed transaction, even when a refund makes access end now. */
   periodEnd: number;
   signedDate: number;
   revoked: boolean;
+}
+export interface GoogleBillingProof {
+  value: EntitlementSource;
+  accountId?: string;
+  linkedSource?: string;
 }
 export function newerAppleProof(previous: AppleBillingProof | null, next: AppleBillingProof): boolean {
   if (!previous) return true;
@@ -98,7 +104,7 @@ export interface Records {
   quota: { window: number; count: number };
   call_cooldown: { until: number };
   ban: { at: number; reason: "voice_velocity" | "voice_oversize" | "voice_hammer" };
-  voice_usage: { buckets: { minute: number; turns: number; longTurns: number }[] };
+  voice_turn_usage: { recent: { at: number; oversized: boolean }[] };
   voice_attempts: { recent: number[] };
   voice_challenge: { deviceId: string; purpose: "apple_enroll" | "android_enroll" | "token"; expires: number };
   voice_key: { platform: "ios" | "android"; keyId: string; publicKey: string; counter: number; integrityAt: number };
@@ -175,20 +181,12 @@ export interface Database {
   revisions(uids: string[]): Promise<Map<string, string>>;
   health(): Promise<void>;
   close(): Promise<void>;
-  /**
-   * Records that `uid` holds the store subscription `source`. An exclusive claim
-   * removes every other holder and returns them.
-   */
-  /** Null means a Play purchase token was replaced by a newer token. */
-  billingClaim(source: string, uid: string, exclusive: boolean): Promise<string[] | null>;
-  billingSupersede(source: string, successor: string): Promise<string[]>;
+  /** Recorded owners outlive active access, including after expiry and refunds. */
   billingHolders(source: string): Promise<string[]>;
-  billingHeld(source: string, uid: string): Promise<boolean>;
-  billingRelease(source: string, uid: string): Promise<void>;
   /** Applies a signed Apple update and its owner entitlement atomically. */
-  applyAppleBilling(source: string, uid: string | null, proof: AppleBillingProof): Promise<void>;
-  /** Moves a Play subscription and any linked predecessor in one transaction. */
-  applyGoogleBilling(source: string, uid: string, value: EntitlementSource, linkedSource?: string): Promise<void>;
+  applyAppleBilling(source: string, uid: string | null, proof: AppleBillingProof, now: number): Promise<void>;
+  /** Updates one owner's Play access. True authorizes acknowledgement of the active purchase. */
+  applyGoogleBilling(source: string, uid: string | null, proof: GoogleBillingProof, now: number): Promise<boolean>;
 }
 export interface WakeBus {
   publish(uid: string): Promise<void>;

@@ -30,6 +30,13 @@ class BillingTest {
     @After fun tearDown() { if (::server.isInitialized) runCatching { server.shutdown() } }
 
     private fun baseUrl() = server.url("/").toString().trimEnd('/')
+    private fun officialClient(baseUrl: String = "https://api.oyobidashi.me"): RelayClient {
+        val routedHttp = http.newBuilder().addInterceptor { chain ->
+            val request = chain.request()
+            chain.proceed(request.newBuilder().url(server.url(request.url.encodedPath)).build())
+        }.build()
+        return RelayClient(routedHttp, baseUrl, token)
+    }
     private fun json(body: String, code: Int = 200) =
         MockResponse().setResponseCode(code).setHeader("Content-Type", "application/json; charset=utf-8").setBody(body)
 
@@ -165,7 +172,7 @@ class BillingTest {
     fun `billingStatus maps 404 to disabled instead of an error`() = runBlocking {
         startServer()
         server.enqueue(json("""{"error":{"code":"not_found","message":"not found"}}""", 404))
-        val status = RelayClient(http, baseUrl(), token).billingStatus()
+        val status = officialClient().billingStatus()
         assertFalse(status.enabled)
         assertFalse(status.active)
         assertEquals(BillingStatus.DISABLED, status)
@@ -178,7 +185,7 @@ class BillingTest {
     @Test
     fun `billingChallenge and syncGoogle send the contract bodies`() = runBlocking {
         startServer()
-        val client = RelayClient(http, baseUrl(), token)
+        val client = officialClient()
         server.enqueue(json("""{"challenge":"abc123","expires_at":"2026-11-15T14:05:00.000Z"}"""))
         val challenge = client.billingChallenge()
         assertEquals("abc123", challenge.challenge)
@@ -205,12 +212,45 @@ class BillingTest {
     @Test
     fun `billingStatus parses the enabled response`() = runBlocking {
         startServer()
-        server.enqueue(json("""{"enabled":true,"active":false,"expires_at":null,"google":{"product_ids":["plan_monthly"]}}"""))
-        val status = RelayClient(http, baseUrl(), token).billingStatus()
+        server.enqueue(json("""{"enabled":true,"active":false,"purchase_account_id":"98765432-1234-5678-9abc-123456789abc","expires_at":null,"google":{"product_ids":["plan_monthly"]},"voice_training":{"free":true,"plus":false}}"""))
+        val status = officialClient().billingStatus()
         assertTrue(status.enabled)
         assertFalse(status.active)
+        assertEquals("98765432-1234-5678-9abc-123456789abc", status.purchaseAccountId)
         assertEquals(null, status.expiresAt)
         assertEquals(listOf("plan_monthly"), status.google?.productIds)
         assertEquals(null, status.apple)
+        assertEquals(BillingVoiceTraining(free = true, plus = false), status.voiceTraining)
+    }
+
+    @Test
+    fun `non-official origins cannot start or sync billing`() = runBlocking {
+        startServer()
+        server.enqueue(json("""{"enabled":true}"""))
+        for (url in listOf(
+            baseUrl(),
+            "https://oyobidashi.up.railway.app",
+            "https://api.oyobidashi.me.example",
+            "http://api.oyobidashi.me",
+            "https://api.oyobidashi.me:8443",
+            "https://api.oyobidashi.me/custom",
+        )) {
+            val client = officialClient(url)
+            assertEquals(url, BillingStatus.DISABLED, client.billingStatus())
+            assertTrue(url, runCatching { client.billingChallenge() }.exceptionOrNull() is RelayException.Protocol)
+            assertTrue(url, runCatching { client.syncGoogle("fixture", "{}") }.exceptionOrNull() is RelayException.Protocol)
+        }
+        assertEquals(0, server.requestCount)
+        assertTrue(officialClient("https://API.OYOBIDASHI.ME:443/").isOfficialCloud)
+    }
+
+    @Test
+    fun `billing does not follow redirects with a purchase payload`() = runBlocking {
+        startServer()
+        server.enqueue(json("{}", 307).setHeader("Location", server.url("/redirected")))
+        server.enqueue(json("""{"enabled":true,"active":true}"""))
+        val error = runCatching { officialClient().syncGoogle("fixture", "{}") }.exceptionOrNull()
+        assertEquals(307, (error as? RelayException.Api)?.httpStatus)
+        assertEquals(1, server.requestCount)
     }
 }

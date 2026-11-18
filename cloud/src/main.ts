@@ -1,9 +1,9 @@
 import { CloudApp, type SocketData } from "./app.ts";
 import { firebaseVerifier } from "./auth.ts";
 import { RedisWakeBus } from "./bus.ts";
-import { cloudConfig } from "./config.ts";
+import { cloudConfig, OFFICIAL_CLOUD_ORIGIN, requiresVoiceProof } from "./config.ts";
 import { PostgresDatabase } from "./postgres.ts";
-import { configuredConversations } from "./provider.ts";
+import { configuredConversations, voiceModels } from "./provider.ts";
 import { CloudService } from "./service.ts";
 import { JobWorker, WorkerPool } from "./worker.ts";
 import { Maintenance } from "./maintenance.ts";
@@ -45,6 +45,9 @@ export async function main(
   if (!["api", "worker", "migrate"].includes(role))
     throw new Error("role must be api, worker or migrate");
   const config = cloudConfig();
+  const official = config.publicUrl === OFFICIAL_CLOUD_ORIGIN;
+  const models = voiceModels(process.env, official);
+  const voiceProofRequired = requiresVoiceProof(process.env, config.publicUrl);
   if (
     role === "worker" &&
     (process.env.APNS_KEY_PATH ||
@@ -66,8 +69,8 @@ export async function main(
   }
   const bus = new RedisWakeBus(config.redisUrl),
     service = new CloudService(db, bus);
-  service.freeVoiceTrains = process.env.VOICE_FREE_TRAINING === "1";
-  service.voiceProofRequired = true;
+  service.voiceTrainingPolicy = models.training;
+  service.voiceProofRequired = voiceProofRequired;
   const timers: ReturnType<typeof setInterval>[] = [];
   let draining = false;
   const health = async () => {
@@ -92,12 +95,14 @@ export async function main(
               Bun.file(new URL("../public/oauth.js", import.meta.url)).text(),
             ...(config.publicUrl ? { publicUrl: config.publicUrl } : {}),
           },
-          new Billing(service, loadBillingConfig(process.env)),
-          new VoiceSecurity(service, loadVoiceConfig(process.env)),
+          official ? new Billing(service, loadBillingConfig(process.env)) : undefined,
+          service.voiceProofRequired
+            ? new VoiceSecurity(service, loadVoiceConfig(process.env))
+            : undefined,
         )
       : null;
   const conversations =
-    role === "worker" ? configuredConversations(process.env) : undefined;
+    role === "worker" ? configuredConversations(models) : undefined;
   const worker =
     role === "worker"
       ? new JobWorker(service, {

@@ -1,4 +1,5 @@
 import { SQL } from "bun";
+import { resolvePurchaseOwner } from "./billing/account.ts";
 import { unauthorized } from "./errors.ts";
 import {
   newerAppleProof,
@@ -8,7 +9,7 @@ import {
   type Database,
   type Device,
   type AppleBillingProof,
-  type Entitlement,
+  type GoogleBillingProof,
   type EntitlementSource,
   type Job,
   type Kind,
@@ -54,6 +55,7 @@ CREATE TABLE IF NOT EXISTS cloud_push_owners (
   endpoint_hash text PRIMARY KEY,uid text NOT NULL,device_id text NOT NULL
 );
 CREATE INDEX IF NOT EXISTS cloud_push_owner_device ON cloud_push_owners(uid,device_id);
+-- Store ownership survives loss of access and is used by future restores.
 CREATE TABLE IF NOT EXISTS cloud_billing_claims(source text NOT NULL,uid text NOT NULL,PRIMARY KEY(source,uid));
 CREATE TABLE IF NOT EXISTS cloud_billing_superseded(source text PRIMARY KEY,successor text NOT NULL);
 CREATE TABLE IF NOT EXISTS cloud_apple_billing_state(source text PRIMARY KEY,doc jsonb NOT NULL);
@@ -354,84 +356,48 @@ export class PostgresDatabase implements Database {
   async health() {
     await this.sql.unsafe("SELECT 1");
   }
-  async billingClaim(source: string, uid: string, exclusive: boolean) {
-    return (await this.sql.begin(async (sql) => {
-      await sql.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
-        `billing:${source}`,
-      ]);
-      if ((await sql.unsafe("SELECT 1 FROM cloud_billing_superseded WHERE source=$1", [source])).length)
-        return null;
-      const others = exclusive
-        ? await sql.unsafe(
-            "DELETE FROM cloud_billing_claims WHERE source=$1 AND uid<>$2 RETURNING uid",
-            [source, uid],
-          )
-        : [];
-      await sql.unsafe(
-        "INSERT INTO cloud_billing_claims(source,uid) VALUES($1,$2) ON CONFLICT DO NOTHING",
-        [source, uid],
-      );
-      return others.map((r: { uid: string }) => r.uid);
-    })) as string[] | null;
-  }
-  async billingSupersede(source: string, successor: string) {
-    if (source === successor) return [];
-    return (await this.sql.begin(async (sql) => {
-      await sql.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`billing:${source}`]);
-      await sql.unsafe(
-        "INSERT INTO cloud_billing_superseded(source,successor) VALUES($1,$2) ON CONFLICT(source) DO UPDATE SET successor=EXCLUDED.successor",
-        [source, successor],
-      );
-      const displaced = await sql.unsafe("DELETE FROM cloud_billing_claims WHERE source=$1 RETURNING uid", [source]);
-      return displaced.map((row: { uid: string }) => row.uid);
-    })) as string[];
-  }
   async billingHolders(source: string) {
-    const rows = await this.sql.unsafe(
-      "SELECT uid FROM cloud_billing_claims WHERE source=$1 LIMIT 10000",
-      [source],
-    );
-    return rows.map((r: { uid: string }) => r.uid);
+    const rows = await this.sql.unsafe("SELECT uid FROM cloud_billing_claims WHERE source=$1", [source]);
+    return rows.map((row: { uid: string }) => row.uid);
   }
-  async billingHeld(source: string, uid: string) {
-    const rows = await this.sql.unsafe(
-      "SELECT 1 FROM cloud_billing_claims WHERE source=$1 AND uid=$2",
-      [source, uid],
-    );
-    return rows.length > 0;
+  private async lockBillingSource(sql: Query, source: string) {
+    await sql.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`billing:${source}`]);
   }
-  async billingRelease(source: string, uid: string) {
-    await this.sql.unsafe(
-      "DELETE FROM cloud_billing_claims WHERE source=$1 AND uid=$2",
-      [source, uid],
+  private async recordPurchaseOwner(sql: Query, source: string, owner: string) {
+    await sql.unsafe(
+      "INSERT INTO cloud_billing_claims(source,uid) VALUES($1,$2) ON CONFLICT DO NOTHING",
+      [source, owner],
     );
   }
-  async applyAppleBilling(source: string, uid: string | null, proof: AppleBillingProof) {
+  private async updateEntitlement(
+    sql: Query, owner: string, source: string, value: EntitlementSource | null, predecessor?: string,
+  ) {
+    await sql.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [owner]);
+    const tx = new PgTransaction(owner, sql);
+    const entitlement = (await tx.get("entitlement", "current")) ?? { sources: {} };
+    if (predecessor) delete entitlement.sources[predecessor];
+    if (value) entitlement.sources[source] = value;
+    else delete entitlement.sources[source];
+    await tx.put("entitlement", "current", entitlement);
+  }
+  async applyAppleBilling(source: string, uid: string | null, proof: AppleBillingProof, now: number) {
     await this.sql.begin(async (sql) => {
-      await sql.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`billing:${source}`]);
-      const previous = await sql.unsafe("SELECT doc FROM cloud_apple_billing_state WHERE source=$1", [source]);
-      if (!newerAppleProof((previous[0]?.doc as AppleBillingProof) ?? null, proof)) return;
-      const old = await sql.unsafe("SELECT uid FROM cloud_billing_claims WHERE source=$1", [source]);
-      const oldHolders = old.map((row: { uid: string }) => row.uid);
-      if (proof.revoked) {
-        await sql.unsafe("DELETE FROM cloud_billing_claims WHERE source=$1", [source]);
-      } else if (uid) {
-        await sql.unsafe("DELETE FROM cloud_billing_claims WHERE source=$1 AND uid<>$2", [source, uid]);
-        await sql.unsafe("INSERT INTO cloud_billing_claims(source,uid) VALUES($1,$2) ON CONFLICT DO NOTHING", [source, uid]);
+      await this.lockBillingSource(sql, source);
+      const saved = await sql.unsafe("SELECT doc FROM cloud_apple_billing_state WHERE source=$1", [source]);
+      const previous = (saved[0]?.doc as AppleBillingProof | undefined) ?? null;
+      if (!newerAppleProof(previous, proof)) return;
+      if (previous?.accountId !== undefined) {
+        if (proof.accountId !== undefined && proof.accountId !== previous.accountId) return;
+        proof = { ...proof, accountId: previous.accountId };
       }
-      const affected = [...new Set([...oldHolders, ...(uid ? [uid] : [])])].sort();
-      for (const owner of affected) {
-        await sql.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [owner]);
-        const rows = await sql.unsafe("SELECT doc FROM cloud_records WHERE uid=$1 AND kind='entitlement' AND id='current'", [owner]);
-        const entitlement = (rows[0]?.doc as { sources: Record<string, unknown> } | undefined) ?? { sources: {} };
-        const held = !proof.revoked && (uid === owner || (uid === null && oldHolders.includes(owner)));
-        if (held) entitlement.sources[source] = proof.value;
-        else delete entitlement.sources[source];
-        await sql.unsafe(
-          `INSERT INTO cloud_records(uid,kind,id,doc,touched_at) VALUES($1,'entitlement','current',$2::text::jsonb,$3)
-           ON CONFLICT(uid,kind,id) DO UPDATE SET doc=EXCLUDED.doc,touched_at=EXCLUDED.touched_at`,
-          [owner, JSON.stringify(entitlement), Date.now()],
-        );
+      const rows = await sql.unsafe("SELECT uid FROM cloud_billing_claims WHERE source=$1", [source]);
+      const owners = rows.map((row: { uid: string }) => row.uid);
+      const owner = resolvePurchaseOwner(owners, uid, proof.accountId);
+      if (!owner && (uid !== null || owners.length > 0)) return;
+      const active = !proof.revoked && proof.value.expires > now;
+      if (owner && (owners.length > 0 || active)) {
+        if (!owners.length) await this.recordPurchaseOwner(sql, source, owner);
+        await this.updateEntitlement(sql, owner, source, active ? proof.value : null);
       }
       await sql.unsafe(
         "INSERT INTO cloud_apple_billing_state(source,doc) VALUES($1,$2::text::jsonb) ON CONFLICT(source) DO UPDATE SET doc=EXCLUDED.doc",
@@ -439,38 +405,41 @@ export class PostgresDatabase implements Database {
       );
     });
   }
-  async applyGoogleBilling(source: string, uid: string, value: EntitlementSource, linkedSource?: string) {
-    await this.sql.begin(async (sql) => {
-      const sources = [...new Set([source, ...(linkedSource && linkedSource !== source ? [linkedSource] : [])])].sort();
-      for (const s of sources)
-        await sql.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`billing:${s}`]);
-      if ((await sql.unsafe("SELECT 1 FROM cloud_billing_superseded WHERE source=$1", [source])).length) return;
-      const old = await sql.unsafe("SELECT uid FROM cloud_billing_claims WHERE source=$1", [source]);
-      const oldHolders = old.map((row: { uid: string }) => row.uid);
-      let linkedHolders: string[] = [];
-      if (linkedSource && linkedSource !== source) {
-        await sql.unsafe(
-          "INSERT INTO cloud_billing_superseded(source,successor) VALUES($1,$2) ON CONFLICT(source) DO UPDATE SET successor=EXCLUDED.successor",
-          [linkedSource, source],
-        );
-        const displaced = await sql.unsafe("DELETE FROM cloud_billing_claims WHERE source=$1 RETURNING uid", [linkedSource]);
-        linkedHolders = displaced.map((row: { uid: string }) => row.uid);
+  async applyGoogleBilling(source: string, uid: string | null, proof: GoogleBillingProof, now: number) {
+    const active = proof.value.expires > now;
+    const predecessor = active && proof.linkedSource !== source ? proof.linkedSource : undefined;
+    return await this.sql.begin(async (sql) => {
+      for (const item of [source, ...(predecessor ? [predecessor] : [])].sort())
+        await this.lockBillingSource(sql, item);
+
+      const superseded = await sql.unsafe(
+        "SELECT source,successor FROM cloud_billing_superseded WHERE source=$1 OR source=$2",
+        [source, predecessor ?? null],
+      );
+      if (superseded.some((row: { source: string; successor: string }) =>
+        row.source === source || row.successor !== source
+      )) return false;
+
+      const rows = await sql.unsafe(
+        "SELECT uid FROM cloud_billing_claims WHERE source=$1 OR source=$2",
+        [source, predecessor ?? null],
+      );
+      const owners = rows.map((row: { uid: string }) => row.uid);
+      const owner = resolvePurchaseOwner(owners, uid, proof.accountId);
+      if (!owner || (!active && !owners.length)) return false;
+
+      if (active) {
+        await this.recordPurchaseOwner(sql, source, owner);
+        if (predecessor) {
+          await this.recordPurchaseOwner(sql, predecessor, owner);
+          await sql.unsafe(
+            "INSERT INTO cloud_billing_superseded(source,successor) VALUES($1,$2) ON CONFLICT DO NOTHING",
+            [predecessor, source],
+          );
+        }
       }
-      await sql.unsafe("DELETE FROM cloud_billing_claims WHERE source=$1 AND uid<>$2", [source, uid]);
-      await sql.unsafe("INSERT INTO cloud_billing_claims(source,uid) VALUES($1,$2) ON CONFLICT DO NOTHING", [source, uid]);
-      for (const owner of [...new Set([...oldHolders, ...linkedHolders, uid])].sort()) {
-        await sql.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [owner]);
-        const rows = await sql.unsafe("SELECT doc FROM cloud_records WHERE uid=$1 AND kind='entitlement' AND id='current'", [owner]);
-        const entitlement = (rows[0]?.doc as Entitlement | undefined) ?? { sources: {} };
-        if (linkedSource) delete entitlement.sources[linkedSource];
-        if (owner === uid) entitlement.sources[source] = value;
-        else delete entitlement.sources[source];
-        await sql.unsafe(
-          `INSERT INTO cloud_records(uid,kind,id,doc,touched_at) VALUES($1,'entitlement','current',$2::text::jsonb,$3)
-           ON CONFLICT(uid,kind,id) DO UPDATE SET doc=EXCLUDED.doc,touched_at=EXCLUDED.touched_at`,
-          [owner, JSON.stringify(entitlement), Date.now()],
-        );
-      }
+      await this.updateEntitlement(sql, owner, source, active ? proof.value : null, predecessor);
+      return active;
     });
   }
   async revisions(uids: string[]) {

@@ -146,7 +146,7 @@ function voiceProviderConfig(env: Record<string, string | undefined>): {
     throw new Error("VOICE_PROVIDER must be anthropic or meta");
   const apiKey =
     provider === "meta" ? env.MODEL_API_KEY : env.ANTHROPIC_API_KEY;
-  const model = provider === "meta" ? env.META_MODEL : env.ANTHROPIC_MODEL;
+  const model = (provider === "meta" ? env.META_MODEL : env.ANTHROPIC_MODEL)?.trim();
   return { provider, apiKey, model };
 }
 
@@ -160,11 +160,28 @@ export function configuredConversation(
   return apiConversation({ provider, apiKey, model: model ?? "", fetch: send });
 }
 
+export function voiceModels(env: Record<string, string | undefined>, allowFree: boolean) {
+  const config = voiceProviderConfig(env);
+  const candidate = allowFree ? env.VOICE_MODEL_FREE?.trim() : undefined;
+  const freeModel = candidate && candidate !== config.model ? candidate : undefined;
+  const training = (key: string) => {
+    const value = env[key]?.trim();
+    if (!value) return null;
+    if (value === "0" || value === "1") return value === "1";
+    throw new Error(`${key} must be 0 or 1`);
+  };
+  const plus = training("VOICE_STANDARD_TRAINING");
+  return {
+    ...config,
+    freeModel,
+    training: { free: freeModel ? training("VOICE_FREE_TRAINING") : plus, plus },
+  };
+}
+
 export function configuredConversations(
-  env: Record<string, string | undefined>,
+  { provider, apiKey, model, freeModel }: ReturnType<typeof voiceModels>,
   send?: typeof fetch,
 ): { standard: ConversationProvider; free?: ConversationProvider } | undefined {
-  const { provider, apiKey, model } = voiceProviderConfig(env);
   if (!apiKey) return undefined;
   const standard = apiConversation({
     provider,
@@ -172,8 +189,7 @@ export function configuredConversations(
     model: model ?? "",
     fetch: send,
   });
-  const freeModel = env.VOICE_MODEL_FREE;
-  if (!freeModel || freeModel === model) return { standard };
+  if (!freeModel) return { standard };
   const free = apiConversation({
     provider,
     apiKey,

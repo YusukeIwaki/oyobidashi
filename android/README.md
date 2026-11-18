@@ -49,6 +49,8 @@ cd android
 
 ## Google Play の内部テストと課金
 
+公式アプリの購入・復元・同期は `https://api.oyobidashi.me` に接続しているときだけ利用できます。セルフホストでは既定の設定で課金とPlay Integrityなしで通話できます。
+
 内部テスト用の AAB は `./gradlew :app:bundleRelease` で作成します。初回のリリースでは Google がアプリ署名鍵を生成・保管する Play App Signing の既定設定を使います。AAB のアップロード鍵は別で、`oyobidashi.release.storeFile`、`storePassword`、`keyAlias`、`keyPassword` を保護したローカル設定から渡します。
 
 課金の検証には、Play Console にリンクした Google Cloud プロジェクトの**番号**を `oyobidashi.play.cloudProjectNumber` に設定します。クラウド側は [Google Play 用の課金設定](../cloud/README.md#サブスクリプション)を使います。内部テスターとライセンステスターに同じ Google アカウントを登録し、対応する実機で Google Play から内部テスト版をインストールしてください。購入画面でテスト用の支払い方法が表示されることを確認します。既に別の鍵で署名した開発版が入っている場合は、Play 版への切り替えに再インストールと再ペアリングが必要です。

@@ -13,11 +13,23 @@ public struct URLSessionTransport: HTTPTransport {
     }
 
     public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (data, response) = try await session.data(for: request)
+        let path = request.url?.path ?? ""
+        let isBilling = path == "/v1/billing" || path.hasPrefix("/v1/billing/")
+        let (data, response) = try await session.data(for: request, delegate: isBilling ? RefuseRedirects() : nil)
         guard let http = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
         }
         return (data, http)
+    }
+}
+
+private final class RefuseRedirects: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
     }
 }
 
@@ -150,8 +162,9 @@ public struct RelayClient: Sendable {
 
     // MARK: Billing
 
-    /// `GET /v1/billing` (device auth)。404 は billing 無効として扱い、エラーにしない。
+    /// 公式 API の `GET /v1/billing` (device auth)。404 は billing 無効として扱う。
     public func billingStatus() async throws -> BillingStatus {
+        guard endpoint.isOfficialCloud else { return .disabled }
         do {
             return try await perform("GET", ["v1", "billing"])
         } catch let error as RelayError {
@@ -380,6 +393,9 @@ public struct RelayClient: Sendable {
         deadline: TimeInterval? = nil
     ) async throws -> (Data, HTTPURLResponse) {
         try Task.checkCancellationWrapped()
+        if segments.starts(with: ["v1", "billing"]), !endpoint.isOfficialCloud {
+            throw RelayError.forbidden
+        }
         var request = URLRequest(url: endpoint.url(segments: segments, query: query))
         request.httpMethod = method
         request.timeoutInterval = segments.last == "call" ? max(timeout, 100) : timeout

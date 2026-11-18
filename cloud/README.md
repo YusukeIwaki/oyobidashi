@@ -39,17 +39,18 @@ bun run --cwd cloud worker
 | `FIREBASE_WEB_API_KEY` | APIが返すFirebase公開設定。匿名開始・ブラウザ認証に使うWeb APIキー |
 | `FIREBASE_AUTH_PROVIDERS` | APIが表示する復旧プロバイダー。カンマ区切りの`google,apple,github`、既定`google`。Firebase側で有効化済みのものだけ指定 |
 | `FIREBASE_AUTH_SERVICE_ACCOUNT_JSON` | API専用のアカウントリンク署名器。自分のFirebaseプロジェクトのサービスアカウントJSONを保護された秘密変数へ保存 |
-| `PUBLIC_URL` | 通知プレビューURLに使うAPIの正規HTTPS origin。公開環境は`https://api.oyobidashi.me`。Pushを使うワーカーには必須。受け付けるホスト名の制限ではない |
+| `PUBLIC_URL` | APIとworker共通の正規HTTPS origin。公式環境は`https://api.oyobidashi.me`、セルフホストでは自身のURLを設定。Pushを使うworkerには必須 |
 | `PORT` | 待受ポート。既定8787、Railwayは自動設定 |
 | `DB_POOL_SIZE` | 1プロセスのDB接続上限。既定10 |
 | `TURN_CONCURRENCY` | 1ワーカーの同時LLM処理上限。既定8 |
 | `PUSH_CONCURRENCY` | LLMとは独立したPush同時実行上限。既定4 |
 | `MAX_SOCKETS` | 1APIのWebSocket／回答待ち上限。既定10000。実測の収容数ではありません |
-| `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | ワーカーの会話判断。モデル名は明示設定 |
-| `VOICE_PROVIDER` | `anthropic`（既定）または `meta`。選んだプロバイダーのキーだけを使用 |
-| `MODEL_API_KEY`, `META_MODEL` | `VOICE_PROVIDER=meta` の会話判断。Meta Model API のキーとモデル名（例 `muse-spark-1.2`） |
-| `VOICE_MODEL_FREE` | ワーカー。サブスクリプションのない利用者に使うモデル名。同じプロバイダー・同じキーで呼び出す。未設定なら全員が上のモデル |
-| `VOICE_FREE_TRAINING` | API。`1`なら、サブスクリプションのない利用者の通話が学習に使われることをMCPの結果で知らせる。モデル名は伝えない |
+| `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | Anthropicの会話判断。キーはworkerに、モデル名はAPIとworkerに設定 |
+| `VOICE_PROVIDER` | APIとworker共通。`anthropic`（既定）または `meta` |
+| `MODEL_API_KEY`, `META_MODEL` | Metaの会話判断。キーはworkerに、モデル名はAPIとworkerに設定 |
+| `VOICE_MODEL_FREE` | 公式環境で未購読の利用者に使うモデル名。APIとworkerに同じ値を設定。空または標準と同じなら全員が標準モデルを使用 |
+| `VOICE_STANDARD_TRAINING`, `VOICE_FREE_TRAINING` | 実際に使用する各モデルの学習利用条件。APIとworkerに同じ値を設定。`1`は学習利用の可能性あり、`0`はなし、空は不明。FREEも標準モデルを使う場合は標準側の値が適用される |
+| `VOICE_REQUIRE_DEVICE_PROOF` | APIとworker共通。セルフホストでApp Attest／Play Integrityを必須にする場合は`1`。公式環境では常に必須 |
 | `VOICE_APPLE_TEAM_ID`, `VOICE_APPLE_BUNDLE_ID`, `VOICE_APP_ATTEST_ENVIRONMENTS` | API。クラウド音声のiOS端末証明。未設定時は`APPLE_TEAM_ID`、`APPLE_IAP_BUNDLE_ID`、`APPLE_APP_ATTEST_ENVIRONMENTS`を使う。課金の有効化は不要 |
 | `VOICE_ANDROID_PACKAGE_NAME`, `VOICE_GOOGLE_SERVICE_ACCOUNT_JSON` | API。クラウド音声のAndroid端末証明。未設定時はGoogle Play課金の同名設定を使う。アプリ側にはPlay Integrity用Cloud Project Numberも必要 |
 | `APPLE_IAP_PRODUCT_IDS`, `APPLE_IAP_BUNDLE_ID`, `APPLE_TEAM_ID` | API。App Storeの購読を受け付ける商品ID（カンマ区切り）、アプリのBundle ID、Team ID。商品IDが未設定ならAppleの課金は無効 |
@@ -63,24 +64,28 @@ bun run --cwd cloud worker
 
 会話APIが未設定ならテキスト・通知は使えますが、音声ターンは明示的な失敗となります。クラウドではClaude Code CLIのOAuthやサブスクリプション認証を共有しません。LAN版のCLI方式とは別の、APIの利用設定が必要です。
 
-クラウド音声の応答・発話には、App AttestまたはPlay Integrityで登録した端末が10分有効の音声トークンを取得する必要があります。AndroidのIntegrity判定は登録時と6時間ごとの更新時に要求し、10分ごとのトークン更新は端末内の署名鍵を使用します。各API呼び出しではIntegrity APIを呼びません。iOSもApp Attestのアサーションをトークン更新時に作成します。設定のないプラットフォームではクラウド音声を拒否します。旧版アプリのクラウド音声は更新まで使えません。LAN版の通話・テキスト・通知には影響しません。
+セルフホストでは、ペアリング済みの端末が自分の端末トークンで応答・発話できます。会話に使うLLM APIはworkerに設定し、バックグラウンドで着信させる場合はアプリのビルドに対応するPush設定も用意してください。
 
-異常利用はアカウント単位で自動停止します。1分に異なる発話IDを30件、10分に受理済み発話90件、または5分に2000文字超の発話3件が停止条件です。同じIDの再送は数えません。停止記録に期限や利用者向け解除APIはありません。Firebase UIDを新規作成できる状態では、新しいアカウントまで恒久的に阻止するものではありません。
+公式環境と、セルフホストで `VOICE_REQUIRE_DEVICE_PROOF=1` を指定した環境では、応答・発話に10分有効の音声トークンが必要です。iOSはApp Attest、AndroidはPlay Integrityで登録します。AndroidのIntegrity判定は登録時と6時間ごとの更新時に要求し、音声トークンの更新は端末内の署名鍵を使用します。端末証明を設定していないプラットフォームや音声トークンに未対応のアプリでは、これらの環境で通話できません。
 
-Metaのキー用変数名は`MODEL_API_KEY`です。Muse Sparkを使う場合は、Railwayのworkerサービスに`VOICE_PROVIDER=meta`、`META_MODEL=muse-spark-1.2`、`MODEL_API_KEY`を設定します。キーは[Meta Model API](https://dev.meta.ai/)で発行し、RailwayのVariablesから保存してください。`ANTHROPIC_API_KEY`への代入では切り替わりません。接続先は公式の`https://api.meta.ai/v1/messages`に固定し、Bearer認証で送信します。推論の深さをmediumにし、JSONスキーマと既存の業務検証の両方で応答を検査します。キーが未設定でも他社のキーへ自動フォールバックしません。[公式Messages仕様](https://dev.meta.ai/docs/protocols/messages)
+音声発話はアカウントごとに直近60分で30件までです。通話や端末を変えても合算し、同じ発話の再送は重複計上しません。上限に達した後の発信はテキストで届き、通話中に次の発話が上限を超えた場合もテキストで返信できます。
+
+異常利用による停止条件は、1分に異なる発話IDを30件、または5分に2000文字超の発話3件です。停止記録に期限や利用者向け解除APIはありません。Firebase UIDを新規作成できる状態では、新しいアカウントまで恒久的に阻止するものではありません。
+
+Metaのキー用変数名は`MODEL_API_KEY`です。Muse Sparkを使う場合は、APIとworkerに`VOICE_PROVIDER=meta`と`META_MODEL=muse-spark-1.2`、workerに`MODEL_API_KEY`を設定します。キーは[Meta Model API](https://dev.meta.ai/)で発行し、RailwayのVariablesから保存してください。接続先は公式の`https://api.meta.ai/v1/messages`に固定し、Bearer認証で送信します。推論の深さをmediumにし、JSONスキーマと既存の業務検証の両方で応答を検査します。キーが未設定でも他社のキーへ自動フォールバックしません。[公式Messages仕様](https://dev.meta.ai/docs/protocols/messages)
 
 過去にMetaプロバイダーを異なるリージョンから検証しました。Singaporeの当該workerからは`404 model_not_found`でしたが、同じキーで日本のMacからは成功しました。workerを米国西部へ移し、実際の会話判断・回答要約・お礼の取得に成功しています。送信元や配信経路による差と考えられますが、Singapore全体の利用可否を断定するものではありません。実iPhoneでも、クラウド経由の着信・音声認識・確認質問への再回答・お礼の読み上げ・自動終話を確認しました。[検証記録](../docs/VALIDATION.md)
 
 ### サブスクリプション
 
-任意の機能です。上の課金用の変数を設定しなければ無効で、`GET /v1/billing`は`{"enabled":false}`を返し、設定した1つのモデルを全員に使います。自前のサーバーではこの状態のまま、好きなモデルを使えます。
+課金・購入の復元・自動同期は `https://api.oyobidashi.me` でのみ利用できます。公式APIでもストア商品を設定するまで課金は無効です。セルフホストと旧Railwayホストでは `GET /v1/billing` は `{"enabled":false}` を返します。セルフホストでは指定した標準モデルで通話でき、LLM APIやホスティングの費用は運営者が負担します。
 
-有効にすると、購読中の利用者には標準のモデル、それ以外には`VOICE_MODEL_FREE`を使います。片方が失敗しても、もう片方へは切り替えません。どのモデルを使っているかは、API・MCPの結果・エラー・ログのいずれにも出しません。
+公式環境では購読中の利用者に標準モデルを使い、未購読者には `VOICE_MODEL_FREE` が指定されていればそのモデルを使います。片方が失敗しても、もう片方へは切り替えません。アプリとMCPは設定された学習利用条件を参照し、モデル名は表示しません。学習利用の設定値はプロバイダーとの契約・設定に合わせて指定してください。
 
 - 購入の登録は端末認証に加えて、iOSはApp Attest、AndroidはPlay Integrityの検証を通った端末だけが呼べます。開発ビルドはApp Attestがdevelopment、Playを経由しないAndroidビルドは検証に通りません。
 - Appleの購読は、本人の購入のほか、ファミリー共有と、組織がApple Business／Apple School Managerでまとめて購入して割り当てた席も受け付けます。割り当てた席は端末での購入を伴わないので、アプリは起動時とストアの更新時にも同期します。
 - 更新・解約・返金・席の取り消しはストアの通知で反映します。App Store Connectの「App Store サーバ通知」(Version 2) に`<PUBLIC_URL>/v1/billing/webhooks/apple`を、Google PlayのPub/Sub pushに`<PUBLIC_URL>/v1/billing/webhooks/google`を設定します。
-- 手元で課金なしに試す方法、ストア側の準備は[検証記録](../docs/VALIDATION.md)と[プロトコル](../docs/CLOUD_PROTOCOL.md)を参照してください。
+- ストアとの契約は[プロトコル](../docs/CLOUD_PROTOCOL.md)を参照してください。ローカルでは `./scripts/test-cloud.sh` で隔離DBを使う課金テストを実行できます。
 
 ローカルスタックの例はルートの`compose.cloud.yml`です。`.env`はgit管理外です。`docker compose -f compose.cloud.yml up --build`で起動します。実Firebaseログイン・API利用・Push送信には自身の設定が必要です。
 

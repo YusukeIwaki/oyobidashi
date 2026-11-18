@@ -55,6 +55,10 @@ class RelayClient(
     private val voiceTokenProvider: VoiceTokenProvider? = null,
 ) : RelayApi, BillingApi {
     private val safeHttp = http.newBuilder().followRedirects(false).followSslRedirects(false).build()
+    val isOfficialCloud: Boolean = baseUrl.trim().toHttpUrlOrNull()?.let {
+        it.isHttps && it.host == "api.oyobidashi.me" && it.port == 443 &&
+            it.encodedPath == "/" && it.username.isEmpty() && it.password.isEmpty()
+    } == true
     @Volatile private var idempotentTurns: Boolean? = null
 
     /** POST /v1/pair (認証不要) */
@@ -181,8 +185,9 @@ class RelayClient(
         decode(VoiceAccess.serializer(), execute(newRequest(url("voice", "token"))
             .post(jsonBody(OyobidashiJson.encodeToString(VoiceTokenRequest.serializer(), VoiceTokenRequest(challenge, keyId, signature)))).build()))
 
-    /** GET /v1/billing。課金ルートが無い 404 (LAN relay 等) はエラーではなく無効として返す。 */
+    /** 公式 API の GET /v1/billing。404 は課金無効として扱う。 */
     override suspend fun billingStatus(): BillingStatus {
+        if (!isOfficialCloud) return BillingStatus.DISABLED
         return try {
             decode(BillingStatus.serializer(), execute(newRequest(url("billing")).get().build()))
         } catch (e: RelayException.Api) {
@@ -192,12 +197,14 @@ class RelayClient(
 
     /** POST /v1/billing/challenge。ボディは空オブジェクト。 */
     override suspend fun billingChallenge(): BillingChallenge {
+        if (!isOfficialCloud) throw RelayException.Protocol("Billing requires the official API")
         val request = newRequest(url("billing", "challenge")).post(jsonBody("{}")).build()
         return decode(BillingChallenge.serializer(), execute(request))
     }
 
     /** POST /v1/billing/google。[payload] はハッシュ済みの文字列をそのまま送る。 */
     override suspend fun syncGoogle(integrityToken: String, payload: String): BillingStatus {
+        if (!isOfficialCloud) throw RelayException.Protocol("Billing requires the official API")
         val json = buildJsonObject {
             put("integrity_token", JsonPrimitive(integrityToken))
             put("payload", JsonPrimitive(payload))

@@ -65,7 +65,6 @@ import java.time.Instant
 import me.oyobidashi.android.BuildConfig
 import me.oyobidashi.android.R
 import me.oyobidashi.android.Session
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,14 +77,14 @@ fun SettingsScreen(vm: MainViewModel, session: Session) {
         delay(Duration.between(Instant.now(), expires).toMillis().coerceAtLeast(0) + 1_000)
         vm.refreshBilling()
     }
-    val isOyobidashiCloud = session.credentials.baseUrl.toHttpUrlOrNull()?.host == "api.oyobidashi.me"
+    val isOyobidashiCloud = session.api.isOfficialCloud
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
     var refresh by remember { mutableIntStateOf(0) }
     var confirming by remember { mutableStateOf(false) }
     var showingPlan by remember(session) { mutableStateOf(false) }
-    if (showingPlan && billing.status?.enabled == true) {
+    if (showingPlan && isOyobidashiCloud && billing.status?.enabled == true) {
         PlanDialog(billing, vm::purchasePlan, vm::restorePlan, vm::refreshBilling) { showingPlan = false }
     }
     DisposableEffect(lifecycle) {
@@ -148,14 +147,15 @@ fun SettingsScreen(vm: MainViewModel, session: Session) {
                     }
                 }
                 val planStatus = billing.status
-                if (planStatus?.enabled == true) {
+                if (isOyobidashiCloud && planStatus?.enabled == true) {
                     item { SectionHeading("現在のプラン") }
                     item {
                         SettingsGroup {
                             ListItem(
                                 headlineContent = { Text(if (planStatus.active) "PLUS" else "FREE") },
                                 supportingContent = {
-                                    Text(if (planStatus.active) Texts.BILLING_ACTIVE else Texts.BILLING_INACTIVE)
+                                    val policy = planStatus.voiceTraining
+                                    Text(Texts.billingVoiceTraining(if (planStatus.active) policy?.plus else policy?.free))
                                 },
                                 trailingContent = {
                                     TextButton(onClick = { showingPlan = true }) { Text("変更") }

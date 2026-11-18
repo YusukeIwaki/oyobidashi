@@ -1,3 +1,4 @@
+import { resolvePurchaseOwner } from "../src/billing/account.ts";
 import {
   newerAppleProof,
   pushEndpointKey,
@@ -6,6 +7,7 @@ import {
   type Database,
   type AppleBillingProof,
   type EntitlementSource,
+  type GoogleBillingProof,
   type Device,
   type Job,
   type Kind,
@@ -257,94 +259,73 @@ export class MemoryDatabase implements Database {
   billing = new Map<string, Set<string>>();
   billingSuperseded = new Map<string, string>();
   appleState = new Map<string, AppleBillingProof>();
-  async applyAppleBilling(source: string, uid: string | null, proof: AppleBillingProof) {
+  private async withBillingLock<T>(action: () => Promise<T>): Promise<T> {
     this.check();
-    const key = `apple:${source}`;
-    const previousLock = this.locks.get(key) ?? Promise.resolve();
-    let release!: () => void;
-    const lock = new Promise<void>((resolve) => { release = resolve; });
-    this.locks.set(key, lock);
-    await previousLock;
-    try {
-      if (!newerAppleProof(this.appleState.get(source) ?? null, proof)) return;
-      const previousHolders = new Set(this.billing.get(source) ?? []);
-      const holders = new Set(previousHolders);
-      if (proof.revoked) holders.clear();
-      else if (uid) { holders.clear(); holders.add(uid); }
-      this.billing.set(source, holders);
-      for (const owner of new Set([...previousHolders, ...(uid ? [uid] : [])]))
-        await this.transaction(owner, async (tx) => {
-          const entitlement = (await tx.get("entitlement", "current")) ?? { sources: {} };
-          if (holders.has(owner)) entitlement.sources[source] = proof.value;
-          else delete entitlement.sources[source];
-          await tx.put("entitlement", "current", entitlement);
-        });
-      this.appleState.set(source, structuredClone(proof));
-    } finally {
-      release();
-      if (this.locks.get(key) === lock) this.locks.delete(key);
-    }
-  }
-  async billingClaim(source: string, uid: string, exclusive: boolean) {
-    this.check();
-    if (this.billingSuperseded.has(source)) return null;
-    const holders = this.billing.get(source) ?? new Set<string>();
-    const others = exclusive ? [...holders].filter((h) => h !== uid) : [];
-    for (const o of others) holders.delete(o);
-    holders.add(uid);
-    this.billing.set(source, holders);
-    return others;
-  }
-  async applyGoogleBilling(source: string, uid: string, value: EntitlementSource, linkedSource?: string) {
-    this.check();
-    const key = "billing:google-global";
+    const key = "billing";
     const previous = this.locks.get(key) ?? Promise.resolve();
     let release!: () => void;
     const lock = new Promise<void>((resolve) => { release = resolve; });
     this.locks.set(key, lock);
     await previous;
     try {
-      if (this.billingSuperseded.has(source)) return;
-      const oldHolders = [...(this.billing.get(source) ?? [])];
-      const linkedHolders = linkedSource && linkedSource !== source
-        ? [...(this.billing.get(linkedSource) ?? [])] : [];
-      if (linkedSource && linkedSource !== source) {
-        this.billingSuperseded.set(linkedSource, source);
-        this.billing.delete(linkedSource);
-      }
-      this.billing.set(source, new Set([uid]));
-      for (const owner of [...new Set([...oldHolders, ...linkedHolders, uid])].sort())
-        await this.transaction(owner, async (tx) => {
-          const entitlement = (await tx.get("entitlement", "current")) ?? { sources: {} };
-          if (linkedSource) delete entitlement.sources[linkedSource];
-          if (owner === uid) entitlement.sources[source] = value;
-          else delete entitlement.sources[source];
-          await tx.put("entitlement", "current", entitlement);
-        });
+      return await action();
     } finally {
       release();
       if (this.locks.get(key) === lock) this.locks.delete(key);
     }
   }
-  async billingSupersede(source: string, successor: string) {
-    this.check();
-    if (source === successor) return [];
-    this.billingSuperseded.set(source, successor);
-    const displaced = [...(this.billing.get(source) ?? [])];
-    this.billing.delete(source);
-    return displaced;
+  private async updateEntitlement(owner: string, source: string, value: EntitlementSource | null, predecessor?: string) {
+    await this.transaction(owner, async (tx) => {
+      const entitlement = (await tx.get("entitlement", "current")) ?? { sources: {} };
+      if (predecessor) delete entitlement.sources[predecessor];
+      if (value) entitlement.sources[source] = value;
+      else delete entitlement.sources[source];
+      await tx.put("entitlement", "current", entitlement);
+    });
+  }
+  async applyAppleBilling(source: string, uid: string | null, proof: AppleBillingProof, now: number) {
+    await this.withBillingLock(async () => {
+      const previous = this.appleState.get(source) ?? null;
+      if (!newerAppleProof(previous, proof)) return;
+      if (previous?.accountId !== undefined) {
+        if (proof.accountId !== undefined && proof.accountId !== previous.accountId) return;
+        proof = { ...proof, accountId: previous.accountId };
+      }
+      const owners = await this.billingHolders(source);
+      const owner = resolvePurchaseOwner(owners, uid, proof.accountId);
+      if (!owner && (uid !== null || owners.length > 0)) return;
+      const active = !proof.revoked && proof.value.expires > now;
+      if (owner && (owners.length > 0 || active)) {
+        this.billing.set(source, new Set([owner]));
+        await this.updateEntitlement(owner, source, active ? proof.value : null);
+      }
+      this.appleState.set(source, structuredClone(proof));
+    });
+  }
+  async applyGoogleBilling(source: string, uid: string | null, proof: GoogleBillingProof, now: number) {
+    return this.withBillingLock(async () => {
+      const active = proof.value.expires > now;
+      const predecessor = active && proof.linkedSource !== source ? proof.linkedSource : undefined;
+      const successor = predecessor ? this.billingSuperseded.get(predecessor) : undefined;
+      if (this.billingSuperseded.has(source) || (successor && successor !== source)) return false;
+      const owners = await this.billingHolders(source);
+      if (predecessor) owners.push(...await this.billingHolders(predecessor));
+      const owner = resolvePurchaseOwner(owners, uid, proof.accountId);
+      if (!owner || (!active && !owners.length)) return false;
+      if (active) {
+        this.billing.set(source, new Set([owner]));
+        if (predecessor) {
+          this.billing.set(predecessor, new Set([owner]));
+          this.billingSuperseded.set(predecessor, source);
+        }
+      }
+      await this.updateEntitlement(owner, source, active ? proof.value : null, predecessor);
+      return active;
+    });
   }
   async billingHolders(source: string) {
     this.check();
     return [...(this.billing.get(source) ?? [])];
-  }
-  async billingHeld(source: string, uid: string) {
-    this.check();
-    return this.billing.get(source)?.has(uid) ?? false;
-  }
-  async billingRelease(source: string, uid: string) {
-    this.check();
-    this.billing.get(source)?.delete(uid);
   }
   async revisions(uids: string[]) {
     this.check();

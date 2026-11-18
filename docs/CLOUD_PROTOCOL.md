@@ -166,11 +166,12 @@ Client disconnects and gateway shutdown do not terminate durable calls or jobs.
 
 ## Cloud voice device proof and automatic account suspension
 
-Cloud `answer` and `turn` call events require both the device bearer token and
-`X-Oyobidashi-Voice-Token`. The latter is opaque, bound to that device, and
-expires after ten minutes. Other call events and LAN relay calls do not use it.
-The API and worker both enforce the proof before a model turn can start. Cloud
-voice is unavailable until the platform's proof configuration is present.
+Self-hosted cloud `answer` and `turn` events use the paired device bearer token.
+When `PUBLIC_URL=https://api.oyobidashi.me` or `VOICE_REQUIRE_DEVICE_PROOF=1`,
+these events also require `X-Oyobidashi-Voice-Token`, which is opaque, bound
+to the device, and expires after ten minutes. In these deployments the API and
+worker enforce the proof and the platform needs matching proof configuration.
+The voice proof endpoints return 404 when proof is disabled, as on the LAN relay.
 
 `GET /v1/voice` returns `enabled`, `supported`, `platform`, `uid`, `device_id`,
 and `token_ttl_seconds`. The device calls `POST /v1/voice/challenge` with
@@ -199,22 +200,32 @@ an ECDSA SHA-256 signature (base64 DER). `POST /v1/voice/token` receives
 signature and hashes the issued token at rest. Re-enrollment invalidates any
 previous token. Normal API calls do not invoke App Attest or Play Integrity.
 
+Each Firebase UID can submit up to 30 accepted voice turns in any rolling
+60-minute period, across calls and devices. Replaying an accepted turn ID
+returns its result without consuming another turn. While the budget is full,
+new requests that would ring are delivered as text. If a new turn reaches an
+already active call after the budget is exhausted, the server ends that call
+and returns 409 `call_ended`. The request stays pending for a text reply.
+New requests can ring again once a turn falls out of the window.
+
 The server suspends the entire Firebase UID with no expiry and no user-facing
-unban endpoint when it sees 30 distinct voice turn IDs in one minute, 90
-accepted turns across ten minute buckets, or three accepted turns longer than
-2000 Unicode characters across five minute buckets. Replaying the same
-accepted turn ID does not count. Banned users receive 403 `account_banned`;
-queued model and push jobs are skipped. A newly created Firebase UID is a
-different account and is outside this account-level ban.
+unban endpoint when it sees 30 distinct voice turn IDs in one minute or three
+turns longer than 2000 Unicode characters across five minute buckets. Replaying
+the same accepted turn ID does not count. Banned users receive 403
+`account_banned`; queued model and push jobs are skipped. A newly created
+Firebase UID is a different account and is outside this account-level ban.
 
 ## Subscription, attestation and the voice model
 
-All of this is optional. A deployment that sets none of the billing variables
-serves `{"enabled":false}` from `GET /v1/billing`, answers the other billing
-routes with 404, and uses its one configured voice model for everyone. The LAN
-relay has no billing routes; clients treat 404 on `GET /v1/billing` as disabled.
+Only the official HTTPS API at `https://api.oyobidashi.me` accepts purchases,
+restores, purchase sync and store notifications. Apps skip billing entirely
+for other endpoints and refuse redirects on billing requests. The cloud API
+serves `{"enabled":false}` from `GET /v1/billing` on other hosts and when the
+stores are unconfigured, with 404 for the other billing routes. The LAN relay
+has no billing routes. Self-hosted cloud uses its configured standard model
+for everyone.
 
-A subscription belongs to the owner UID, not to a device. The worker picks the
+A subscription belongs to the owner UID. The official worker picks the
 voice model per turn: an owner with an active subscription gets the standard
 model, everyone else gets `VOICE_MODEL_FREE` when it is set. A failure of one
 model never falls back to the other. Model names are deployment configuration
@@ -224,6 +235,8 @@ and are never returned by any API, tool result, error or log.
 
 ```json
 {"enabled":true,"active":false,"expires_at":null,"active_stores":[],
+ "voice_training":{"free":true,"plus":false},
+ "purchase_account_id":"98765432-1234-5678-9abc-123456789abc",
  "apple":{"product_ids":["..."]},"google":{"product_ids":["..."]}}
 ```
 
@@ -232,6 +245,16 @@ is ISO 8601 or null. `active_stores` lists the stores ("apple" and/or "google")
 with current access for this owner. Clients use it to show the correct
 subscription management instructions. Devices use `active` only for display;
 the server decides.
+
+`voice_training` declares the configured training terms of the model used for
+each plan. `true` means conversations may be used for training, `false`
+means no training use, and `null` or a missing value means unknown. Both plans
+use the standard model's terms when they share a model.
+
+`purchase_account_id` is a stable, opaque UUID for this UID. New purchases
+use it as the StoreKit `appAccountToken` or Play Billing
+`obfuscatedAccountId`. The server checks the value returned by the store
+against the authenticated UID. It grants no API access.
 
 Every state-changing billing call is device-authenticated, attested and bound to
 a single-use challenge. `POST /v1/billing/challenge` with `{}` returns
@@ -277,18 +300,25 @@ launch, after a purchase and on store updates, not only after buying, because a
 subscription can arrive without a purchase on that device (restore, family
 sharing, or a seat assigned by an organization).
 
-Apple ownership: `inAppOwnershipType` `PURCHASED` binds the subscription to one
-UID; a later sync from another UID moves it. `FAMILY_SHARED` and `ASSIGNED`
+Each purchase keeps its recorded UID across restores, device changes, expiry
+and refunds. A purchase without a store account identifier, such as an older
+or out-of-app purchase, uses the existing registration or is bound to the
+first UID that presents a valid, active purchase. Restore does not transfer a
+purchase to another UID. To recover access on a new device, sign in to the same
+Oyobidashi account before restoring.
+
+For Apple, `FAMILY_SHARED` and `ASSIGNED`
 (a seat bought by an organization through Apple Business or Apple School
 Manager) have no purchaser on the device and no `appAccountToken`. Each
 beneficiary must have a signed `appTransactionId`; the same signed beneficiary
-transaction can belong to one UID at a time, while different signed
+transaction is bound to one UID, while different signed
 beneficiaries may hold separate seats under the same original transaction.
 Updates are ordered by signed date and effective period so a saved transaction
 cannot undo a later refund or shorten a renewal. A transaction with `revocationDate`, including `revocationType`
-`ASSIGNMENT_REVOKE`, ends the subscription for its holders immediately. Google
-purchases always bind to one UID. A Google purchase with `linkedPurchaseToken`
-supersedes the previous token so its former holder cannot retain a second seat.
+`ASSIGNMENT_REVOKE`, ends access for its owner immediately. A Google purchase
+that replaces an earlier purchase inherits the recorded UID of the earlier
+purchase and supersedes its access in the same database transaction. A Play
+purchase is acknowledged after its owner and active access are confirmed.
 
 Store notifications keep the state current without a device:
 `POST /v1/billing/webhooks/apple` takes App Store Server Notifications V2 and
@@ -296,12 +326,17 @@ trusts only the verified `signedPayload`; `POST /v1/billing/webhooks/google`
 takes a Pub/Sub push whose OIDC bearer token must carry the configured audience
 and service account, and re-reads the purchase from Google instead of trusting
 the message. Unknown transactions are acknowledged and ignored. Webhooks are
-idempotent and unauthenticated bodies are bounded to 64KB.
+idempotent and unauthenticated bodies are bounded to 64KB. At most 16 webhook
+signature verifications run at once; excess requests get 429 and the store
+retries. A grace period in Apple renewal info extends only the subscription
+whose original transaction ID, environment and product it names. A Google Play
+test purchase (`testPurchase`) never grants access and is never acknowledged.
 
-Agents learn about data use without learning the model. When
-`VOICE_FREE_TRAINING=1` and the owner has no active subscription, the agent
-view of `GET /v1/presence` and the `delivery` object of `POST /v1/requests`
-carry `"voice_training":true`. The field is absent otherwise. It concerns only
+Agents learn about data use without learning the model. The API and worker
+share model selection settings and take the applicable training terms from
+`VOICE_STANDARD_TRAINING` or `VOICE_FREE_TRAINING`. When training use is
+declared, the agent view of `GET /v1/presence` and the `delivery` object of
+`POST /v1/requests` carry `"voice_training":true`. It concerns only
 `question`, `context`, `choices` and the spoken conversation of a request that
 is answered by voice call; text, choice and notification delivery never reach a
 model. MCP surfaces it as a `privacy_notice` string in tool results.

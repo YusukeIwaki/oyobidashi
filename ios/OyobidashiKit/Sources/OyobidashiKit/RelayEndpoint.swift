@@ -49,6 +49,12 @@ public struct RelayEndpoint: Equatable, Hashable, Sendable, Codable, CustomStrin
 
     public var host: String { baseURL.host ?? "" }
 
+    public var isOfficialCloud: Bool {
+        baseURL.scheme == "https" && host.lowercased() == "api.oyobidashi.me"
+            && (baseURL.port ?? 443) == 443 && baseURL.path.isEmpty
+            && baseURL.user == nil && baseURL.password == nil
+    }
+
     /// `segments` を1つずつパーセントエンコードして `<base>/<segments…>` を作る。
     public func url(segments: [String], query: [URLQueryItem] = []) -> URL {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!

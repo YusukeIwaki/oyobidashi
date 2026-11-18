@@ -8,7 +8,7 @@ final class BillingTests: XCTestCase {
     private let keyStore = FakeKeyStore()
 
     private func makeClient() throws -> RelayClient {
-        RelayClient(endpoint: try RelayEndpoint("https://relay.example"), deviceToken: "kd_token", transport: stub)
+        RelayClient(endpoint: try RelayEndpoint("https://api.oyobidashi.me"), deviceToken: "kd_token", transport: stub)
     }
 
     private func makeSync() throws -> BillingSync {
@@ -41,15 +41,16 @@ final class BillingTests: XCTestCase {
     // MARK: Happy path with an existing attested key
 
     func testSyncWithExistingKey() async throws {
-        keyStore.saveKeyID("key-1", host: "relay.example")
+        keyStore.saveKeyID("key-1", host: "api.oyobidashi.me")
         stubEnabled()
         stubChallenges()
-        stub.on("POST", "/v1/billing/apple", status: 200, body: Data(#"{"enabled":true,"active":true,"expires_at":"2027-01-01T00:00:00.000Z","apple":{"product_ids":["me.oyobidashi.ios.voice.monthly"]}}"#.utf8))
+        stub.on("POST", "/v1/billing/apple", status: 200, body: Data(#"{"enabled":true,"active":true,"purchase_account_id":"98765432-1234-5678-9abc-123456789abc","expires_at":"2027-01-01T00:00:00.000Z","apple":{"product_ids":["me.oyobidashi.ios.voice.monthly"]}}"#.utf8))
 
         let status = try await makeSync().sync(transactions: ["jws-1"])
 
         XCTAssertTrue(status.enabled)
         XCTAssertTrue(status.active)
+        XCTAssertEqual(status.purchaseAccountID?.uuidString.lowercased(), "98765432-1234-5678-9abc-123456789abc")
         XCTAssertEqual(attestor.generateCount, 0)
         XCTAssertEqual(attestor.attestCalls.count, 0)
         XCTAssertEqual(attestor.assertHashes.count, 1)
@@ -78,7 +79,7 @@ final class BillingTests: XCTestCase {
         XCTAssertEqual(attestor.attestCalls.count, 1)
         XCTAssertEqual(attestor.attestCalls.first?.keyID, "key-new")
         XCTAssertEqual(attestor.attestCalls.first?.hash, Data(SHA256.hash(data: Data("ch-1".utf8))))
-        XCTAssertEqual(keyStore.loadKeyID(host: "relay.example"), "key-new")
+        XCTAssertEqual(keyStore.loadKeyID(host: "api.oyobidashi.me"), "key-new")
         XCTAssertEqual(
             stub.requests.map { $0.url?.path },
             ["/v1/billing", "/v1/billing/challenge", "/v1/billing/apple/attest", "/v1/billing/challenge", "/v1/billing/apple"]
@@ -96,7 +97,7 @@ final class BillingTests: XCTestCase {
     // MARK: 409 re-attestation exactly once
 
     func testAttestationRequiredTriggersOneReAttestation() async throws {
-        keyStore.saveKeyID("key-old", host: "relay.example")
+        keyStore.saveKeyID("key-old", host: "api.oyobidashi.me")
         stubEnabled()
         stubChallenges()
         stub.on("POST", "/v1/billing/apple/attest", status: 204)
@@ -118,11 +119,11 @@ final class BillingTests: XCTestCase {
         XCTAssertEqual(stub.requests("POST", "/v1/billing/apple/attest").count, 1)
         XCTAssertEqual(stub.requests("POST", "/v1/billing/challenge").count, 3)
         XCTAssertEqual(keyStore.clearCount, 1)
-        XCTAssertEqual(keyStore.loadKeyID(host: "relay.example"), "key-new")
+        XCTAssertEqual(keyStore.loadKeyID(host: "api.oyobidashi.me"), "key-new")
     }
 
     func testSecondAttestationRequiredDoesNotRetryAgain() async throws {
-        keyStore.saveKeyID("key-old", host: "relay.example")
+        keyStore.saveKeyID("key-old", host: "api.oyobidashi.me")
         stubEnabled()
         stubChallenges()
         stub.on("POST", "/v1/billing/apple/attest", status: 204)
@@ -139,6 +140,30 @@ final class BillingTests: XCTestCase {
     }
 
     // MARK: Disabled server
+
+    func testOtherOriginsCannotStartOrSyncBilling() async throws {
+        for url in [
+            "https://relay.example",
+            "https://oyobidashi.up.railway.app",
+            "https://api.oyobidashi.me.example",
+            "http://api.oyobidashi.me",
+            "https://api.oyobidashi.me:8443",
+            "https://api.oyobidashi.me/custom",
+        ] {
+            let client = RelayClient(endpoint: try RelayEndpoint(url), deviceToken: "kd_token", transport: stub)
+            let status = try await BillingSync(client: client, attestor: attestor, keyStore: keyStore)
+                .sync(transactions: ["fixture"])
+            XCTAssertEqual(status, .disabled, url)
+            do {
+                _ = try await client.syncApple(keyID: "key", assertion: Data(), payload: "fixture")
+                XCTFail("Unexpected billing sync for \(url)")
+            } catch let error as RelayError {
+                XCTAssertEqual(error, .forbidden)
+            }
+        }
+        XCTAssertTrue(stub.requests.isEmpty)
+        XCTAssertTrue(try RelayEndpoint("https://API.OYOBIDASHI.ME:443/").isOfficialCloud)
+    }
 
     func testDisabledBillingMakesNoFurtherCalls() async throws {
         stub.on("GET", "/v1/billing", status: 200, body: Data(#"{"enabled":false}"#.utf8))
@@ -168,7 +193,7 @@ final class BillingTests: XCTestCase {
     // MARK: Payload integrity and cap
 
     func testPayloadIsCappedAt20Transactions() async throws {
-        keyStore.saveKeyID("key-1", host: "relay.example")
+        keyStore.saveKeyID("key-1", host: "api.oyobidashi.me")
         stubEnabled()
         stubChallenges()
         stub.on("POST", "/v1/billing/apple", status: 200, body: Data(#"{"enabled":true,"active":false,"expires_at":null}"#.utf8))
