@@ -35,6 +35,8 @@ GoogleService-Info.plist
 .env
 .env.*
 .envrc
+# 資格情報を埋め込んだ単体バイナリ
+standalone/dist/
 *.db
 *.db-shm
 *.db-wal

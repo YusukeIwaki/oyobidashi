@@ -7,6 +7,8 @@
     "pair":"./scripts/pair.sh",
     "mcp":"./scripts/mcp.sh",
     "setup":"./scripts/setup.sh",
+    "build:binary":"./scripts/build-binary.sh",
+    "test:standalone":"bun test standalone",
     "test:setup":"bun test scripts/setup-local.test.ts",
     "test:relay":"bun test --cwd relay",
     "test:mcp":"bun test --cwd mcp",

@@ -34,6 +34,7 @@ LAN版の音声の会話判断は **ログイン済みClaude Code CLIのみ**。
 - ユーザーのアカウント・既存リソースを確認し、再開時にFirebaseプロジェクトやAPNs鍵を重複作成しない。作者のプロジェクト・Team IDを使わない。
 - プロトコル変更前は `docs/PROTOCOL.md` と `docs/EXTENSIONS.md` を読む。実機検証記録は `docs/VALIDATION.md` にある。
 - サーバー: `bun test --cwd relay` / `bun test --cwd mcp` / `bun test --cwd integration`。
+- 単体バイナリ (`standalone/`、自分専用): `./scripts/build-binary.sh`で資格情報を埋め込んでビルド、検証は `bun test standalone`。鍵を含むので配布・コミットしない。手順は `README.md`。
 - クラウド: `bun test --cwd cloud` / `bun run --cwd cloud typecheck`。実PostgreSQL・Redisの強制断を含む検証は `./scripts/test-cloud.sh` (専用の一時コンテナのみ使用)。
 - iOS: `swift test --package-path ios/OyobidashiKit`。ローカル署名設定生成後は `xcodegen generate --spec ios/project.local.yml`。
 - Android: JDK17で `android/gradlew -p android :core:test :app:testDebugUnitTest :app:assembleDebug`。

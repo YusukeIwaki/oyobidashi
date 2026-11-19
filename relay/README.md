@@ -62,6 +62,7 @@ QR コードと `oyobidashi://pair?url=...&code=...` が表示されます。ア
 ```sh
 bun run devices            # ペアリング済みデバイスの一覧
 bun run revoke <device_id> # ペアリング解除 (接続中の WebSocket も数秒以内に切断)
+bun run src/cli.ts stop    # 起動中の relay を停止
 bun run status             # 設定・起動状態・Push 設定・デバイス数
 ```
 

@@ -32,6 +32,10 @@ export interface CliDeps {
   now?: () => number;
   /** Renders the QR code; injectable so tests do not depend on terminal output. */
   qr?: (text: string) => string;
+  /** Name of the single binary; when set, usage and hints show `<program> <command>` instead of `bun run`. */
+  program?: string;
+  /** Extra lines for the command list in the usage text (commands a wrapper adds). */
+  extraUsage?: string;
 }
 
 interface ServeState {
@@ -41,16 +45,20 @@ interface ServeState {
   public_url: string | null;
 }
 
-const USAGE = `oyobidashi relay ${VERSION}
+/** How to invoke `command` in hints: `oyobidashi pair` for the single binary, `bun run pair` from source. */
+const hint = (deps: CliDeps, command: string) => `${deps.program ?? "bun run"} ${command}`;
 
-Usage: bun run src/cli.ts <command> [options]
+const usage = (deps: CliDeps) => `oyobidashi relay ${VERSION}
 
-Commands:
+Usage: ${deps.program ?? "bun run src/cli.ts"} <command> [options]
+
+Commands:${deps.extraUsage ? `\n${deps.extraUsage}` : ""}
   serve [--port N] [--host HOST] [--public-url URL]   中継サーバーを起動する
   pair [--public-url URL] [--port N]                  ペアリングコードを発行して QR コードを表示する
                                                       (URL 既定値: http://<Mac の LAN 内プライベート IPv4>:<port>)
   devices                                             ペアリング済みデバイスの一覧
   revoke <device_id>                                  デバイスのペアリングを解除する
+  stop                                                起動中の中継サーバーを停止する
   status                                              設定・サーバー・デバイスの状態を表示する
 
 Environment:
@@ -60,7 +68,7 @@ class UsageError extends Error {}
 
 const serveStatePath = (home: string) => join(home, "serve.json");
 
-function readServeState(home: string): ServeState | null {
+export function readServeState(home: string): ServeState | null {
   try {
     const state = JSON.parse(readFileSync(serveStatePath(home), "utf8")) as ServeState;
     if (typeof state.pid !== "number" || typeof state.port !== "number") return null;
@@ -89,13 +97,13 @@ function renderQr(text: string): string {
 }
 
 /** Address to reach a server bound to `host` from this machine. */
-function localHost(host: string | undefined): string {
+export function localHost(host: string | undefined): string {
   if (!host || host === "0.0.0.0" || host === "localhost") return "127.0.0.1";
   if (host === "::") return "[::1]";
   return host.includes(":") ? `[${host}]` : host;
 }
 
-async function isServing(host: string, port: number, fetchFn: NonNullable<CliDeps["fetch"]>): Promise<boolean> {
+export async function isServing(host: string, port: number, fetchFn: NonNullable<CliDeps["fetch"]>): Promise<boolean> {
   try {
     const res = await fetchFn(`http://${host}:${port}/healthz`, { signal: AbortSignal.timeout(1000) });
     if (!res.ok) return false;
@@ -165,9 +173,10 @@ export async function startServe(options: ServeOptions, deps: CliDeps = {}): Pro
   }
   if (isLoopbackHost(host) && !publicUrl?.startsWith("https://")) err("警告: ループバックにバインドしているため、スマホからは接続できません。");
   out(`  home      : ${home}`);
-  out(`  push      : APNs ${push.providers.ios ? "有効" : "無効"} / FCM ${push.providers.android ? "有効" : "無効"}`);
+  const pushLabel = (on: unknown, source: string | undefined) => `${on ? "有効" : "無効"}${source === "embedded" ? " (埋め込み)" : ""}`;
+  out(`  push      : APNs ${pushLabel(push.providers.ios, push.sources.ios)} / FCM ${pushLabel(push.providers.android, push.sources.android)}`);
   out(`  devices   : ${store.listDevices().length} 台ペアリング済み`);
-  out(`ペアリングするには別のターミナルで: bun run pair`);
+  out(`ペアリングするには別のターミナルで: ${hint(deps, "pair")}`);
 
   return {
     url: server.url,
@@ -221,7 +230,7 @@ async function pairCommand(options: { publicUrl?: string; port?: number }, deps:
     err(`警告: relay が ${serve.host} にバインドされているため、スマホから ${url} には届きません (--host を外して起動し直してください)。`);
   }
   if (!(await isServing(localHost(serve?.host), port, fetchFn))) {
-    err(`警告: port ${port} で relay が応答しません。先に \`bun run serve\` で起動してください。`);
+    err(`警告: port ${port} で relay が応答しません。先に \`${hint(deps, "serve")}\` で起動してください。`);
   }
   return 0;
 }
@@ -274,13 +283,45 @@ function revokeCommand(deviceId: string | undefined, deps: CliDeps): number {
   }
 }
 
+/**
+ * Stops the relay recorded in serve.json. The pid is only signalled while that relay still
+ * answers on its port, so a stale file whose pid was reused never kills an unrelated process.
+ */
+async function stopCommand(deps: CliDeps): Promise<number> {
+  const out = deps.out ?? console.log;
+  const err = deps.err ?? console.error;
+  const fetchFn = deps.fetch ?? fetch;
+  const home = resolveHome(deps.env ?? process.env);
+  const serve = readServeState(home);
+  if (!serve || !(await isServing(localHost(serve.host), serve.port, fetchFn))) {
+    out("relay は起動していません。");
+    return 0;
+  }
+  if (serve.pid === process.pid) {
+    err("エラー: この relay は同じプロセス内で動いています。");
+    return 1;
+  }
+  process.kill(serve.pid, "SIGTERM");
+  for (let i = 0; i < 100; i++) {
+    try {
+      process.kill(serve.pid, 0);
+    } catch {
+      out(`relay を停止しました (pid ${serve.pid})`);
+      return 0;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  err(`エラー: relay (pid ${serve.pid}) が 10 秒以内に終了しませんでした。`);
+  return 1;
+}
+
 async function statusCommand(deps: CliDeps): Promise<number> {
   const out = deps.out ?? console.log;
   const fetchFn = deps.fetch ?? fetch;
   const home = resolveHome(deps.env ?? process.env);
   out(`home      : ${home}`);
   if (!existsSync(configPath(home))) {
-    out("config    : 未作成 (`bun run serve` で初回起動すると作成されます)");
+    out(`config    : 未作成 (\`${hint(deps, "serve")}\` で初回起動すると作成されます)`);
     return 0;
   }
   const { config } = loadOrCreateConfig(home);
@@ -301,8 +342,10 @@ async function statusCommand(deps: CliDeps): Promise<number> {
     out("pairing URL: (プライベート IPv4 が見つかりません: pair に --public-url を指定してください)");
   }
   const push = await createPushFromConfig(config, { fetch: fetchFn, apnsTransport: async () => ({ status: 0, body: "" }) });
-  out(`push APNs : ${push.providers.ios ? "有効" : config.apns ? "設定エラー" : "未設定"}`);
-  out(`push FCM  : ${push.providers.android ? "有効" : config.fcm ? "設定エラー" : "未設定"}`);
+  const pushState = (on: unknown, source: string | undefined) =>
+    `${on ? "有効" : source ? "設定エラー" : "未設定"}${source === "embedded" ? " (埋め込み)" : ""}`;
+  out(`push APNs : ${pushState(push.providers.ios, push.sources.ios)}`);
+  out(`push FCM  : ${pushState(push.providers.android, push.sources.android)}`);
   for (const warning of push.warnings) out(`  警告: ${warning}`);
   push.close();
   if (existsSync(dbPath(home))) {
@@ -357,6 +400,9 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         const { positionals } = parseArgs({ args: rest, options: {}, allowPositionals: true });
         return revokeCommand(positionals[0], deps);
       }
+      case "stop":
+        parseArgs({ args: rest, options: {} });
+        return await stopCommand(deps);
       case "status":
         parseArgs({ args: rest, options: {} });
         return await statusCommand(deps);
@@ -364,16 +410,16 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       case "help":
       case "--help":
       case "-h":
-        out(USAGE);
+        out(usage(deps));
         return command === undefined ? 2 : 0;
       default:
         throw new UsageError(`unknown command: ${command}`);
     }
   } catch (e) {
-    const usage = e instanceof UsageError || (e as { code?: string })?.code?.startsWith("ERR_PARSE_ARGS");
+    const isUsage = e instanceof UsageError || (e as { code?: string })?.code?.startsWith("ERR_PARSE_ARGS");
     err(`エラー: ${(e as Error).message}`);
-    if (usage) err(`\n${USAGE}`);
-    return usage ? 2 : 1;
+    if (isUsage) err(`\n${usage(deps)}`);
+    return isUsage ? 2 : 1;
   }
 }
 

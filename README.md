@@ -66,6 +66,35 @@ Claude Code / CodexなどのMCP設定:
 
 これを`ask_human`へ渡します。`pending`なら同じ`request_id`で`wait_for_answer`を呼びます。不要になったら`cancel_request`。通話は`get_human_status`を確認後、`priority: high|urgent`と`delivery_mode: call`を明示してください。[MCPの詳細](mcp/README.md)。
 
+## 単体バイナリ (自分専用)
+
+中継・MCP・Pushの資格情報を1つの実行ファイルにまとめられます。Bunもリポジトリも不要になり、MCPとして起動すると中継が未起動なら裏で起動します。
+
+```sh
+./scripts/build-binary.sh              # standalone/dist/oyobidashi を作る
+./scripts/build-binary.sh --out ~/bin/oyobidashi
+```
+
+`.oyobidashi/config.json` (`--home`または`OYOBIDASHI_HOME`で変更) が指すAPNsの`.p8`とFCMのサービスアカウントJSONを読み、中身を埋め込みます。埋め込んだ資格情報は`config.json`より優先し、鍵ファイルは実行時に不要です。FCMの`"auth": "gcloud"`は埋め込めないため、その場合は実行時に`config.json`と`gcloud`を使います。鍵を更新したら作り直します。
+
+**このバイナリには鍵がそのまま含まれ、取り出せます。自分の端末だけで使い、配布・コミットしないでください。** 出力先の`standalone/dist/`はgitignore対象で、ファイルは所有者だけが実行できます。
+
+```json
+{
+  "mcpServers": {
+    "oyobidashi": {
+      "command": "/absolute/path/to/oyobidashi",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+- 状態 (設定・DB・`relay.log`) の置き場所は`~/.oyobidashi/`です。`scripts/`で使ってきた`.oyobidashi/`のペアリングを引き継ぐには、MCP設定の`env`と各コマンドに同じ`OYOBIDASHI_HOME`を指定します。
+- `oyobidashi pair`でペアリング、`oyobidashi status`で埋め込みの有無と起動状態、`oyobidashi stop`で裏の中継を停止します。作り直したバイナリへ切り替えるときは`stop`してから使います。
+- 中継はMCPを閉じても動き続けます。別の`OYOBIDASHI_HOME`の中継が同じポートを使っていると起動できず、MCPの標準エラーに警告を出します。
+- 音声の会話判断は、これまでどおりログイン済みの`claude`コマンドを実行時に呼びます (バイナリには含まれません)。
+
 ## 音声
 
 Gemini / OpenAIの音声APIキーは不要です。端末のSpeech / TTSと、Macのログイン済みClaude Code CLIを組み合わせます。CLIにツール・MCP・ユーザー設定・フックを渡さず、会話データをstdin、構造化応答をstdoutで受け取ります。OAuth認証情報はCLI自身が扱います。APIキーの抽出・流用は行いません。
@@ -93,6 +122,8 @@ PushはOSやネットワークにより遅延・不達になります。iOSの�
 # サーバー・MCPの単体試験
 bun test --cwd relay
 bun test --cwd mcp
+# 単体バイナリのビルドと起動 (偽の鍵を使用)
+bun test standalone
 # Swiftの単体試験
 swift test --package-path ios/OyobidashiKit
 # Android (JDK17をJAVA_HOMEに設定)

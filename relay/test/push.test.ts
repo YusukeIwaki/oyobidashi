@@ -738,6 +738,47 @@ describe("createPushFromConfig", () => {
     expect(urls).toEqual(["https://oauth2.googleapis.com/token", "https://fcm.googleapis.com/v1/projects/proj-x/messages:send"]);
   });
 
+  test("embedded credentials need no files and win over config.json", async () => {
+    const sent: ApnsTransportRequest[] = [];
+    const urls: string[] = [];
+    const setup = await createPushFromConfig(
+      {
+        ...base,
+        apns: { key_path: join(dir, "missing.p8"), key_id: "FILE", team_id: "FILE" },
+        fcm: { service_account_path: join(dir, "missing.json") },
+      },
+      {
+        embedded: {
+          apns: { key_pem: ecPem, key_id: "EMB", team_id: "TEAM", bundle_id: "com.example.embedded" },
+          fcm: { service_account_json: JSON.stringify({ client_email: "a@b", private_key: rsaPem, project_id: "proj-emb" }) },
+        },
+        apnsTransport: async (req) => (sent.push(req), { status: 200, body: "" }),
+        fetch: async (url) => (urls.push(url), Response.json({ access_token: "at", expires_in: 3600 })),
+      },
+    );
+    expect(setup.warnings).toEqual([]);
+    expect(setup.sources).toEqual({ ios: "embedded", android: "embedded" });
+    await setup.providers.ios!.send({ token: "t", environment: "production" }, question());
+    expect(sent[0]!.headers["apns-topic"]).toBe("com.example.embedded");
+    expect(decodeJwt(sent[0]!.headers.authorization!.slice(7)).header.kid).toBe("EMB");
+    await setup.providers.android!.send({ token: "t", environment: null }, question());
+    expect(urls[1]).toBe("https://fcm.googleapis.com/v1/projects/proj-emb/messages:send");
+  });
+
+  test("embedding one provider leaves the other on config.json", async () => {
+    const keyPath = join(dir, "AuthKey_MIXED.p8");
+    writeFileSync(keyPath, ecPem);
+    const setup = await createPushFromConfig(
+      { ...base, apns: { key_path: keyPath, key_id: "KID", team_id: "TID" } },
+      { embedded: { fcm: { service_account_json: "not json" } }, apnsTransport: neverTransport },
+    );
+    expect(setup.sources).toEqual({ ios: "config", android: "embedded" });
+    expect(setup.providers.ios).toBeDefined();
+    expect(setup.providers.android).toBeUndefined();
+    expect(setup.warnings).toHaveLength(1);
+    expect(setup.warnings[0]).toStartWith("FCM disabled: ");
+  });
+
   test("broken credentials disable that provider with a warning instead of crashing", async () => {
     const garbageKey = join(dir, "garbage.p8");
     writeFileSync(garbageKey, "this is not a key");
