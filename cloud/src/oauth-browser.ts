@@ -14,7 +14,8 @@ import {
 } from "firebase/auth";
 import type {AccountProvider} from "../../relay/src/auth-handoff.ts";
 import {browserAuthFailure, parsePublicAuthConfig} from "./auth-browser-flow.ts";
-import {authorizationParams, pairedDevices, pairingUrl, qrPath} from "./oauth-browser-flow.ts";
+import {authorizationParams, canPostponeInputConsent, pairedDevices, pairingUrl, qrPath, stepAfterSignIn} from "./oauth-browser-flow.ts";
+import {INPUT_RESTRICTION_TERMS, UNRESTRICTED_INPUT, parseInputRestriction, type InputRestriction} from "./input-restriction.ts";
 
 // Consent page for a hosted MCP client (/oauth/authorize) and the standalone
 // pairing page (/pair). The Firebase session lives in memory only and its ID
@@ -91,6 +92,7 @@ async function decide(decision: "approve" | "deny") {
   } catch (error) {
     const code = (error as {status?: number}).status;
     message(code === 429 ? "試行が集中しています。少し待ってから、もう一度お試しください。"
+      : code === 409 ? "FREEプランの入力制限への同意が必要です。ページを読み込み直して、もう一度お試しください。"
       : code === 400 || code === 401 || code === 403 ? "接続を完了できませんでした。元のアプリから接続をやり直してください。"
       : UNREACHABLE);
     setDisabled(false);
@@ -112,6 +114,51 @@ function drawQr(text: string) {
   qr.replaceChildren(svg);
 }
 
+function describe(entries: readonly (readonly [string, string])[]) {
+  details.replaceChildren();
+  for (const [term, value] of entries) {
+    const dt = document.createElement("dt"), dd = document.createElement("dd");
+    dt.textContent = term;
+    dd.textContent = value;
+    details.append(dt, dd);
+  }
+  details.hidden = false;
+}
+const clientDetails = [["アプリの自己申告名（未確認）", clientName], ["許可後の戻り先", main?.dataset.redirect ?? ""]] as const;
+
+/**
+ * The FREE plan input restriction. Its own screen and its own button: the human
+ * accepts what they must not send, not a generic set of terms.
+ */
+function showInputRestriction(restriction: InputRestriction, paired: number) {
+  clearTimeout(pollTimer);
+  providers.replaceChildren();
+  pairing.hidden = true;
+  const terms = INPUT_RESTRICTION_TERMS;
+  heading.textContent = terms.heading;
+  explanation.textContent = terms.summary;
+  describe([...terms.rules.map((rule, index) => [`同意する内容 ${index + 1}`, rule] as const), ["制限のないプラン", terms.alternative]]);
+  const proceed = () => continueSignedIn(UNRESTRICTED_INPUT, paired);
+  actions.replaceChildren(button(terms.accept, async () => {
+    setDisabled(true);
+    message("記録しています…");
+    try {
+      const accepted = parseInputRestriction(await call("/v1/input-restriction", {method:"POST", body:{accept:true, version:restriction.version}}));
+      if (!accepted.accepted) throw new Error("not accepted");
+      setDisabled(false);
+      proceed();
+    } catch (error) {
+      message((error as {status?: number}).status === 409 ? "内容が更新されました。ページを読み込み直してください。" : UNREACHABLE);
+      setDisabled(false);
+    }
+  }));
+  if (canPostponeInputConsent(mode)) actions.append(button("あとで確認する", proceed, true));
+  else actions.append(button("同意せず、接続しない", () => void decide("deny"), true));
+  message(canPostponeInputConsent(mode)
+    ? "同意するまで音声通話は使えず、質問は文字で届きます。"
+    : "同意すると、次の画面でアプリの接続を確認できます。");
+}
+
 function showApproval() {
   if (mode !== "authorize") return;
   clearTimeout(pollTimer);
@@ -119,7 +166,7 @@ function showApproval() {
   qr.replaceChildren();
   heading.textContent = "接続の許可を確認";
   explanation.textContent = `未確認のアプリ「${clientName}」に、あなたのスマホへの質問・通知を許可しますか？`;
-  details.hidden = false;
+  describe(clientDetails);
   actions.replaceChildren(
     button("このアプリを許可する", () => void decide("approve")),
     button("許可しない", () => void decide("deny"), true),
@@ -131,6 +178,7 @@ async function showConnections() {
   if (mode !== "connections") return;
   providers.replaceChildren();
   actions.replaceChildren();
+  details.hidden = true;
   message("接続済みアプリを確認しています…");
   try {
     const result = await call("/oauth/grants", {method:"GET"}) as {
@@ -225,16 +273,26 @@ async function signedIn() {
   providers.replaceChildren();
   actions.replaceChildren();
   message("アカウントを確認しています…");
-  if (mode === "connections") return showConnections();
-  let count: number;
-  try { count = pairedDevices(await call("/v1/presence", {method:"GET"})); }
-  catch {
+  let count: number, restriction: InputRestriction;
+  try {
+    restriction = parseInputRestriction(await call("/v1/input-restriction", {method:"GET"}));
+    count = mode === "connections" ? 0 : pairedDevices(await call("/v1/presence", {method:"GET"}));
+  } catch {
     message(UNREACHABLE);
     actions.replaceChildren(button("再試行", () => void signedIn()));
     return;
   }
-  if (mode === "authorize" && count > 0) return showApproval();
-  await showPairing(count);
+  continueSignedIn(restriction, count);
+}
+
+function continueSignedIn(restriction: InputRestriction, paired: number) {
+  message("");
+  switch (stepAfterSignIn(mode, restriction, paired)) {
+    case "input_restriction": return showInputRestriction(restriction, paired);
+    case "connections": return void showConnections();
+    case "approval": return showApproval();
+    case "pairing": return void showPairing(paired);
+  }
 }
 
 async function start() {
@@ -276,13 +334,7 @@ async function start() {
 if (mode === "authorize") {
   heading.textContent = "お呼び出しへの接続を許可";
   explanation.textContent = `未確認のアプリ「${clientName}」が、あなたのスマホへ質問や通知を送ろうとしています。ログイン後に許可するか選べます。`;
-  for (const [term, value] of [["アプリの自己申告名（未確認）", clientName], ["許可後の戻り先", main?.dataset.redirect ?? ""]] as const) {
-    const dt = document.createElement("dt"), dd = document.createElement("dd");
-    dt.textContent = term;
-    dd.textContent = value;
-    details.append(dt, dd);
-  }
-  details.hidden = false;
+  describe(clientDetails);
 } else if (mode === "pair") {
   heading.textContent = "スマホをペアリング";
   explanation.textContent = "MCPの接続に使ったアカウントでログインすると、お呼び出しアプリで読み取るQRコードを表示します。";

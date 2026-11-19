@@ -6,6 +6,7 @@ import { GooglePlay } from "../src/billing/google.ts";
 import { verifyAppleJws } from "../src/billing/apple.ts";
 import { OFFICIAL_CLOUD_ORIGIN } from "../src/config.ts";
 import { unauthorized } from "../src/errors.ts";
+import { INPUT_RESTRICTION_VERSION } from "../src/input-restriction.ts";
 import { JobWorker } from "../src/worker.ts";
 import { fakeAppAttest, fakeAppStore } from "./billing-fixtures.ts";
 import { harness } from "./helpers.ts";
@@ -24,6 +25,7 @@ afterAll(() => attest.dispose());
 function setup(config: Partial<BillingConfig> = {}, database?: Database) {
   const h = harness(database);
   h.service.voiceTrainingPolicy = { free: true, plus: false };
+  h.service.freeInputRestricted = true;
   const billing = new Billing(h.service, {
     apple: {
       bundleId: BUNDLE,
@@ -105,8 +107,11 @@ function setup(config: Partial<BillingConfig> = {}, database?: Database) {
       ...fields,
     });
   const training = async (uid: string) =>
-    (await call("GET", "/v1/presence", `agent-${uid}`)).body.voice_training === true;
-  return { h, app, call, challenge, phone, transaction, training, billing };
+    (await call("GET", "/v1/presence", `agent-${uid}`)).body.input_restricted === true;
+  /** FREE owners of the hosted service accept the input restriction before any call. */
+  const acceptInputRestriction = (uid: string) =>
+    h.db.transaction(uid, (tx) => h.service.acceptInputRestriction(tx, INPUT_RESTRICTION_VERSION));
+  return { h, app, call, challenge, phone, transaction, training, billing, acceptInputRestriction };
 }
 
 describe("subscription billing", () => {
@@ -117,8 +122,8 @@ describe("subscription billing", () => {
     expect((await h.call("POST", "/v1/billing/challenge", d.device_token, {})).status).toBe(404);
     expect((await h.call("POST", "/v1/billing/webhooks/apple", null, {})).status).toBe(404);
     expect(loadBillingConfig({})).toEqual({});
-    // Without a training free model, agents see no notice.
-    expect((await h.call("GET", "/v1/presence")).body.voice_training).toBeUndefined();
+    // Without a restricted free model, agents see no notice.
+    expect((await h.call("GET", "/v1/presence")).body.input_restricted).toBeUndefined();
   });
 
   test("an attested device activates the owner's subscription", async () => {
@@ -135,7 +140,7 @@ describe("subscription billing", () => {
     });
     expect(await s.training("alice")).toBe(true);
     const created = await s.call("POST", "/v1/requests", "agent-alice", { question: "q" });
-    expect(created.body.delivery.voice_training).toBe(true);
+    expect(created.body.delivery.input_restricted).toBe(true);
 
     const synced = await p.sync([await s.transaction()]);
     expect(synced.status).toBe(200);
@@ -144,7 +149,7 @@ describe("subscription billing", () => {
     expect(await s.training("alice")).toBe(false);
     expect(
       (await s.call("POST", "/v1/requests", "agent-alice", { question: "q2" })).body.delivery
-        .voice_training,
+        .input_restricted,
     ).toBeUndefined();
     // The subscription simply runs out; no device has to report that.
     s.h.advance(31 * 86400_000);
@@ -504,6 +509,7 @@ describe("subscription billing", () => {
       conversation: provider("standard"),
       freeConversation: provider("free"),
     });
+    await s.acceptInputRestriction("alice");
     const voice = await s.h.setup("alice");
     await voice.turn("one");
     await worker.runOnce("turn");
@@ -515,7 +521,8 @@ describe("subscription billing", () => {
     s.h.advance(31 * 86400_000);
     expect(used).toEqual(["free", "standard"]);
 
-    // A deployment with one model never looks at subscriptions.
+    // A deployment with one model never looks at subscriptions or restricts input.
+    s.h.service.freeInputRestricted = false;
     const single = new JobWorker(s.h.service, { conversation: provider("only") });
     const bob = await s.h.setup("bob");
     await bob.turn("x");
@@ -530,6 +537,7 @@ describe("subscription billing", () => {
       conversation: { turn: async () => (standard++, { reply: "ok", resolved: false, answer: null }) },
       freeConversation: { turn: async () => { throw new Error("down"); } },
     });
+    await s.acceptInputRestriction("alice");
     const voice = await s.h.setup("alice"),
       t = await voice.turn("one");
     await worker.runOnce("turn");

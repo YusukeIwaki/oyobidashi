@@ -214,13 +214,13 @@ export class JobWorker {
         await this.done(tx, current);
         return null;
       }
-      if (this.service.voicePrivacy) {
-        const device = await tx.get("device", t.deviceId);
-        if (!device || (device.platform === "ios" && t.voiceConsent !== this.service.voicePrivacy.id)) {
-          await this.failTurn(tx, r, t);
-          await this.done(tx, current);
-          return null;
-        }
+      // Checked per turn, like the plan: a subscription that lapses mid-call must not
+      // send an owner's words to the restricted model before they accepted its terms.
+      if (await this.service.inputConsentMissing(tx)) {
+        await this.service.endCall(tx, r, "failed", true);
+        await this.service.save(tx, r, "fallback");
+        await this.done(tx, current);
+        return null;
       }
       t.state = "running";
       r.call.turn = turnView(t);

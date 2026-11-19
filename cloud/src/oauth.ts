@@ -1,5 +1,5 @@
 import { authPageHeaders } from "./account-auth.ts";
-import { CloudError, invalid, json, readBody, unauthorized } from "./errors.ts";
+import { CloudError, conflict, invalid, json, readBody, unauthorized } from "./errors.ts";
 import { hash, type CloudService } from "./service.ts";
 import type { IdentityVerifier } from "./types.ts";
 
@@ -435,7 +435,12 @@ export class OAuthServer {
     if (body.decision !== "approve") throw invalid("decision is invalid");
 
     const uid = await this.human(req);
-    await this.deps.service.db.transaction(uid, (tx) => this.deps.service.oauthAttempt(tx));
+    await this.deps.service.db.transaction(uid, async (tx) => {
+      await this.deps.service.oauthAttempt(tx);
+      // A FREE owner links an agent only after accepting the input restriction on this page.
+      if (await this.deps.service.inputConsentMissing(tx))
+        throw conflict("input_consent_required", "accept the FREE plan input restriction before connecting");
+    });
     const code = secret("kmo_"),
       now = this.now;
     await this.deps.store.insert({

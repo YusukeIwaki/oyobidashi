@@ -524,3 +524,25 @@ test("voice training follows the model selected for each deployment and plan", (
     .toEqual({ free: false, plus: false });
   expect(voiceModels({}, false).training).toEqual({ free: null, plus: null });
 });
+
+describe("FREE plan input restriction of a deployment", () => {
+  const env = { ANTHROPIC_MODEL: "standard", VOICE_MODEL_FREE: "contributor", VOICE_STANDARD_TRAINING: "0", VOICE_FREE_TRAINING: "1" };
+  test("the hosted service restricts input when FREE uses its own training model", () => {
+    expect(voiceModels(env, true).freeInputRestricted).toBe(true);
+  });
+  test("unknown terms of a separate FREE model are treated as restricted", () => {
+    expect(voiceModels({ ...env, VOICE_FREE_TRAINING: "" }, true).freeInputRestricted).toBe(true);
+  });
+  test("a FREE model that is never used for training is not restricted", () => {
+    expect(voiceModels({ ...env, VOICE_FREE_TRAINING: "0" }, true).freeInputRestricted).toBe(false);
+  });
+  test("FREE sharing the standard model is not restricted", () => {
+    expect(voiceModels({ ...env, VOICE_MODEL_FREE: "standard" }, true).freeInputRestricted).toBe(false);
+    expect(voiceModels({ ...env, VOICE_MODEL_FREE: undefined }, true).freeInputRestricted).toBe(false);
+  });
+  test("a self-hosted deployment is never restricted, whatever its model is used for", () => {
+    expect(voiceModels(env, false).freeInputRestricted).toBe(false);
+    expect(voiceModels({ ...env, VOICE_STANDARD_TRAINING: "1" }, false).freeInputRestricted).toBe(false);
+    expect(voiceModels({}, false).freeInputRestricted).toBe(false);
+  });
+});

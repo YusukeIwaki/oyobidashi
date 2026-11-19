@@ -20,6 +20,7 @@ test("production purchases and review purchases use separate Apple environments"
     APPLE_IAP_SANDBOX_REVIEW_UIDS: "review",
   });
   h.service.voiceTrainingPolicy = { free: true, plus: false };
+  h.service.freeInputRestricted = true;
   const billing = new Billing(h.service, {
     apple: {
       bundleId, appId, productIds: [productId], environments: ["Production"],
@@ -64,7 +65,7 @@ test("production purchases and review purchases use separate Apple environments"
     const status = await h.db.transaction(uid, tx => billing.status(tx));
     return "active" in status && status.active;
   };
-  const training = (uid: string) => h.db.transaction(uid, tx => h.service.voiceTraining(tx));
+  const training = async (uid: string) => (await h.db.transaction(uid, tx => h.service.inputRestriction(tx))).restricted;
 
   const syncReview = await phone("review");
   const syncPublic = await phone("public");

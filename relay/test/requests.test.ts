@@ -7,7 +7,7 @@ describe("GET /healthz", () => {
     const res = await h.call("GET", "/healthz");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("application/json; charset=utf-8");
-    expect(await res.json()).toEqual({ ok: true, version: "0.2.0", voice_privacy: { id: "v1:claude-code", provider: "claude-code" } });
+    expect(await res.json()).toEqual({ ok: true, version: "0.2.0", voice_ai: { provider: "claude-code" } });
   });
 });
 

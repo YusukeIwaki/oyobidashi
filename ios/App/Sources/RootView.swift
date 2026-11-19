@@ -5,6 +5,7 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(Router.self) private var router
     @Environment(\.scenePhase) private var scenePhase
+    @State private var awaitingConsent: PendingPairing?
 
     var body: some View {
         @Bindable var router = router
@@ -33,6 +34,36 @@ struct RootView: View {
             if phase != .active, let submission = router.answerCompletion {
                 router.finishAnswerCompletion(submission)
             }
+            if phase == .active { Task { await model.reviewVoiceAIConsent() } }
+        }
+        .task(id: model.credentials) { await model.reviewVoiceAIConsent() }
+        // ディープリンクからのペアリングも、同意の画面を通る。
+        .sheet(item: $awaitingConsent) { pending in
+            VoiceAIConsentView(
+                endpoint: pending.info.endpoint,
+                acceptTitle: VoiceAIDisclosure.acceptTitle, declineTitle: "キャンセル",
+                onAccept: { disclosure in
+                    awaitingConsent = nil
+                    Task { await model.pair(pending.info, voiceAIConsent: disclosure) }
+                },
+                onDecline: { awaitingConsent = nil }
+            )
+            .environment(model)
+        }
+        // この版より前にペアリングした端末、または接続先の送信先が変わった場合に1回だけ確認する。
+        .sheet(item: Binding(
+            get: { awaitingConsent == nil ? model.voiceAIReview.map { ConsentReview(disclosure: $0) } : nil },
+            set: { _ in }
+        )) { review in
+            if let endpoint = model.credentials?.endpoint {
+                VoiceAIConsentView(
+                    known: review.disclosure, endpoint: endpoint,
+                    acceptTitle: "同意する", declineTitle: "ペアリングを解除",
+                    onAccept: { model.acceptVoiceAI($0) },
+                    onDecline: { Task { await model.unpair() } }
+                )
+                .environment(model)
+            }
         }
         .onChange(of: router.path) { _, path in
             if let submission = router.answerCompletion, path.last != submission.requestID {
@@ -60,7 +91,7 @@ struct RootView: View {
             isPresented: Binding(get: { router.pendingPairing != nil }, set: { if !$0 { router.pendingPairing = nil } }),
             presenting: router.pendingPairing
         ) { info in
-            Button("ペアリング") { Task { await model.pair(info) } }
+            Button("ペアリング") { awaitingConsent = PendingPairing(info: info) }
             Button("キャンセル", role: .cancel) {}
         } message: { info in
             Text(model.isPaired
@@ -87,6 +118,11 @@ struct RootView: View {
             Text(model.pairingFailure?.userMessage ?? "")
         }
     }
+}
+
+private struct ConsentReview: Identifiable {
+    let disclosure: VoiceAIDisclosure
+    var id: String { disclosure.provider ?? "" }
 }
 
 private struct FallbackItem: Identifiable {

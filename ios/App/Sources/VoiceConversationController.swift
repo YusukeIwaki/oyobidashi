@@ -10,7 +10,6 @@ import Speech
 final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
     enum Phase: Equatable {
         case idle
-        case confirmingConsent
         case speaking
         case listening
         case sendingTurn
@@ -25,7 +24,6 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
             let name: String
             switch phase {
             case .idle: name = "idle"
-            case .confirmingConsent: name = "confirming_consent"
             case .speaking: name = "speaking"
             case .listening: name = "listening"
             case .sendingTurn: name = "sending_turn"
@@ -53,12 +51,8 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
     var onConversationFailed: (@MainActor (String) -> Void)?
 
     @ObservationIgnored private let synthesizer = AVSpeechSynthesizer()
-    @ObservationIgnored private var consentSpeech: (utterance: AVSpeechUtterance, finished: @MainActor () -> Void)?
-    @ObservationIgnored private var pendingConsent: (policy: String, question: String)?
-    @ObservationIgnored private var consentTimeout: Task<Void, Never>?
     @ObservationIgnored private weak var model: AppModel?
     @ObservationIgnored private var requestID: String?
-    @ObservationIgnored private var voiceConsent: String?
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var pendingResolvedEnd = false
     @ObservationIgnored private var usesCallKitAudio = false
@@ -81,23 +75,19 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
 
     // MARK: Lifecycle
 
-    private func prepare(requestID: String, usesCallKitAudio: Bool, consent: String?) -> Int {
+    /// 会話開始。`initialText` は answer 応答の reply (無ければ質問文)。
+    /// 応答したら、確認を挟まずに質問の読み上げから始める。
+    func startConversation(requestID: String, initialText: String, usesCallKitAudio: Bool) async {
         // Keep the session that CallKit just activated when resetting recognition.
         self.usesCallKitAudio = usesCallKitAudio
         cancelCurrentWork()
         generation += 1
+        let gen = generation
         self.requestID = requestID
-        voiceConsent = consent
         pendingResolvedEnd = false
         liveTranscript = ""
         lastUserText = ""
         lastAssistantText = ""
-        return generation
-    }
-
-    /// 会話開始。`initialText` は answer 応答の reply (無ければ質問文)。
-    func startConversation(requestID: String, initialText: String, consent: String) async {
-        let gen = prepare(requestID: requestID, usesCallKitAudio: false, consent: consent)
         // 権限は読み上げの前にまとめて確認する (途中で切れると会話が止まるため)。
         guard await SpeechPermissions.requestSpeech() else {
             failConversation("音声認識が許可されていません。設定アプリで許可してください", gen: gen)
@@ -108,27 +98,9 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
             return
         }
         guard generation == gen else { return }
-        startApprovedConversation(initialText: initialText, gen: gen)
-    }
-
-    func askSpokenConsent(requestID: String, initialText: String, disclosure: VoicePrivacyDisclosure?) {
-        let gen = prepare(requestID: requestID, usesCallKitAudio: true, consent: nil)
-        guard let disclosure, SFSpeechRecognizer.authorizationStatus() == .authorized,
-              AVAudioApplication.shared.recordPermission == .granted,
-              SFSpeechRecognizer(locale: Locale(identifier: "ja-JP"))?.supportsOnDeviceRecognition == true else {
-            fallBackFromConsent()
-            return
-        }
-        pendingConsent = (disclosure.id, initialText)
-        speakConsent(disclosure.spokenPrompt) { [weak self] in
-            self?.startListening(gen: gen, confirmingConsent: true)
-        }
-    }
-
-    private func startApprovedConversation(initialText: String, gen: Int) {
         // An interrupted POST may already have been committed. Recover that utterance
         // before recognizing a new one, including after process recreation.
-        if let requestID, let draft = model?.drafts.draft(for: requestID), draft.voiceTurnID != nil {
+        if let draft = model?.drafts.draft(for: requestID), draft.voiceTurnID != nil {
             finalSentForCurrentListen = false
             sendTurnIfCompleted(draft.text, gen: gen, explicit: true)
             return
@@ -138,7 +110,6 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
 
     /// ユーザーが終了した/リモート終了したときの後片付け。冪等。
     func endConversation() {
-        voiceConsent = nil
         isMuted = false
         generation += 1
         cancelCurrentWork()
@@ -152,9 +123,7 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
     func setMuted(_ muted: Bool) {
         guard isMuted != muted else { return }
         isMuted = muted
-        if muted && phase == .confirmingConsent && recognitionTask != nil {
-            fallBackFromConsent()
-        } else if muted && phase == .listening {
+        if muted && phase == .listening {
             cleanupAudio()
         } else if !muted && phase == .listening {
             startListening(gen: generation)
@@ -170,8 +139,6 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
     private func cancelCurrentWork() {
         turnTask?.cancel()
         turnTask = nil
-        pendingConsent = nil
-        consentSpeech = nil
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
         stopListening(sendFinal: false)
     }
@@ -184,23 +151,6 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     // MARK: Speaking
-
-    private func speakConsent(_ text: String, finished: @escaping @MainActor () -> Void) {
-        let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "ja-JP")
-        consentSpeech = (utterance, finished)
-        phase = .confirmingConsent
-        synthesizer.speak(utterance)
-    }
-
-    private func fallBackFromConsent() {
-        stopListening(sendFinal: false)
-        pendingConsent = nil
-        let gen = generation
-        speakConsent("音声利用の同意を確認できませんでした。アプリから文字で返信できます。") { [weak self] in
-            self?.failConversation("文字で返信できます", gen: gen)
-        }
-    }
 
     private func speak(_ text: String, isFinalReply: Bool, gen: Int) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -220,13 +170,7 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            if let cue = self.consentSpeech, cue.utterance === utterance {
-                self.consentSpeech = nil
-                cue.finished()
-                return
-            }
-            guard self.phase == .speaking else { return }
+            guard let self, self.phase == .speaking else { return }
             let gen = self.generation
             if self.pendingResolvedEnd {
                 self.pendingResolvedEnd = false
@@ -253,20 +197,16 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
 
     // MARK: Listening
 
-    private func startListening(gen: Int, confirmingConsent: Bool = false) {
+    private func startListening(gen: Int) {
         guard generation == gen, let _ = requestID else { return }
         func failed(_ message: String) {
-            if confirmingConsent { fallBackFromConsent() }
-            else { phase = .failed(message); cleanupAudio() }
+            phase = .failed(message)
+            cleanupAudio()
         }
-        guard !isMuted else {
-            if confirmingConsent { fallBackFromConsent() } else { phase = .listening }
-            return
-        }
+        guard !isMuted else { phase = .listening; return }
         listeningGeneration += 1
         let listenID = listeningGeneration
-        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "ja-JP")) ?? SFSpeechRecognizer(),
-              recognizer.isAvailable, !confirmingConsent || recognizer.supportsOnDeviceRecognition else {
+        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "ja-JP")) ?? SFSpeechRecognizer(), recognizer.isAvailable else {
             failed("音声認識を利用できません。文字入力に切り替えてください")
             return
         }
@@ -279,16 +219,12 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
         let engine = AVAudioEngine()
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        request.requiresOnDeviceRecognition = confirmingConsent
-        if confirmingConsent {
-            request.taskHint = .confirmation
-            request.contextualStrings = ["同意します", "同意しません"]
-        }
+        request.requiresOnDeviceRecognition = false
         audioEngine = engine
         recognitionRequest = request
         finalSentForCurrentListen = false
         liveTranscript = ""
-        phase = confirmingConsent ? .confirmingConsent : .listening
+        phase = .listening
 
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
@@ -306,32 +242,13 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
             failed("録音を開始できませんでした")
             return
         }
-        if confirmingConsent {
-            consentTimeout = Task { @MainActor [weak self] in
-                do { try await Task.sleep(for: .seconds(10)) } catch { return }
-                guard let self, self.listeningGeneration == listenID else { return }
-                self.fallBackFromConsent()
-            }
-        }
-        var lastConsentHypothesis: String?
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             // コールバックは任意スレッド。MainActor に寄せる。
             let text = result?.bestTranscription.formattedString
             let isFinal = result?.isFinal ?? false
             let hasError = error != nil
             Task { @MainActor [weak self] in
-                guard let self, self.generation == gen, self.listeningGeneration == listenID, !self.isMuted else { return }
-                if confirmingConsent {
-                    // Never display, store, or forward the consent response.
-                    if isFinal || hasError {
-                        self.finishSpokenConsent(text: text ?? "", isFinal: isFinal, gen: gen)
-                    } else if let text, !text.isEmpty, lastConsentHypothesis != text {
-                        lastConsentHypothesis = text
-                        self.finishAudioAfterSilence(listenID: listenID)
-                    }
-                    return
-                }
-                guard self.phase == .listening else { return }
+                guard let self, self.generation == gen, self.listeningGeneration == listenID, !self.isMuted, self.phase == .listening else { return }
                 if let text, !text.isEmpty {
                     if self.liveTranscript != text {
                         self.liveTranscript = text
@@ -369,18 +286,6 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
             self.audioEngine?.stop()
             self.recognitionRequest?.endAudio()
         }
-    }
-
-    private func finishSpokenConsent(text: String, isFinal: Bool, gen: Int) {
-        guard let consent = pendingConsent,
-              ConversationPolicy.grantsSpokenConsent(text: text, isFinal: isFinal) else {
-            fallBackFromConsent()
-            return
-        }
-        cleanupAudio()
-        pendingConsent = nil
-        voiceConsent = consent.policy
-        startApprovedConversation(initialText: consent.question, gen: gen)
     }
 
     /// アプリ内画面の「話し終わった」: 現在の認識を確定発話として送信する明示操作。
@@ -431,8 +336,7 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
         }
         turnTask = Task { @MainActor [weak self] in
             guard let self, self.generation == gen else { return }
-            guard let consent = self.voiceConsent else { return }
-            let outcome = await model.sendCallTurn(requestID: requestID, text: text, voiceConsent: consent)
+            let outcome = await model.sendCallTurn(requestID: requestID, text: text)
             guard self.generation == gen else { return }
             self.turnTask = nil
             switch outcome {
@@ -468,8 +372,6 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
         listeningGeneration += 1
         silenceTask?.cancel()
         silenceTask = nil
-        consentTimeout?.cancel()
-        consentTimeout = nil
         if let engine = audioEngine {
             if engine.isRunning { engine.stop() }
             engine.inputNode.removeTap(onBus: 0)

@@ -64,13 +64,13 @@ final class AsyncVoiceTurnTests: XCTestCase {
         XCTAssertLessThanOrEqual(stub.requests[0].timeoutInterval, 95)
     }
 
-    func testAsyncTurnPreservesTheDisclosedConsentID() async throws {
+    /// 通話の発話に同意情報は付けない。同意はエージェントの連携時に済んでいる。
+    func testAsyncTurnCarriesNoConsentField() async throws {
         stub.on("POST", path, status: 200, body: envelope(.completed, reply: "続けます"))
-        let body = CallEventBody(event: .turn, text: "はい", turnID: id, voiceConsent: "v1:anthropic:false:false")
-        _ = try await client().callAction(requestID: "r", body: body)
+        _ = try await client().callAction(requestID: "r", body: CallEventBody(event: .turn, text: "はい", turnID: id))
         let data = try XCTUnwrap(stub.requests.first?.httpBody)
         let observed = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        XCTAssertEqual(observed["voice_consent"] as? String, body.voiceConsent)
+        XCTAssertEqual(Set(observed.keys), ["event", "text", "turn_id", "async"])
         XCTAssertEqual(observed["async"] as? Bool, true)
     }
 
@@ -319,7 +319,9 @@ final class AsyncVoiceAppModelTests: XCTestCase {
         try credentialStore.save(credentials)
         return AppModel(credentialStore: credentialStore, transport: stub,
                         configuration: AppModelConfiguration(deviceName: "test", pushEnvironment: .development),
-                        draftPersistence: persistence, voiceTurnPolicy: policy ?? clock.policy())
+                        draftPersistence: persistence,
+                        voiceAIConsentStore: InMemoryVoiceAIConsentStore(VoiceAIConsent(endpoint: endpoint, disclosure: .unknown, acceptedAt: Date())),
+                        voiceTurnPolicy: policy ?? clock.policy())
     }
 
     private func liveRequest() -> AgentRequest {

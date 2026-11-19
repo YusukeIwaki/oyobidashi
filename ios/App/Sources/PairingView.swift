@@ -9,6 +9,7 @@ struct PairingView: View {
     @State private var codeText = ""
     @State private var inputError: String?
     @State private var showingScanner = false
+    @State private var awaitingConsent: PendingPairing?
 
     var body: some View {
         NavigationStack {
@@ -105,6 +106,20 @@ struct PairingView: View {
                     pair(info)
                 }
             }
+            .sheet(item: $awaitingConsent) { pending in
+                VoiceAIConsentView(
+                    endpoint: pending.info.endpoint,
+                    acceptTitle: VoiceAIDisclosure.acceptTitle, declineTitle: "キャンセル",
+                    onAccept: { disclosure in
+                        awaitingConsent = nil
+                        Task {
+                            if await model.pair(pending.info, voiceAIConsent: disclosure) { onPaired?() }
+                        }
+                    },
+                    onDecline: { awaitingConsent = nil }
+                )
+                .environment(model)
+            }
         }
     }
 
@@ -130,11 +145,11 @@ struct PairingView: View {
         }
     }
 
+    /// 接続する前に、音声会話の送信先を見せて同意を受け取る。
     private func pair(_ info: PairingInfo) {
         inputError = nil
-        Task {
-            if await model.pair(info) { onPaired?() }
-        }
+        model.clearPairingError()
+        awaitingConsent = PendingPairing(info: info)
     }
 }
 

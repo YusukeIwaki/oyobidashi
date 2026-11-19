@@ -19,6 +19,7 @@ import {
 } from "./account-auth.ts";
 import { MCP_PATH, OAuthServer, requestOrigin, type OAuthStore } from "./oauth.ts";
 import { serveMcp } from "./mcp-http.ts";
+import { UNRESTRICTED_INPUT } from "./input-restriction.ts";
 import { OFFICIAL_CLOUD_ORIGIN } from "./config.ts";
 import type { Billing } from "./billing/service.ts";
 import { AccountDeletion } from "./account-deletion.ts";
@@ -104,7 +105,7 @@ export class CloudApp {
         return json(200, {
           ok: true,
           version: "0.3.0",
-          voice_privacy: this.service.voicePrivacy,
+          ...(this.service.voiceProvider ? { voice_ai: { provider: this.service.voiceProvider } } : {}),
           capabilities: { async_turns: true, turn_idempotency: true },
         });
       if (path === "/readyz" && method === "GET") {
@@ -180,6 +181,10 @@ export class CloudApp {
             this.oauth,
             (principal) => async (url, init) =>
               (await this.route(new Request(url, init), undefined, principal))!,
+            async (principal) =>
+              this.service.freeInputRestricted
+                ? this.service.run(principal, (tx) => this.service.inputRestriction(tx))
+                : UNRESTRICTED_INPUT,
           );
       }
       if (path === "/v1/pair" && method === "POST") {
@@ -230,6 +235,7 @@ export class CloudApp {
         internal &&
         (path === "/v1/auth/link-token" ||
           path === "/v1/pairing-codes" ||
+          path === "/v1/input-restriction" ||
           path === "/v1/events")
       )
         throw new CloudError(403, "forbidden", "not available to MCP clients");
@@ -249,6 +255,16 @@ export class CloudApp {
           uid: p.uid,
           custom_token: await this.accountAuth.issueLinkToken(p.uid),
         });
+      }
+      // Only the human's own sign-in may read or accept the FREE plan input
+      // restriction: never a paired phone, and never an agent acting through MCP.
+      if (path === "/v1/input-restriction" && (method === "GET" || method === "POST")) {
+        requireRole(p, "agent");
+        if (method === "GET")
+          return json(200, await this.service.run(p, (tx) => this.service.inputRestriction(tx)));
+        const input = await readBody(req);
+        if (input.accept !== true) throw invalid("accept must be true");
+        return json(200, await this.service.run(p, (tx) => this.service.acceptInputRestriction(tx, input.version)));
       }
       if (path === "/v1/voice" || path.startsWith("/v1/voice/")) {
         requireRole(p, "device");

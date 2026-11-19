@@ -14,6 +14,10 @@ export interface HttpMcpOptions {
   agentName?: string;
   /** Page where the human can pair a phone; mentioned when a request reaches no device. */
   pairUrl?: string;
+  /** The authenticated owner is under the FREE plan input restriction of the hosted service. */
+  inputRestricted?: boolean;
+  /** Page where the owner accepts that restriction; mentioned while the acceptance is missing. */
+  consentUrl?: string;
   log?: (message: string) => void;
 }
 
@@ -39,6 +43,10 @@ export async function handleMcpHttp(req: Request, options: HttpMcpOptions): Prom
     subscriptions: false,
     maxWaitSeconds: HTTP_MAX_WAIT_SECONDS,
     ...(options.agentName ? { agentName: options.agentName } : {}),
+    ...(options.inputRestricted ? { inputRestricted: true } : {}),
+    ...(options.consentUrl ? {
+      consentHint: `open ${options.consentUrl} in a browser, sign in with the same account and accept the FREE plan input restriction`,
+    } : {}),
     ...(options.pairUrl ? {
       noDeviceWarning:
         "No phone is paired with this oyobidashi account, so nobody was notified. " +

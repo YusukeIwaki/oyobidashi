@@ -72,11 +72,8 @@ export async function main(
     service = new CloudService(db, bus);
   service.voiceTrainingPolicy = models.training;
   service.appleSandboxReviewUids = appleSandboxReviewUids;
-  service.voicePrivacy = {
-    provider: models.provider,
-    id: ["v1", models.provider, models.training.free ?? "unknown", models.training.plus ?? "unknown"].join(":"),
-    training: models.training,
-  };
+  service.freeInputRestricted = models.freeInputRestricted;
+  service.voiceProvider = models.provider;
   service.voiceProofRequired = voiceProofRequired;
   const timers: ReturnType<typeof setInterval>[] = [];
   let draining = false;

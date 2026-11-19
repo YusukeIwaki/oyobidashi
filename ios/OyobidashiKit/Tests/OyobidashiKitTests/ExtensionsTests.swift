@@ -164,14 +164,6 @@ final class ExtensionsTests: XCTestCase {
         XCTAssertTrue(ConversationPolicy.shouldEndAfterSpeaking(resolved: true))
     }
 
-    func testSpokenConsentRequiresAnExplicitFinalAnswer() {
-        XCTAssertTrue(ConversationPolicy.grantsSpokenConsent(text: "同意します。", isFinal: true))
-        XCTAssertFalse(ConversationPolicy.grantsSpokenConsent(text: "同意します", isFinal: false))
-        XCTAssertFalse(ConversationPolicy.grantsSpokenConsent(text: "同意しません", isFinal: true))
-        XCTAssertFalse(ConversationPolicy.grantsSpokenConsent(text: "同意しますか？", isFinal: true))
-        XCTAssertFalse(ConversationPolicy.grantsSpokenConsent(text: "はい", isFinal: true))
-    }
-
     func testNotificationPolicy() {
         XCTAssertEqual(NotificationPolicy.interruption(for: .low), .passive)
         XCTAssertEqual(NotificationPolicy.interruption(for: .normal), .active)

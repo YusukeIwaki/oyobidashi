@@ -59,6 +59,7 @@ final class AppModelTests: XCTestCase {
             credentialStore: credentialStore, transport: stub,
             configuration: AppModelConfiguration(deviceName: "iPhone 16", pushEnvironment: .development),
             notifications: notifications, draftPersistence: draftPersistence,
+            voiceAIConsentStore: InMemoryVoiceAIConsentStore(VoiceAIConsent(endpoint: endpoint, disclosure: .unknown, acceptedAt: Date())),
             streamFactory: { [unowned self] _, _ in
                 let stream = FakeStream()
                 self.streams.append(stream)

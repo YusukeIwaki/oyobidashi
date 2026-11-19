@@ -54,7 +54,8 @@ const DeliverySchema = z.object({
   paired_devices: z.number().nullish(),
   websocket_delivered: z.number().nullish(),
   push_attempted: z.number().nullish(),
-  voice_training: z.boolean().nullish(),
+  input_restricted: z.boolean().nullish(),
+  input_consent_required: z.boolean().nullish(),
 });
 
 const PresenceDeviceSchema = z.object({
@@ -77,7 +78,8 @@ const PresenceSchema = z.object({
   devices: z.array(PresenceDeviceSchema).nullish(),
   recent_events: z.array(PresenceEventSchema).nullish(),
   now: z.string().nullish(),
-  voice_training: z.boolean().nullish(),
+  input_restricted: z.boolean().nullish(),
+  input_consent_required: z.boolean().nullish(),
 });
 
 const RequestEnvelopeSchema = z.object({ request: RequestSchema });

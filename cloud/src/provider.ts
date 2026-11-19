@@ -171,10 +171,15 @@ export function voiceModels(env: Record<string, string | undefined>, allowFree: 
     throw new Error(`${key} must be 0 or 1`);
   };
   const plus = training("VOICE_STANDARD_TRAINING");
+  const free = freeModel ? training("VOICE_FREE_TRAINING") : plus;
   return {
     ...config,
     freeModel,
-    training: { free: freeModel ? training("VOICE_FREE_TRAINING") : plus, plus },
+    training: { free, plus },
+    // Only the hosted service runs a separate FREE model, and its terms accept no
+    // personal or confidential input unless training use is explicitly ruled out.
+    // A self-hosted deployment runs its own model and never restricts input.
+    freeInputRestricted: freeModel !== undefined && free !== false,
   };
 }
 

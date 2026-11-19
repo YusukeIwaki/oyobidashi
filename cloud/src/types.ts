@@ -35,7 +35,6 @@ export interface Turn extends TurnView {
   requestId: string;
   callId: string;
   deviceId: string;
-  voiceConsent?: string;
   text: string;
   deadline: number;
 }
@@ -90,6 +89,8 @@ export interface Entitlement {
 export interface Records {
   entitlement: Entitlement;
   account_deletion: { started: number };
+  /** The owner's acceptance of the FREE plan input restriction. */
+  input_consent: { version: number; at: number };
   account_delete_ticket: { deviceId: string; expires: number };
 
   /** App Attest key of one iOS device, keyed by device ID. */

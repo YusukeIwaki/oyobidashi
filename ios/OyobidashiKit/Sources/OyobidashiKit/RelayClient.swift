@@ -234,7 +234,7 @@ public struct RelayClient: Sendable {
         }
         let turnID = body.turnID ?? UUID().uuidString.lowercased()
         guard UUID(uuidString: turnID) != nil else { throw RelayError.invalidRequest(message: "invalid turn ID") }
-        let encoded = try OyobidashiJSON.makeEncoder().encode(CallEventBody(event: .turn, text: text, turnID: turnID, asynchronous: true, voiceConsent: body.voiceConsent))
+        let encoded = try OyobidashiJSON.makeEncoder().encode(CallEventBody(event: .turn, text: text, turnID: turnID, asynchronous: true))
         let deadline = voiceTurnPolicy.now() + voiceTurnPolicy.overallTimeout
         let postPath = ["v1", "requests", requestID, "call"]
         let pollPath = ["v1", "requests", requestID, "turns", turnID]

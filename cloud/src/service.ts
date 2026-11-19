@@ -1,4 +1,5 @@
 import { deliveryMode } from "../../relay/src/policy.ts";
+import { INPUT_CONSENT_MISSING_MESSAGE, INPUT_RESTRICTION_VERSION, type InputRestriction } from "./input-restriction.ts";
 import { PUSH_FIELDS, registrationField, freshPushRegistration, validPushClientId } from "../../relay/src/push/lifecycle.ts";
 import type { Priority, RequestedMode } from "../../relay/src/types.ts";
 import {
@@ -56,7 +57,16 @@ export class CloudService {
     plus: null,
   };
   voiceProofRequired = false;
-  voicePrivacy: { provider: "anthropic" | "meta"; id: string; training: { free: boolean | null; plus: boolean | null } } | null = null;
+  /**
+   * Where voice conversations are sent. Phones show it when pairing, which is
+   * where the human permits sending their words to that third party.
+   */
+  voiceProvider: "anthropic" | "meta" | null = null;
+  /**
+   * True only where FREE voice calls reach a model whose terms accept no personal
+   * or confidential input (the hosted service). Never set for self-hosted use.
+   */
+  freeInputRestricted = false;
   /** On the hosted service, only these accounts can use Apple Sandbox access. */
   appleSandboxReviewUids: ReadonlySet<string> | null = null;
   async ensureAccount(tx: Transaction) {
@@ -139,12 +149,41 @@ export class CloudService {
       .filter(([key, source]) => source.expires > now && (allowAppleSandbox || !key.startsWith("apple:Sandbox:")))
       .map(([, source]) => source);
   }
-  /** True when this owner's voice calls may be used for model training. */
-  async voiceTraining(tx: Transaction) {
-    const { free, plus } = this.voiceTrainingPolicy;
-    if (free === plus) return free === true;
-    const active = (await this.activeEntitlementSources(tx)).length !== 0;
-    return (active ? plus : free) === true;
+  /**
+   * The input restriction applies to FREE owners of a restricted deployment.
+   * `accepted` is the owner's own acknowledgement, given while linking an agent.
+   */
+  async inputRestriction(tx: Transaction): Promise<InputRestriction> {
+    const restricted = this.freeInputRestricted &&
+      (await this.activeEntitlementSources(tx)).length === 0;
+    const consent = restricted ? await tx.get("input_consent", "current") : null;
+    return {
+      restricted,
+      accepted: restricted && consent?.version === INPUT_RESTRICTION_VERSION,
+      version: INPUT_RESTRICTION_VERSION,
+    };
+  }
+  /** Voice content must not reach the restricted model before the owner accepted its terms. */
+  async inputConsentMissing(tx: Transaction) {
+    const state = await this.inputRestriction(tx);
+    return state.restricted && !state.accepted;
+  }
+  async acceptInputRestriction(tx: Transaction, version: unknown) {
+    await this.quota(tx, "input_consent", 10);
+    if (version !== INPUT_RESTRICTION_VERSION)
+      throw conflict("input_restriction_changed", "入力制限の内容が更新されました。画面を読み込み直してください。");
+    const prior = await tx.get("input_consent", "current");
+    if (prior?.version !== version)
+      await tx.put("input_consent", "current", { version: INPUT_RESTRICTION_VERSION, at: this.now() });
+    return this.inputRestriction(tx);
+  }
+  /** What an agent must know about this owner's plan; absent fields mean no restriction. */
+  private async agentRestriction(tx: Transaction) {
+    const state = await this.inputRestriction(tx);
+    return {
+      ...(state.restricted ? { input_restricted: true } : {}),
+      ...(state.restricted && !state.accepted ? { input_consent_required: true } : {}),
+    };
   }
   async oauthAttempt(tx: Transaction) {
     await this.quota(tx, "oauth_authorize", 20);
@@ -299,6 +338,8 @@ export class CloudService {
     if (requested === "call" && !r.call &&
         (await this.recentVoiceTurns(tx, now)).length >= VOICE_TURNS_PER_HOUR)
       return "text";
+    // No call is placed until the owner accepted the FREE plan input restriction.
+    if (requested === "call" && (await this.inputConsentMissing(tx))) return "text";
     const presence = (await tx.list("presence", {}, 33)).map((p) =>
       p.until && Date.parse(p.until) <= now
         ? { ...p, availability: "available" as const }
@@ -451,7 +492,7 @@ export class CloudService {
         paired_devices: ds.length,
         websocket_delivered: 0,
         push_attempted: ds.filter((d) => d.push_token || d.voip_token).length,
-        ...((await this.voiceTraining(tx)) ? { voice_training: true } : {}),
+        ...(await this.agentRestriction(tx)),
       },
     };
   }
@@ -619,10 +660,16 @@ export class CloudService {
       );
     if (c.device_id && c.device_id !== deviceId)
       throw conflict("call_claimed", "call was answered on another device");
-    const consent = event === "turn" && this.voicePrivacy && (await tx.get("device", deviceId))?.platform === "ios"
-      ? this.voicePrivacy.id : undefined;
-    if (consent && b.voice_consent !== consent)
-      throw new CloudError(403, "voice_consent_required", "送信先を確認し、会話データの送信に同意してください。");
+    // A plan can lapse while a call rings or runs. Without the owner's acceptance the
+    // call ends here and the question stays answerable as text, as for any ended call.
+    if ((event === "answer" || event === "turn") && (await this.inputConsentMissing(tx))) {
+      await this.endCall(tx, r, "failed", true);
+      await this.save(tx, r, "fallback");
+      return {
+        status: 409,
+        body: { error: { code: "call_ended", message: INPUT_CONSENT_MISSING_MESSAGE } },
+      };
+    }
     if (this.voiceProofRequired && (event === "answer" || event === "turn")) {
       const access = await tx.get("voice_access", deviceId);
       if (!voiceToken || !access || access.expires <= this.now() || access.tokenHash !== hash(voiceToken))
@@ -699,7 +746,6 @@ export class CloudService {
       requestId: id,
       callId: c.id,
       deviceId,
-      ...(consent ? { voiceConsent: consent } : {}),
       text: text!,
       state: "queued",
       reply: null,
@@ -904,9 +950,7 @@ export class CloudService {
       recent_events:
         p.role === "agent" ? await tx.list("feedback", {}, 100) : [],
       now: iso(this.now()),
-      ...(p.role === "agent" && (await this.voiceTraining(tx))
-        ? { voice_training: true }
-        : {}),
+      ...(p.role === "agent" ? await this.agentRestriction(tx) : {}),
     };
   }
   async putPresence(

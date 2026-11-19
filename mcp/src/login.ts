@@ -20,6 +20,7 @@ import {
   type AccountProvider,
 } from "../../relay/src/auth-handoff.ts";
 import { authServerJson, startBrowserLogin } from "./browser-login.ts";
+import { confirmInputRestriction } from "./input-consent.ts";
 
 export interface LoginArguments {
   baseUrl: string;
@@ -235,8 +236,28 @@ async function openBrowser(url: string): Promise<void> {
     );
 }
 
+/** Signs in, then lets the owner accept the FREE plan input restriction where one applies. */
 export async function login(args = process.argv.slice(2)): Promise<void> {
   const options = parseLoginArguments(args);
+  await signIn(options);
+  if (!existsSync(options.authFile)) return;
+  const prompt = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    await confirmInputRestriction(
+      options.baseUrl,
+      await new CloudTokenProvider(options.authFile).getToken(),
+      {
+        interactive: !!process.stdin.isTTY && !!process.stderr.isTTY,
+        write: (text) => void process.stderr.write(text),
+        ask: (question) => prompt.question(question),
+      },
+    );
+  } finally {
+    prompt.close();
+  }
+}
+
+async function signIn(options: LoginArguments): Promise<void> {
   let original = existsSync(options.authFile)
     ? readCloudCredentials(options.authFile)
     : undefined;

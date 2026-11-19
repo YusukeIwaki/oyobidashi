@@ -3,7 +3,6 @@ import { generateKeyPair, decodeJwt } from "jose";
 import type { AccountAuth } from "../src/account-auth.ts";
 import { firebaseAccountDirectory, type AccountDirectory } from "../src/account-deletion.ts";
 import { unavailable } from "../src/errors.ts";
-import { JobWorker } from "../src/worker.ts";
 import { harness } from "./helpers.ts";
 import { MemoryDatabase } from "./memory.ts";
 
@@ -104,27 +103,13 @@ test("Apple deletion requires fresh Apple authorization for the paired UID befor
   expect((await confirm("fresh")).status).toBe(401);
 });
 
-test("iOS voice turns require the disclosed policy and workers reject stale configurations", async () => {
+test("health names where voice conversations are sent, for the pairing screen, and nothing per call", async () => {
   const h = harness();
-  const policy = { provider: "anthropic" as const, id: "v1:anthropic:false:false", training: { free: false, plus: false } };
-  h.service.voicePrivacy = policy;
-  let sends = 0;
-  const worker = new JobWorker(h.service, { conversation: { turn: async () => {
-    sends++;
-    return { resolved: false, answer: null, reply: "続けます" };
-  } } });
-  const s = await h.setup();
-  const turn = (consent: string) => h.call("POST", `/v1/requests/${s.id}/call`, s.d.device_token, {
-    event: "turn", turn_id: crypto.randomUUID(), text: "はい", voice_consent: consent, async: true,
-  });
-  expect((await s.turn()).body.error.code).toBe("voice_consent_required");
-  expect(await worker.runOnce("turn")).toBe(false);
-  expect(sends).toBe(0);
-  expect((await turn(policy.id)).status).toBe(202);
-  h.service.voicePrivacy = { ...policy, provider: "meta", id: "v1:meta:false:false" };
-  expect(await worker.runOnce("turn")).toBe(true);
-  expect(sends).toBe(0);
-  expect((await turn(h.service.voicePrivacy.id)).status).toBe(202);
-  expect(await worker.runOnce("turn")).toBe(true);
-  expect(sends).toBe(1);
+  h.service.freeInputRestricted = true;
+  const capabilities = { async_turns: true, turn_idempotency: true };
+  expect((await h.call("GET", "/healthz", null)).body).toEqual({ ok: true, version: "0.3.0", capabilities });
+  for (const provider of ["anthropic", "meta"] as const) {
+    h.service.voiceProvider = provider;
+    expect((await h.call("GET", "/healthz", null)).body).toEqual({ ok: true, version: "0.3.0", voice_ai: { provider }, capabilities });
+  }
 });

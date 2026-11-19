@@ -31,7 +31,7 @@ final class CallKitCoordinator: NSObject, IncomingCallHandling {
     @ObservationIgnored let voice = VoiceConversationController()
     @ObservationIgnored private var uuidByCallID: [String: UUID] = [:]
     @ObservationIgnored private var requestIDByUUID: [UUID: String] = [:]
-    @ObservationIgnored private var systemStart: (requestID: String, text: String, disclosure: VoicePrivacyDisclosure?)?
+    @ObservationIgnored private var systemStart: (requestID: String, text: String)?
     @ObservationIgnored private var audioActivationDeadline: Task<Void, Never>?
     @ObservationIgnored private var audioActivated = false
     @ObservationIgnored private var answeredCallIDs: Set<String> = []
@@ -173,15 +173,12 @@ final class CallKitCoordinator: NSObject, IncomingCallHandling {
         callController.request(CXTransaction(action: CXEndCallAction(call: uuid))) { _ in }
     }
 
-    /// The fallback UI confirms consent explicitly when there is no system call.
-    func startApprovedConversation(request: AgentRequest, policy: String) async {
-        guard activeCallUUID == nil, let model, let current = model.store.request(id: request.id),
-              let call = current.call, call.id == request.call?.id,
-              call.state == .active, call.deviceID == model.myDeviceID else { return }
+    /// アプリ内フォールバックで応答・再開したときに会話を開始する。
+    func startFallbackConversation(request: AgentRequest, initialReply: String) async {
+        guard activeCallUUID == nil, model?.hasVoiceAIConsent == true else { return }
         activeRequestID = request.id
-        let reply = call.transcript.last(where: { $0.role == .assistant })?.text ?? request.question
-        answeredCallIDs.insert(call.id)
-        await voice.startConversation(requestID: request.id, initialText: reply, consent: policy)
+        if let call = request.call { answeredCallIDs.insert(call.id) }
+        await voice.startConversation(requestID: request.id, initialText: initialReply.isEmpty ? request.question : initialReply, usesCallKitAudio: false)
     }
 
     private func clearSystemStart() {
@@ -193,7 +190,8 @@ final class CallKitCoordinator: NSObject, IncomingCallHandling {
     private func startSystemAudio() {
         guard audioActivated, let start = systemStart else { return }
         clearSystemStart()
-        voice.askSpokenConsent(requestID: start.requestID, initialText: start.text, disclosure: start.disclosure)
+        // The question is read out as soon as the call connects; nothing is asked first.
+        Task { await voice.startConversation(requestID: start.requestID, initialText: start.text, usesCallKitAudio: true) }
     }
 
     private func waitForSystemAudio(uuid: UUID, requestID: String) {
@@ -235,25 +233,29 @@ extension CallKitCoordinator: CXProviderDelegate {
         #endif
         let uuid = action.callUUID
         Task { @MainActor [weak self] in
-            guard let self, let requestID = self.requestIDByUUID[uuid], let model = self.model,
-                  let credentials = model.credentials else {
+            guard let self, let requestID = self.requestIDByUUID[uuid], let model = self.model else {
                 action.fail()
+                return
+            }
+            // ペアリング時の同意がない端末 (アプリ更新直後など) では音声会話を始めない。
+            // 通話中に尋ねることはせず、文字での返信へ切り替える。
+            guard model.hasVoiceAIConsent else {
+                action.fail()
+                provider.reportCall(with: uuid, endedAt: Date(), reason: .failed)
+                _ = await model.failCall(requestID: requestID)
                 return
             }
             self.activeCallUUID = uuid
             self.activeRequestID = requestID
-            let client = RelayClient(endpoint: credentials.endpoint, deviceToken: nil, timeout: 4)
-            async let disclosure = try? client.health().voicePrivacy
             let outcome = await model.answerCall(requestID: requestID)
             switch outcome {
             case .success(let resp):
-                let privacy = await disclosure
-                guard self.activeCallUUID == uuid, model.credentials == credentials else {
+                guard self.activeCallUUID == uuid else {
                     action.fail()
                     return
                 }
                 if let call = resp.call { self.answeredCallIDs.insert(call.id) }
-                self.systemStart = (requestID, resp.reply ?? resp.request.question, privacy)
+                self.systemStart = (requestID, resp.reply ?? resp.request.question)
                 model.fallbackCallRequest = resp.request
                 // CallKit activates the configured session after the answer is fulfilled.
                 try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .allowBluetoothA2DP])

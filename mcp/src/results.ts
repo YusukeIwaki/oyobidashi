@@ -35,8 +35,42 @@ export const NO_DEVICE_WARNING =
   "Tell the user (in your normal reply) to pair their phone with the relay (show the pairing QR code with the relay CLI and scan it with the oyobidashi app). " +
   "A device paired later will still see this request while it is pending.";
 
+/**
+ * The FREE plan of the hosted service accepts no personal or confidential input.
+ * A relay reports it per account; a self-hosted relay and a subscriber never do.
+ */
 export const PRIVACY_NOTICE =
-  "Voice calls on this account may be used to improve AI models. For a request delivered as a call, keep personal data, credentials and confidential business details out of question, context and choices; use text delivery for anything sensitive.";
+  "This oyobidashi account is on the FREE plan of the hosted service, which does not accept personal or confidential information. " +
+  "Do not put personal data (names, contact details, addresses, account or ID numbers), credentials or secrets, or confidential business information " +
+  "in question, subject, context, choices or notification messages, and do not ask the human to state such information in their answer. " +
+  "Refer to it indirectly instead (for example \"the customer in the ticket you opened\"), or leave the decision until the human is back at the keyboard.";
+
+/** Default hint for a stdio connection, where the owner accepts the restriction in the login command. */
+export const CONSENT_HINT = "run the oyobidashi cloud login command again in a terminal and accept the FREE plan input restriction";
+
+/** Added to `warning` while the owner has not accepted the FREE plan input restriction. */
+export function consentWarning(hint: string = CONSENT_HINT): string {
+  return (
+    "Voice calls are unavailable for this account until its owner accepts the FREE plan input restriction, so this request is delivered as text. " +
+    `Tell the user (in your normal reply) to ${hint}. Do not retry as a call until they have done so.`
+  );
+}
+
+/** What a relay reported about the account's input restriction, in tool-result terms. */
+export interface RestrictionNotice {
+  inputRestricted?: boolean | null | undefined;
+  consentRequired?: boolean | null | undefined;
+  consentHint?: string | undefined;
+}
+
+function applyRestriction(output: ToolOutput, notice: RestrictionNotice | undefined): void {
+  if (!notice) return;
+  if (notice.inputRestricted) output.privacy_notice = PRIVACY_NOTICE;
+  if (notice.consentRequired) {
+    const warning = consentWarning(notice.consentHint);
+    output.warning = output.warning ? `${output.warning} ${warning}` : warning;
+  }
+}
 
 function result(text: string, output: ToolOutput, isError = false): ToolResult {
   let full = text;
@@ -78,14 +112,14 @@ function telemetryLine(request: RelayRequest): string | undefined {
 /** Result for a request in whatever state it is in. `waitedSeconds` is only used for the pending text. */
 export function requestResult(
   request: RelayRequest,
-  opts: { waitedSeconds?: number; warning?: string | undefined; feedback?: unknown; voiceTraining?: boolean | undefined } = {},
+  opts: { waitedSeconds?: number; warning?: string | undefined; feedback?: unknown; restriction?: RestrictionNotice | undefined } = {},
 ): ToolResult {
   const id = request.id;
   const base: ToolOutput = { status: request.status, request_id: id };
   addTelemetry(base, request);
   if (opts.feedback !== null && opts.feedback !== undefined) base.feedback = opts.feedback;
   if (opts.warning) base.warning = opts.warning;
-  if (opts.voiceTraining) base.privacy_notice = PRIVACY_NOTICE;
+  applyRestriction(base, opts.restriction);
 
   switch (request.status) {
     case "answered": {
@@ -146,10 +180,12 @@ export function requestResult(
   }
 }
 
-export function notifiedResult(request: RelayRequest, warning: string | undefined): ToolResult {
+export function notifiedResult(request: RelayRequest, warning: string | undefined, restriction?: RestrictionNotice): ToolResult {
   const output: ToolOutput = { status: request.status, request_id: request.id };
   addTelemetry(output, request);
   if (warning) output.warning = warning;
+  // A notification is never a call, so only the content rule applies to it.
+  applyRestriction(output, restriction ? { inputRestricted: restriction.inputRestricted } : undefined);
   return result(
     `Notification sent to the human's phone (request_id: ${request.id}). It is one-way: no answer will come back.`,
     output,
@@ -195,12 +231,16 @@ function formatPresenceEvent(event: RelayPresenceEvent): string {
 }
 
 /** Result for `get_human_status`: availability plus recent human feedback. */
-export function presenceResult(presence: RelayPresence): ToolResult {
+export function presenceResult(presence: RelayPresence, consentHint?: string): ToolResult {
   const devices = presence.devices ?? [];
   const events = presence.recent_events ?? [];
   const output: ToolOutput = { status: "ok", devices, recent_events: events };
   if (presence.now) output.now = presence.now;
-  if (presence.voice_training) output.privacy_notice = PRIVACY_NOTICE;
+  applyRestriction(output, {
+    inputRestricted: presence.input_restricted,
+    consentRequired: presence.input_consent_required,
+    consentHint,
+  });
 
   const lines: string[] = [];
   if (devices.length === 0) {

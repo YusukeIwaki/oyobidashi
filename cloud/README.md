@@ -49,7 +49,7 @@ bun run --cwd cloud worker
 | `VOICE_PROVIDER` | APIとworker共通。`anthropic`（既定）または `meta` |
 | `MODEL_API_KEY`, `META_MODEL` | Metaの会話判断。キーはworkerに、モデル名はAPIとworkerに設定 |
 | `VOICE_MODEL_FREE` | 公式環境で未購読の利用者に使うモデル名。APIとworkerに同じ値を設定。空または標準と同じなら全員が標準モデルを使用 |
-| `VOICE_STANDARD_TRAINING`, `VOICE_FREE_TRAINING` | 実際に使用する各モデルの学習利用条件。APIとworkerに同じ値を設定。`1`は学習利用の可能性あり、`0`はなし、空は不明。FREEも標準モデルを使う場合は標準側の値が適用される |
+| `VOICE_STANDARD_TRAINING`, `VOICE_FREE_TRAINING` | 実際に使用する各モデルの学習利用条件。APIとworkerに同じ値を設定。`1`は学習利用の可能性あり、`0`はなし、空は不明。FREEも標準モデルを使う場合は標準側の値が適用される。公式環境で`VOICE_MODEL_FREE`を使い、`VOICE_FREE_TRAINING`が`0`でないとき、FREEの利用者に入力制限と連携時の同意が適用される |
 | `VOICE_REQUIRE_DEVICE_PROOF` | APIとworker共通。セルフホストでApp Attest／Play Integrityを必須にする場合は`1`。公式環境では常に必須 |
 | `VOICE_APPLE_TEAM_ID`, `VOICE_APPLE_BUNDLE_ID`, `VOICE_APP_ATTEST_ENVIRONMENTS` | API。クラウド音声のiOS端末証明。未設定時は`APPLE_TEAM_ID`、`APPLE_IAP_BUNDLE_ID`、`APPLE_APP_ATTEST_ENVIRONMENTS`を使う。課金の有効化は不要 |
 | `VOICE_ANDROID_PACKAGE_NAME`, `VOICE_GOOGLE_SERVICE_ACCOUNT_JSON` | API。クラウド音声のAndroid端末証明。未設定時はGoogle Play課金の同名設定を使う。アプリ側にはPlay Integrity用Cloud Project Numberも必要 |
@@ -234,7 +234,8 @@ bun test --cwd cloud
 ### iOS 1.0.0 の公開時に合わせる設定
 
 - API の `FIREBASE_AUTH_SERVICE_ACCOUNT_JSON` のサービスアカウントには、対象プロジェクトの `firebaseauth.users.get` と `firebaseauth.users.delete` が必要です。Apple でサインインした利用者については、Firebase 側の Apple プロバイダーにサービス ID と OAuth コードフローの設定も必要です。
-- 音声の送信先と学習利用条件は、API とワーカーの `VOICE_PROVIDER`、`VOICE_STANDARD_TRAINING`、`VOICE_FREE_TRAINING` から決まります。両サービスの設定を揃え、App Store 用のビルドでロック画面から応答した際の音声同意と、アプリ内の同意画面を確認します。新 API は同意情報を送らない旧 iOS からの音声ターンを拒否します。
+- FREEプランの入力制限は、API とワーカーの `VOICE_MODEL_FREE` と `VOICE_FREE_TRAINING` から決まります。両サービスの設定を揃えます。公式クラウドで FREE 用の別モデルを使い、`VOICE_FREE_TRAINING` が `0` でない場合に限り、FREE の利用者へ「個人情報・機密情報を送らない」ことへの同意を求めます。同意はエージェントの連携時（`/oauth/authorize` の画面、または `login:cloud`）に1回だけ行い、通話中には何も確認しません。PLUS の利用者とセルフホストには制限も同意もありません。詳細は[docs/CLOUD_PROTOCOL.md](../docs/CLOUD_PROTOCOL.md#free-plan-input-restriction)を参照してください。
+- 同意前の FREE 利用者には音声通話を発信せず、質問は文字で届きます。同意は `/oauth/connections` にログインして行えます。
 
 ### Apple課金の本番と審査用Sandbox
 

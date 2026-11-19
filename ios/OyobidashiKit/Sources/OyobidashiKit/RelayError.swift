@@ -18,6 +18,8 @@ public enum RelayError: Error, Equatable, Sendable {
     case timeout
     case cancelled
     case turnInProgress
+    /// この端末で、音声会話の内容をAIへ送ることに同意していない。
+    case voiceAIConsentRequired
     case turnFailed
     case turnCancelled
     /// The server may have accepted the utterance. Reuse its ID when recovering.
@@ -119,6 +121,8 @@ public enum RelayError: Error, Equatable, Sendable {
             return Self.unreachableMessage
         case .cancelled:
             return "キャンセルされました"
+        case .voiceAIConsentRequired:
+            return "AIへの送信に同意していないため、音声では応答できません。アプリを開いて確認するか、文字で返信してください"
         case .turnInProgress:
             return "前の発話を処理しています。しばらく待ってから確認してください"
         case .turnFailed:

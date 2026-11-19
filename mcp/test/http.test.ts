@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { handleMcpHttp } from "../src/http.ts";
 import type { FetchLike } from "../src/relay-client.ts";
 import { fixture } from "./helpers.ts";
+import { PRIVACY_NOTICE } from "../src/results.ts";
 
 const post = (fetchImpl: FetchLike, message: unknown, signal?: AbortSignal) =>
   handleMcpHttp(
@@ -45,12 +46,12 @@ test("tool calls use the injected connection, the client's name and never the se
   expect(called.result.structuredContent.warning).not.toContain("relay CLI");
 });
 
-test("hosted ask_human and get_human_status surface privacy_notice only when voice_training is true", async () => {
-  const notice = "Voice calls on this account may be used to improve AI models. For a request delivered as a call, keep personal data, credentials and confidential business details out of question, context and choices; use text delivery for anything sensitive.";
+test("hosted ask_human and get_human_status surface privacy_notice only when input_restricted is true", async () => {
+  const notice = PRIVACY_NOTICE;
   const pending = fixture("request_pending.json");
   const flaggedFetch: FetchLike = async (url) => {
-    if (url.endsWith("/v1/presence")) return Response.json({ devices: [], recent_events: [], now: "2026-11-15T14:00:00.000Z", voice_training: true });
-    return Response.json({ request: pending, delivery: { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, voice_training: true } }, { status: 201 });
+    if (url.endsWith("/v1/presence")) return Response.json({ devices: [], recent_events: [], now: "2026-11-15T14:00:00.000Z", input_restricted: true });
+    return Response.json({ request: pending, delivery: { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, input_restricted: true } }, { status: 201 });
   };
   const asked = await result(await post(flaggedFetch, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "ask_human", arguments: { question: "進めますか？", wait_seconds: 0 } } }));
   expect(asked.result.structuredContent.privacy_notice).toBe(notice);
@@ -72,9 +73,9 @@ test("hosted ask_human and get_human_status surface privacy_notice only when voi
 
   const listed = await result(await post(unused, { jsonrpc: "2.0", id: 5, method: "tools/list" }));
   const askTool = listed.result.tools.find((t: { name: string }) => t.name === "ask_human");
-  expect(askTool.outputSchema.properties.privacy_notice.description).toContain("model training");
+  expect(askTool.outputSchema.properties.privacy_notice.description).toContain("personal or confidential");
   const presenceTool = listed.result.tools.find((t: { name: string }) => t.name === "get_human_status");
-  expect(presenceTool.outputSchema.properties.privacy_notice.description).toContain("model training");
+  expect(presenceTool.outputSchema.properties.privacy_notice.description).toContain("personal or confidential");
 });
 
 test("a disconnecting client ends its waiting tool call", async () => {

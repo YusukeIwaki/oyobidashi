@@ -380,7 +380,7 @@ describe("WebSocket /v1/events", () => {
 describe("HTTP over a real socket", () => {
   test("loopback peer: healthz, agent API and device API work end to end", async () => {
     const { h, server } = start();
-    expect(await (await fetch(`${server.url}/healthz`)).json()).toEqual({ ok: true, version: "0.2.0", voice_privacy: { id: "v1:claude-code", provider: "claude-code" } });
+    expect(await (await fetch(`${server.url}/healthz`)).json()).toEqual({ ok: true, version: "0.2.0", voice_ai: { provider: "claude-code" } });
     const { token } = await h.pair();
     const created = await fetch(`${server.url}/v1/requests`, {
       method: "POST",

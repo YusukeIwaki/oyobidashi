@@ -21,9 +21,11 @@ import {
   inputErrorResult,
   NO_DEVICE_WARNING,
   notifiedResult,
+  PRIVACY_NOTICE,
   presenceResult,
   requestResult,
   updateResult,
+  type RestrictionNotice,
   type ToolResult,
 } from "./results.ts";
 import { waitForResolution } from "./wait.ts";
@@ -55,7 +57,18 @@ export interface ServerDeps {
   maxWaitSeconds?: number;
   /** Replaces the pairing hint, which by default describes the local relay CLI. */
   noDeviceWarning?: string;
+  /**
+   * True when the caller already knows this account is under the FREE plan input
+   * restriction (hosted endpoint). The restriction then becomes part of the server's
+   * own instructions and tool descriptions instead of arriving with the first result.
+   */
+  inputRestricted?: boolean;
+  /** How the owner accepts the restriction; completes "Tell the user to ...". */
+  consentHint?: string;
 }
+
+/** Appended to the instructions and to the descriptions of the tools that send content. */
+export const INPUT_RESTRICTION_PROMPT = `INPUT RESTRICTION: ${PRIVACY_NOTICE}`;
 
 type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
@@ -81,7 +94,7 @@ RESULT (structuredContent.status):
 - "pending": no answer within wait_seconds. This is NOT an error and the question is still on their phone. "priority", "delivery_mode", and "call" report how it is being delivered. Call wait_for_answer with the returned "request_id" and keep doing so until it resolves. Do not call ask_human again for the same question. If the question is no longer useful, call cancel_request.
 - "cancelled" / "expired": no answer will arrive (requests expire after expires_in_seconds, about an hour by default).
 A "warning" field means delivery is doubtful (e.g. no phone is paired); pass that on to the user.
-A "privacy_notice" field means voice-call conversations may be used for model training; when it is present, keep personal data, credentials and confidential business details out of questions delivered as calls and prefer text delivery for anything sensitive.`;
+A "privacy_notice" field means this account does not accept personal or confidential information; when it is present, follow it for every later question and notification.`;
 
 const WAIT_FOR_ANSWER_DESCRIPTION = `Keep waiting for the human's answer to a question previously sent with ask_human.
 
@@ -92,7 +105,8 @@ As with ask_human, an answer with input_method "voice" is a speech-to-text trans
 const NOTIFY_HUMAN_DESCRIPTION = `Send a one-way notification to your human's phone. No answer comes back and this call does not wait.
 
 Use it to tell a human who is away from the keyboard something they would want to know right now: a long task finished, a build/deploy/test run succeeded or failed, or you are stopping and why. Keep the message short and self-contained (it is shown as a phone notification), in the language the human uses with you. The relay tries to deliver it; delivery depends on the device, network, and OS and is never guaranteed.
-Do not use it for questions: if you need a reply or a decision, use ask_human instead. Do not send routine progress chatter; each call may buzz the phone. A sent notification can be withdrawn with cancel_request while it is still current.`;
+Do not use it for questions: if you need a reply or a decision, use ask_human instead. Do not send routine progress chatter; each call may buzz the phone. A sent notification can be withdrawn with cancel_request while it is still current.
+A "privacy_notice" field means this account does not accept personal or confidential information; when it is present, follow it for every later question and notification.`;
 
 const CANCEL_REQUEST_DESCRIPTION = `Withdraw a pending question sent with ask_human, or a one-way notification sent with notify_human, so the human no longer needs to see or answer it.
 
@@ -100,11 +114,11 @@ Use it when the question or notification became irrelevant: you found the answer
 
 const GET_HUMAN_STATUS_DESCRIPTION = `Check whether your human is reachable before you escalate, and read their recent feedback.
 
-Returns device availability (available/busy/away with an optional note), recent feedback events (answers, call declined/hangup/missed/failed), and the relay time. Use it before raising priority or switching delivery to call: if the human is busy or away, prefer low priority and text and only escalate when truly blocked; if they recently declined or hung up, do NOT redial. Presence is what the human chose to share and never proves a notification was seen: delivery is not guaranteed by the OS. A "privacy_notice" field means voice-call conversations may be used for model training; when it is present, keep personal data, credentials and confidential business details out of questions delivered as calls and prefer text delivery for anything sensitive.`;
+Returns device availability (available/busy/away with an optional note), recent feedback events (answers, call declined/hangup/missed/failed), and the relay time. Use it before raising priority or switching delivery to call: if the human is busy or away, prefer low priority and text and only escalate when truly blocked; if they recently declined or hung up, do NOT redial. Presence is what the human chose to share and never proves a notification was seen: delivery is not guaranteed by the OS. A "privacy_notice" field means this account does not accept personal or confidential information; when it is present, follow it for every later question and notification.`;
 
 const UPDATE_REQUEST_DESCRIPTION = `Change the priority or delivery mode of a pending question sent with ask_human.
 
-Pass "priority" (low/normal/high/urgent) and/or "delivery_mode" (auto/actions/text/call). At least one is required. The relay recalculates the effective delivery and the result reports the current request including the effective "delivery_mode" and "call" state plus any human "feedback". Use it to escalate when truly blocked (check get_human_status first) or to quieten a question that can wait. A call needs high/urgent priority and explicit "call" mode; if the call was declined, hung up, missed, or failed, do NOT switch back to call. If the question is no longer useful, call cancel_request instead. A "privacy_notice" field means voice-call conversations may be used for model training; when it is present, keep personal data, credentials and confidential business details out of questions delivered as calls and prefer text delivery for anything sensitive.`;
+Pass "priority" (low/normal/high/urgent) and/or "delivery_mode" (auto/actions/text/call). At least one is required. The relay recalculates the effective delivery and the result reports the current request including the effective "delivery_mode" and "call" state plus any human "feedback". Use it to escalate when truly blocked (check get_human_status first) or to quieten a question that can wait. A call needs high/urgent priority and explicit "call" mode; if the call was declined, hung up, missed, or failed, do NOT switch back to call. If the question is no longer useful, call cancel_request instead.`;
 
 const outputSchema = {
   status: z
@@ -123,7 +137,7 @@ const outputSchema = {
   call: z.record(z.string(), z.unknown()).optional().describe("Live call state (id, state ringing/active/ended, outcome, transcript) when there is one"),
   feedback: z.unknown().optional().describe("Human feedback for this request when the relay returns it"),
   warning: z.string().optional().describe("Present when delivery is doubtful, e.g. no phone is paired with the relay"),
-  privacy_notice: z.string().optional().describe("Present when voice-call conversations may be used for model training; keep sensitive content out of call-delivered questions and prefer text"),
+  privacy_notice: z.string().optional().describe("Present when this account does not accept personal or confidential information; keep both out of every question and notification"),
   error_code: z.string().optional().describe("Machine-readable error code (only when the call failed)"),
 };
 
@@ -139,7 +153,7 @@ const presenceOutputSchema = {
     .describe("Recent human feedback events (request_id, device_id, event, at), newest first"),
   now: z.string().optional().describe("Relay time (ISO8601)"),
   warning: z.string().optional().describe("Present when delivery is doubtful, e.g. no phone is paired with the relay"),
-  privacy_notice: z.string().optional().describe("Present when voice-call conversations may be used for model training; keep sensitive content out of call-delivered questions and prefer text"),
+  privacy_notice: z.string().optional().describe("Present when this account does not accept personal or confidential information; keep both out of every question and notification"),
   error_code: z.string().optional().describe("Machine-readable error code (only when the call failed)"),
 };
 
@@ -162,6 +176,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
   const subscriptions = deps.subscriptions !== false;
   const maxWaitSeconds = clampWaitSeconds(deps.maxWaitSeconds ?? MAX_WAIT_SECONDS);
   const WAIT_SECONDS_DESCRIPTION = waitSecondsDescription(maxWaitSeconds);
+  const restrictionPrompt = deps.inputRestricted ? `\n\n${INPUT_RESTRICTION_PROMPT}` : "";
 
   const mcp = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
@@ -173,7 +188,8 @@ export function createServer(deps: ServerDeps = {}): McpServer {
         "Use get_human_status before escalating priority or delivery. Use update_request to change priority or delivery of a pending question. " +
         "Use notify_human for one-way news (e.g. a long task finished); withdraw it with cancel_request when it is no longer useful. " +
         "Voice answers are speech-to-text and may contain recognition errors. Never redial after declined/hangup. " +
-        "If a result carries \"privacy_notice\", voice-call conversations may be used for model training, so keep sensitive content out of call-delivered questions and prefer text.",
+        "If a result carries \"privacy_notice\", the account does not accept personal or confidential information: keep both out of every later question and notification." +
+        restrictionPrompt,
     },
   );
 
@@ -291,6 +307,16 @@ export function createServer(deps: ServerDeps = {}): McpServer {
     };
   }
 
+  /** The account's restriction as the relay reported it with a newly created request. */
+  function restrictionOf(delivery: RelayDelivery | undefined): RestrictionNotice {
+    return {
+      // What the caller established before the handshake holds even if a relay omits the flag.
+      inputRestricted: deps.inputRestricted === true || delivery?.input_restricted === true,
+      consentRequired: delivery?.input_consent_required === true,
+      consentHint: deps.consentHint,
+    };
+  }
+
   /** Shared failure path. Cancellation by the MCP client is re-thrown (no result is expected). */
   function fail(error: unknown, extra: Extra, ctx: { requestId?: string; created?: boolean }): ToolResult {
     if (extra.signal.aborted || isAbortError(error)) throw error;
@@ -304,7 +330,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
     requestId: string,
     waitSeconds: number,
     extra: Extra,
-    opts: { initial?: Awaited<ReturnType<RelayClient["getRequest"]>>; warning?: string | undefined; voiceTraining?: boolean | undefined },
+    opts: { initial?: Awaited<ReturnType<RelayClient["getRequest"]>>; warning?: string | undefined; restriction?: RestrictionNotice | undefined },
   ): Promise<ToolResult> {
     const request = await waitForResolution(client, requestId, {
       clock,
@@ -315,14 +341,14 @@ export function createServer(deps: ServerDeps = {}): McpServer {
       retryBackoffMs: deps.retryBackoffMs,
       minCycleMs: deps.minCycleMs,
     });
-    return requestResult(request, { waitedSeconds: waitSeconds, warning: opts.warning, voiceTraining: opts.voiceTraining });
+    return requestResult(request, { waitedSeconds: waitSeconds, warning: opts.warning, restriction: opts.restriction });
   }
 
   mcp.registerTool(
     "ask_human",
     {
       title: "Ask the human (via their phone)",
-      description: ASK_HUMAN_DESCRIPTION,
+      description: ASK_HUMAN_DESCRIPTION + restrictionPrompt,
       inputSchema: {
         question: z
           .string()
@@ -408,7 +434,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
         return await waitAndReport(client, requestId, waitSeconds, extra, {
           initial: created.request,
           warning: deliveryWarning(created.delivery, deps.noDeviceWarning),
-          voiceTraining: created.delivery?.voice_training === true,
+          restriction: restrictionOf(created.delivery),
         });
       } catch (e) {
         return fail(e, extra, requestId ? { requestId, created: true } : {});
@@ -445,7 +471,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
     "notify_human",
     {
       title: "Notify the human (one-way)",
-      description: NOTIFY_HUMAN_DESCRIPTION,
+      description: NOTIFY_HUMAN_DESCRIPTION + restrictionPrompt,
       inputSchema: {
         message: z.string().max(4000).describe("The notification text, short and self-contained (1-4000 characters)."),
       },
@@ -462,7 +488,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
           { kind: "notification", question: message, agent: agentInfo() },
           { signal: extra.signal },
         );
-        return notifiedResult(created.request, deliveryWarning(created.delivery, deps.noDeviceWarning));
+        return notifiedResult(created.request, deliveryWarning(created.delivery, deps.noDeviceWarning), restrictionOf(created.delivery));
       } catch (e) {
         return fail(e, extra, {});
       }
@@ -518,7 +544,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
     },
     async (_args, extra): Promise<ToolResult> => {
       try {
-        return presenceResult(await connect().getPresence({ signal: extra.signal }));
+        return presenceResult(await connect().getPresence({ signal: extra.signal }), deps.consentHint);
       } catch (e) {
         return fail(e, extra, {});
       }

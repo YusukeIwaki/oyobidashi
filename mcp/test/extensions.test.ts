@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { RelayClient } from "../src/relay-client.ts";
 import type { ServerDeps } from "../src/server.ts";
 import { connect, envFor, FakeClock, FakeRelay, fixture, json, textOf, type Harness, type ToolCallResult } from "./helpers.ts";
+import { PRIVACY_NOTICE } from "../src/results.ts";
 
 let harness: Harness | undefined;
 afterEach(async () => {
@@ -157,10 +158,10 @@ describe("get_human_status", () => {
     expect(result.structuredContent?.error_code).toBe("internal");
   });
 
-  test("voice_training true adds privacy_notice to structuredContent and text; absent adds nothing", async () => {
-    const notice = "Voice calls on this account may be used to improve AI models. For a request delivered as a call, keep personal data, credentials and confidential business details out of question, context and choices; use text delivery for anything sensitive.";
+  test("input_restricted true adds privacy_notice to structuredContent and text; absent adds nothing", async () => {
+    const notice = PRIVACY_NOTICE;
     const withFlag = await setup();
-    withFlag.relay.presence = { devices: [], recent_events: [], now: "2026-11-15T14:00:00.000Z", voice_training: true };
+    withFlag.relay.presence = { devices: [], recent_events: [], now: "2026-11-15T14:00:00.000Z", input_restricted: true };
     const flagged = await withFlag.call("get_human_status", {});
     expect(flagged.isError).toBeFalsy();
     expect(flagged.structuredContent?.privacy_notice).toBe(notice);
@@ -177,11 +178,11 @@ describe("get_human_status", () => {
 });
 
 describe("ask_human privacy_notice", () => {
-  const notice = "Voice calls on this account may be used to improve AI models. For a request delivered as a call, keep personal data, credentials and confidential business details out of question, context and choices; use text delivery for anything sensitive.";
+  const notice = PRIVACY_NOTICE;
 
-  test("pending create with voice_training adds privacy_notice; without flag it is absent", async () => {
+  test("pending create with input_restricted adds privacy_notice; without flag it is absent", async () => {
     const withFlag = await setup();
-    withFlag.relay.delivery = { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, voice_training: true };
+    withFlag.relay.delivery = { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, input_restricted: true };
     const flagged = await withFlag.call("ask_human", { question: "Deploy now?", wait_seconds: 0 });
     expect(flagged.isError).toBeFalsy();
     expect(flagged.structuredContent?.status).toBe("pending");
@@ -197,9 +198,9 @@ describe("ask_human privacy_notice", () => {
     expect(textOf(plain)).not.toContain(notice);
   });
 
-  test("answered create with voice_training adds privacy_notice", async () => {
+  test("answered create with input_restricted adds privacy_notice", async () => {
     const { relay, call } = await setup();
-    relay.delivery = { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, voice_training: true };
+    relay.delivery = { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, input_restricted: true };
     relay.resolveAfter(0);
     const result = await call("ask_human", { question: "Deploy now?" });
     expect(result.isError).toBeFalsy();
@@ -208,9 +209,9 @@ describe("ask_human privacy_notice", () => {
     expect(textOf(result)).toContain(notice);
   });
 
-  test("cancelled and expired creates with voice_training add privacy_notice", async () => {
+  test("cancelled and expired creates with input_restricted add privacy_notice", async () => {
     const cancelledSetup = await setup();
-    cancelledSetup.relay.delivery = { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, voice_training: true };
+    cancelledSetup.relay.delivery = { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, input_restricted: true };
     cancelledSetup.relay.resolveAfter(0, fixture("event_request_updated.json").request);
     const cancelled = await cancelledSetup.call("ask_human", { question: "q" });
     expect(cancelled.structuredContent?.status).toBe("cancelled");
@@ -219,7 +220,7 @@ describe("ask_human privacy_notice", () => {
     await harness!.close();
 
     const expiredSetup = await setup();
-    expiredSetup.relay.delivery = { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, voice_training: true };
+    expiredSetup.relay.delivery = { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, input_restricted: true };
     expiredSetup.relay.resolveAfter(0, { ...fixture("request_pending.json"), status: "expired" });
     const expired = await expiredSetup.call("ask_human", { question: "q" });
     expect(expired.structuredContent?.status).toBe("expired");

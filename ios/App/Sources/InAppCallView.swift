@@ -10,9 +10,6 @@ struct InAppCallView: View {
     @State private var answering = false
     @State private var actionError: String?
     @State private var hasAnswered = false
-    @State private var disclosure: VoicePrivacyDisclosure?
-    @State private var startingVoice = false
-    @State private var disclosureUnavailable = false
 
     init(request: AgentRequest) {
         self.request = request
@@ -69,13 +66,6 @@ struct InAppCallView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PagerTheme.cream.ignoresSafeArea())
-        .task(id: hasAnswered) {
-            guard hasAnswered, callKit.activeCallUUID == nil, let credentials = model.credentials else { return }
-            let client = RelayClient(endpoint: credentials.endpoint, deviceToken: nil)
-            disclosure = try? await client.health().voicePrivacy
-            if Task.isCancelled { return }
-            disclosureUnavailable = disclosure == nil
-        }
         .onChange(of: model.store.request(id: request.id)?.call?.state) { _, state in
             if state == .active, model.store.request(id: request.id)?.call?.deviceID == model.myDeviceID {
                 hasAnswered = true
@@ -100,8 +90,6 @@ struct InAppCallView: View {
         let voice = callKit.voice
         VStack(spacing: 8) {
             switch voice.phase {
-            case .confirmingConsent:
-                Label("音声で同意を確認中", systemImage: "mic.fill").foregroundStyle(PagerTheme.inkSoft)
             case .speaking:
                 Label("読み上げ中…", systemImage: "speaker.wave.2.fill").foregroundStyle(PagerTheme.inkSoft)
                 if !voice.lastAssistantText.isEmpty {
@@ -165,22 +153,21 @@ struct InAppCallView: View {
         } else {
             VStack(spacing: 12) {
                 if callKit.activeCallUUID == nil && (voice.phase == .idle || voice.phase == .ended) {
-                    if let disclosure {
-                        VoiceConsentNotice(disclosure: disclosure)
-                        Button("同意して音声で話す") {
-                            startingVoice = true
-                            Task {
-                                defer { startingVoice = false }
-                                await callKit.startApprovedConversation(request: model.store.request(id: request.id) ?? request, policy: disclosure.id)
-                            }
+                    Text("通話が中断されました。再開するか、終了して文字で返信できます")
+                        .font(.caption)
+                        .foregroundStyle(PagerTheme.inkSoft)
+                    Button {
+                        Task {
+                            let current = model.store.request(id: request.id) ?? request
+                            let reply = current.call?.transcript.last(where: { $0.role == .assistant })?.text ?? current.question
+                            await callKit.startFallbackConversation(request: current, initialReply: reply)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(startingVoice)
-                    } else if disclosureUnavailable {
-                        Text("会話データの送信先を確認できません。文字で返信できます。")
-                    } else {
-                        ProgressView("会話データの送信先を確認中")
+                    } label: {
+                        Label("通話を再開", systemImage: "mic.fill")
+                            .frame(maxWidth: .infinity)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .tint(PagerTheme.orange)
                 }
                 if voice.phase == .listening {
                     Button {
@@ -226,13 +213,18 @@ struct InAppCallView: View {
     }
 
     private func answer() async {
+        guard model.hasVoiceAIConsent else {
+            actionError = RelayError.voiceAIConsentRequired.userMessage
+            return
+        }
         answering = true
         actionError = nil
         defer { answering = false }
         let outcome = await model.answerCall(requestID: request.id)
         switch outcome {
-        case .success:
+        case .success(let resp):
             hasAnswered = true
+            await callKit.startFallbackConversation(request: resp.request, initialReply: resp.reply ?? resp.request.question)
         case .unauthorized:
             actionError = "認証に失敗しました。ペアリングし直してください"
         case .unreachable:

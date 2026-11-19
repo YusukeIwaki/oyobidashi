@@ -1,4 +1,23 @@
 import qrcode from "qrcode-generator";
+import { needsInputConsent, type InputRestriction } from "./input-restriction.ts";
+
+export type PageMode = "authorize" | "pair" | "connections";
+export type PageStep = "input_restriction" | "pairing" | "approval" | "connections";
+
+/**
+ * The screen a signed-in human sees next. The FREE plan input restriction comes
+ * first and only for an owner it applies to; everyone else goes straight on.
+ */
+export function stepAfterSignIn(mode: PageMode, restriction: InputRestriction, paired: number): PageStep {
+  if (needsInputConsent(restriction)) return "input_restriction";
+  if (mode === "connections") return "connections";
+  return mode === "authorize" && paired > 0 ? "approval" : "pairing";
+}
+
+/** An agent cannot be linked without the acceptance; the other pages may postpone it. */
+export function canPostponeInputConsent(mode: PageMode): boolean {
+  return mode !== "authorize";
+}
 
 /** The request fields the consent page hands back to the server unchanged. */
 export const AUTHORIZATION_FIELDS = ["client_id", "redirect_uri", "response_type", "code_challenge", "code_challenge_method", "state", "resource"] as const;

@@ -30,7 +30,8 @@ final class AppEnvironment {
             credentialStore: KeychainCredentialStore(),
             configuration: AppModelConfiguration(deviceName: UIDevice.current.name, pushEnvironment: pushEnvironment, pushClientID: try? KeychainPushClientIdentity.loadOrCreate()),
             notifications: notifications,
-            draftPersistence: UserDefaultsDraftPersistence()
+            draftPersistence: UserDefaultsDraftPersistence(),
+            voiceAIConsentStore: UserDefaultsVoiceAIConsentStore()
         )
         model.voiceAccessProvider = { [voiceAccess] credentials in
             try await voiceAccess.token(for: credentials)

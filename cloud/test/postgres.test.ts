@@ -7,6 +7,7 @@ import { JobWorker } from "../src/worker.ts";
 import { CloudApp } from "../src/app.ts";
 import { LocalWakeBus } from "../src/bus.ts";
 import { CloudService } from "../src/service.ts";
+import { INPUT_RESTRICTION_VERSION } from "../src/input-restriction.ts";
 
 const url = process.env.CLOUD_TEST_DATABASE_URL;
 const suite = describe.skipIf(!url);
@@ -49,6 +50,20 @@ suite("real PostgreSQL concurrency and forced failure", () => {
     await db.close();
   });
 
+  test("the FREE plan input restriction acceptance is durable, per owner and erased with the account", async () => {
+    const { h, db } = await setup(2);
+    h.service.freeInputRestricted = true;
+    const state = (uid: string) => db.transaction(uid, (tx) => h.service.inputRestriction(tx));
+    expect(await state("alice")).toMatchObject({ restricted: true, accepted: false });
+    expect((await h.call("POST", "/v1/input-restriction", "agent-alice", { accept: true, version: INPUT_RESTRICTION_VERSION })).status).toBe(200);
+    // A second service on the same database, as another API replica would see it.
+    const replica = new CloudService(db, new LocalWakeBus(), () => h.clock.now);
+    replica.freeInputRestricted = true;
+    expect(await db.transaction("alice", (tx) => replica.inputRestriction(tx))).toMatchObject({ restricted: true, accepted: true });
+    expect(await state("bob")).toMatchObject({ restricted: true, accepted: false });
+    await db.transaction("alice", (tx) => tx.eraseAccount());
+    expect(await db.sql.unsafe("SELECT * FROM cloud_records WHERE uid='alice'")).toHaveLength(0);
+  });
   test("API pools share the same rolling voice budget", async () => {
     const { h, db, schema } = await setup(1);
     const call = await h.setup();

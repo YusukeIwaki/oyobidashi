@@ -94,6 +94,11 @@ public final class AppModel: AnswerSubmitting {
     private var lastRevokedDeviceID: String?
     public private(set) var lastAnswerSubmission: AnswerSubmission?
     public private(set) var pairingState: PairingState = .idle
+    /// 今のペアリング先について、音声会話の内容をAIへ送ることに同意済みか。
+    public private(set) var hasVoiceAIConsent = false
+    /// 同意の確認が必要なときの送信先。ペアリング済みで同意の記録がない (アプリ更新後など)、
+    /// または接続先の送信先が変わった場合に入る。
+    public private(set) var voiceAIReview: VoiceAIDisclosure?
     public let store: RequestListStore
     public let drafts: DraftStore
     public let callReconciler = CallReconciler()
@@ -111,6 +116,7 @@ public final class AppModel: AnswerSubmitting {
     @ObservationIgnored public weak var incomingCallHandler: (any IncomingCallHandling)?
 
     @ObservationIgnored private let credentialStore: any CredentialStore
+    @ObservationIgnored private let voiceAIConsentStore: any VoiceAIConsentStore
     @ObservationIgnored private let transport: any HTTPTransport
     @ObservationIgnored private let streamFactory: StreamFactory
     @ObservationIgnored private let notifications: (any NotificationManaging)?
@@ -133,11 +139,13 @@ public final class AppModel: AnswerSubmitting {
         configuration: AppModelConfiguration,
         notifications: (any NotificationManaging)? = nil,
         draftPersistence: any DraftPersistence = InMemoryDraftPersistence(),
+        voiceAIConsentStore: any VoiceAIConsentStore = InMemoryVoiceAIConsentStore(),
         streamFactory: StreamFactory? = nil,
         voiceTurnPolicy: VoiceTurnPolicy = VoiceTurnPolicy(),
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.credentialStore = credentialStore
+        self.voiceAIConsentStore = voiceAIConsentStore
         self.transport = transport
         self.configuration = configuration
         self.voiceTurnPolicy = voiceTurnPolicy
@@ -152,6 +160,7 @@ public final class AppModel: AnswerSubmitting {
         // 読み出し失敗 (Keychain エラー等) は未ペアリング扱い。
         if let credentials = try? credentialStore.load() {
             phase = .paired(credentials)
+            hasVoiceAIConsent = voiceAIConsentStore.load()?.covers(credentials.endpoint) == true
         }
     }
 
@@ -170,10 +179,52 @@ public final class AppModel: AnswerSubmitting {
 
     // MARK: Pairing
 
+    // MARK: Voice AI consent
+
+    /// ペアリング前に見せる、接続先の音声会話の送信先。確認できなければ送信先の名前なしで説明する。
+    public func voiceAIDisclosure(for endpoint: RelayEndpoint) async -> VoiceAIDisclosure {
+        let health = try? await RelayClient(endpoint: endpoint, deviceToken: nil, transport: transport).health()
+        return health?.voiceAI ?? .unknown
+    }
+
+    private func recordVoiceAIConsent(_ disclosure: VoiceAIDisclosure?, for endpoint: RelayEndpoint) {
+        voiceAIConsentStore.save(disclosure.map { VoiceAIConsent(endpoint: endpoint, disclosure: $0, acceptedAt: now()) })
+        hasVoiceAIConsent = disclosure != nil
+        voiceAIReview = nil
+    }
+
+    /// ペアリング済みの端末で、同意が今の接続先・送信先に対するものかを確かめる。
+    /// 起動時と前面復帰時に呼ぶ。通話中には呼ばない。
+    public func reviewVoiceAIConsent() async {
+        guard let credentials else { return }
+        let record = voiceAIConsentStore.load()
+        if record?.covers(credentials.endpoint) != true {
+            hasVoiceAIConsent = false
+            let disclosure = await voiceAIDisclosure(for: credentials.endpoint)
+            if self.credentials == credentials, !hasVoiceAIConsent { voiceAIReview = disclosure }
+            return
+        }
+        // 送信先を確認できないときは、すでに受け取った同意をそのまま使う。
+        guard let health = try? await RelayClient(endpoint: credentials.endpoint, deviceToken: nil, transport: transport).health(),
+              let disclosure = health.voiceAI, self.credentials == credentials else { return }
+        if record?.covers(credentials.endpoint, disclosure: disclosure) != true {
+            voiceAIConsentStore.save(nil)
+            hasVoiceAIConsent = false
+            voiceAIReview = disclosure
+        }
+    }
+
+    /// 確認画面での同意。
+    public func acceptVoiceAI(_ disclosure: VoiceAIDisclosure) {
+        guard let credentials else { return }
+        recordVoiceAIConsent(disclosure, for: credentials.endpoint)
+    }
+
     /// `POST /v1/pair` を呼び、成功したら接続情報を保存する。
     /// すでにペアリング済みだった場合、成功後に古いデバイス登録を best-effort で削除する。
+    /// `voiceAIConsent` は、ペアリングの直前に利用者が同意した送信先。成功したときだけ記録する。
     @discardableResult
-    public func pair(_ info: PairingInfo) async -> Bool {
+    public func pair(_ info: PairingInfo, voiceAIConsent: VoiceAIDisclosure? = nil) async -> Bool {
         guard pairingState != .pairing else { return false }
         pairingState = .pairing
         let previous = credentials
@@ -195,6 +246,7 @@ public final class AppModel: AnswerSubmitting {
             store.reset()
             if previous != new { drafts.removeAll() }
             phase = .paired(new)
+            recordVoiceAIConsent(voiceAIConsent, for: new.endpoint)
             lastAnswerSubmission = nil
             signedOutReason = nil
             lastRevokedDeviceID = nil
@@ -244,6 +296,9 @@ public final class AppModel: AnswerSubmitting {
         lastRevokedDeviceID = reason == .unauthorized ? credentials.deviceID : nil
         stopStream()
         try? credentialStore.clear()
+        voiceAIConsentStore.save(nil)
+        hasVoiceAIConsent = false
+        voiceAIReview = nil
         phase = .unpaired
         lastAnswerSubmission = nil
         signedOutReason = reason
@@ -479,9 +534,11 @@ public final class AppModel: AnswerSubmitting {
     public func hangupCall(requestID: String) async -> CallActionOutcome {
         await performCallAction(requestID: requestID, body: CallEventBody(event: .hangup))
     }
-    public func sendCallTurn(requestID: String, text: String, voiceConsent: String? = nil) async -> CallActionOutcome {
+    public func sendCallTurn(requestID: String, text: String) async -> CallActionOutcome {
         guard !sendingVoiceRequests.contains(requestID) else { return .failed(.turnInProgress) }
         guard isPaired else { return .unauthorized }
+        // 同意のない端末から、発話をAIへ送らない。
+        guard hasVoiceAIConsent else { return .failed(.voiceAIConsentRequired) }
         sendingVoiceRequests.insert(requestID)
         defer { sendingVoiceRequests.remove(requestID) }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -491,7 +548,7 @@ public final class AppModel: AnswerSubmitting {
         let recovering = previous?.text == trimmed && previous?.voiceCallID == callID && previous?.voiceTurnID != nil
         let turnID = recovering ? previous!.voiceTurnID! : UUID().uuidString.lowercased()
         drafts.set(AnswerDraft(text: trimmed, usedVoice: true, voiceTurnID: turnID, voiceCallID: callID), for: requestID)
-        let outcome = await performCallAction(requestID: requestID, body: CallEventBody(event: .turn, text: trimmed, turnID: turnID, recoveringTurn: recovering, voiceConsent: voiceConsent))
+        let outcome = await performCallAction(requestID: requestID, body: CallEventBody(event: .turn, text: trimmed, turnID: turnID, recoveringTurn: recovering))
         if case .success = outcome {
             if drafts.draft(for: requestID)?.voiceTurnID == turnID { drafts.remove(requestID) }
             return outcome

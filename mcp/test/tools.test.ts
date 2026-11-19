@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Ajv } from "ajv";
 import type { ServerDeps } from "../src/server.ts";
 import { connect, envFor, FakeClock, FakeRelay, fixture, json, textOf, type Harness, type ToolCallResult } from "./helpers.ts";
+import { PRIVACY_NOTICE } from "../src/results.ts";
 
 let harness: Harness | undefined;
 afterEach(async () => {
@@ -96,9 +97,9 @@ describe("tool listing", () => {
     expect(wait).toMatch(/pending/);
     expect(tools.find((t) => t.name === "notify_human")!.description!).toMatch(/one-way/i);
     expect(ask).toContain("privacy_notice");
-    expect(ask).toMatch(/model training/i);
+    expect(ask).toMatch(/personal or confidential/i);
     expect(tools.find((t) => t.name === "get_human_status")!.description!).toContain("privacy_notice");
-    expect(tools.find((t) => t.name === "update_request")!.description!).toContain("privacy_notice");
+    expect(tools.find((t) => t.name === "notify_human")!.description!).toContain("privacy_notice");
     expect(h.client.getInstructions()).toContain("ask_human");
     expect(h.client.getInstructions()).toContain("privacy_notice");
     expect(h.client.getServerVersion()?.name).toBe("oyobidashi");
@@ -341,10 +342,10 @@ describe("ask_human", () => {
     expect("warning" in b.structuredContent!).toBe(false);
   });
 
-  test("voice_training on create adds privacy_notice to pending and answered; absent adds nothing", async () => {
-    const notice = "Voice calls on this account may be used to improve AI models. For a request delivered as a call, keep personal data, credentials and confidential business details out of question, context and choices; use text delivery for anything sensitive.";
+  test("input_restricted on create adds privacy_notice to pending and answered; absent adds nothing", async () => {
+    const notice = PRIVACY_NOTICE;
     const { relay, call } = await setup();
-    relay.delivery = { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, voice_training: true };
+    relay.delivery = { paired_devices: 1, websocket_delivered: 1, push_attempted: 0, input_restricted: true };
     const pending = await call("ask_human", { question: "q", wait_seconds: 0 });
     expect(pending.structuredContent?.privacy_notice).toBe(notice);
     expect(textOf(pending)).toContain(notice);

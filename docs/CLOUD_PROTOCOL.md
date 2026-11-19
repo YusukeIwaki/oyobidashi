@@ -78,6 +78,7 @@ enabled only when the Firebase web configuration is present.
 | `GET /oauth/connections` | Human-facing page to inspect and withdraw MCP approvals |
 | `GET /oauth/grants`, `DELETE /oauth/grants/{id}` | Authenticated approval list and owner-scoped revocation from that page |
 | `GET /pair` | Sign in and pair a phone without an MCP client |
+| `GET /v1/input-restriction`, `POST /v1/input-restriction` | The signed-in owner's FREE plan input restriction and its acceptance (see below) |
 
 An unauthenticated `/v1/mcp` request gets 401 with
 `WWW-Authenticate: Bearer resource_metadata="..."`. Issuer and resource are the
@@ -92,7 +93,10 @@ The consent page signs the human in with Google, Apple or GitHub in an in-memory
 Firebase session and posts the decision with that ID token. The server verifies
 the token and the page's `Origin`, and accepts only a direct Google, Apple or
 GitHub sign-in. Anonymous and custom-token sessions cannot approve an MCP
-client. The page displays a separate, explicit approval button after sign-in;
+client. An owner under the FREE plan input restriction first sees that
+restriction on its own screen and accepts it with a dedicated button; approval
+is refused with 409 `input_consent_required` until then. The page displays a
+separate, explicit approval button after sign-in;
 the registered client name is marked as unverified. An account
 without an external identity could not be recovered once the client lost its
 tokens. If the account has no paired phone, the page obtains a pairing code,
@@ -332,14 +336,50 @@ retries. A grace period in Apple renewal info extends only the subscription
 whose original transaction ID, environment and product it names. A Google Play
 test purchase (`testPurchase`) never grants access and is never acknowledged.
 
-Agents learn about data use without learning the model. The API and worker
-share model selection settings and take the applicable training terms from
-`VOICE_STANDARD_TRAINING` or `VOICE_FREE_TRAINING`. When training use is
-declared, the agent view of `GET /v1/presence` and the `delivery` object of
-`POST /v1/requests` carry `"voice_training":true`. It concerns only
-`question`, `context`, `choices` and the spoken conversation of a request that
-is answered by voice call; text, choice and notification delivery never reach a
-model. MCP surfaces it as a `privacy_notice` string in tool results.
+### FREE plan input restriction
+
+The FREE voice model of the hosted service accepts no personal or confidential
+input. That restriction applies to exactly one combination:
+
+| Deployment | Plan | Restricted |
+|---|---|---|
+| Hosted, separate FREE model (`VOICE_MODEL_FREE`, `VOICE_FREE_TRAINING` not `0`) | FREE | yes |
+| Hosted | PLUS | no |
+| Self-hosted cloud or LAN relay (own model) | any | no |
+
+Everything below happens only for a restricted owner. Nobody else is asked,
+warned or limited, and no API response changes for them.
+
+1. **Linking an agent.** The owner accepts the restriction once, in the browser,
+   before the agent is linked: on the OAuth consent page for `/v1/mcp`, or in
+   the stdio login command (`bun run --cwd mcp login:cloud`), which requires
+   typing `同意します` or `agree`. `GET /v1/input-restriction` returns
+   `{"restricted":true,"accepted":false,"version":1}`; `POST` with
+   `{"accept":true,"version":1}` records the acceptance for the owner UID. Both
+   need the owner's own sign-in: a paired phone gets 403 and a hosted MCP call
+   cannot reach the route. A changed `version` needs a new acceptance. The
+   acceptance survives plan changes and is erased with the account.
+2. **What the agent is told.** `/v1/mcp` resolves the owner's plan on every
+   request and, when restricted, appends the restriction to the server
+   `instructions` and to the descriptions of `ask_human` and `notify_human`.
+   The agent view of `GET /v1/presence` and the `delivery` object of
+   `POST /v1/requests` carry `"input_restricted":true`; MCP surfaces it as a
+   `privacy_notice` string in tool results, which also covers the stdio bridge
+   and a plan that changes during a session.
+3. **During a call.** Nothing is asked. A phone answers and the question is
+   read out at once; a turn carries no consent field. The model is chosen per
+   turn from the owner's plan.
+4. **A missing acceptance.** An owner can become restricted without having
+   accepted: the subscription lapsed, or the agent was linked earlier. Their
+   voice content must not reach the FREE model, so a requested call is delivered
+   as text, a ringing or active call ends with `call_ended` and falls back to
+   text, and a queued turn is not sent to the model. Agents see
+   `"input_consent_required":true` next to `input_restricted`, which MCP turns
+   into a `warning` naming `/oauth/connections` (hosted) or the login command
+   (stdio). Text, choice and notification delivery are unaffected: they never
+   reach a model.
+
+Model names stay deployment configuration and are never returned.
 
 ## Push routing and previews
 
@@ -385,10 +425,11 @@ Errors use the existing `{error:{code,message}}` envelope. Invalid credentials a
 overload 429, and temporary infrastructure failure 503. Internal details, tokens,
 transcripts and raw provider errors are never returned or logged.
 
-### iOS のアカウント削除と会話データ同意
+### iOS のアカウント削除
 
 - 公式クラウドに接続した iOS の設定から、削除対象と定期購入の管理リンクを確認して、端末にパスコードが設定されている場合は Face ID やパスコードで本人確認する。`POST /v1/account/deletion` は iOS の端末トークンから対象 UID を決める。端末トークンを持つ利用停止中のアカウントも削除できる。
 - Apple でサインインを連携したアカウントでは、10 分間有効なチケットを返す。`/account/delete` で再認証し、同じ UID に対する最近の Apple サインインを確認したうえで、Apple の認可を取り消す。Firebase Authentication からユーザーを削除し、質問と回答、ジョブ、端末、連携トークンを消去する。途中で一時障害が起きた場合は、アプリの設定から再試行できる。
 - 購入取引の照合情報は、別 UID での再利用を防ぐために保持する。削除した UID はハッシュで照合し、発行済みの認証情報で再利用されるのを防ぐ。ストア側での定期購入の解約は別途行う。
-- `GET /healthz` の `voice_privacy` は、会話データの送信先、学習利用の条件、現在の同意対象を示す `id` を含む。iOS のシステム着信では、応答直後に送信先と学習利用の条件を読み上げる。「同意します」の確定結果を端末内の音声認識で得てから、質問の読み上げと音声会話を開始する。同意への返答は送信・保存しない。端末内での確認が行えない場合や同意が得られない場合は、文字返信を案内して通話を終了する。アプリ内で受ける場合は、送信先を画面に表示して明示的な同意を受け付ける。
-- クラウドは、iOS から新たに受け付ける `turn` に現在の `voice_privacy.id` と一致する `voice_consent` を要求する。ワーカーはモデルへ送る直前に同意対象を自分の設定と照合する。iOS 1.0.0 は送信先を確認できない接続先では文字で返信できる。
+- 通話中に同意を求めることはない。応答した直後に質問の読み上げから始める。同意は2種類あり、どちらも事前に1回だけ行う。
+  - **AIへの送信（全プラン・全接続先）**: `GET /healthz` の `voice_ai.provider` が音声会話の送信先を示す。iOS はペアリングの直前に送信先と送る内容を画面に出し、同意を受け取ってからペアリングする。同意は端末に保存し、ペアリング解除で消す。この版より前にペアリングした端末と、送信先が変わった接続先では、アプリを開いたときに1回だけ確認する。同意のない端末は発話を送らず、通話は文字での返信に切り替わる。
+  - **FREEプランの入力制限（公式クラウドのFREEのみ）**: エージェントの連携時にブラウザまたはログインコマンドで行う（「FREE plan input restriction」を参照）。

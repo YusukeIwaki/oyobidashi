@@ -904,16 +904,14 @@ public struct CallEventBody: Encodable, Equatable, Sendable {
     public var text: String?
     public var turnID: String?
     public var asynchronous: Bool?
-    public var voiceConsent: String?
     /// Local recovery hint; deliberately not encoded on the wire.
     public var recoveringTurn: Bool
-    enum CodingKeys: String, CodingKey { case event, text; case turnID = "turn_id"; case asynchronous = "async"; case voiceConsent = "voice_consent" }
-    public init(event: CallEventType, text: String? = nil, turnID: String? = nil, asynchronous: Bool? = nil, recoveringTurn: Bool = false, voiceConsent: String? = nil) {
+    enum CodingKeys: String, CodingKey { case event, text; case turnID = "turn_id"; case asynchronous = "async" }
+    public init(event: CallEventType, text: String? = nil, turnID: String? = nil, asynchronous: Bool? = nil, recoveringTurn: Bool = false) {
         self.event = event
         self.text = text
         self.turnID = turnID
         self.asynchronous = asynchronous
-        self.voiceConsent = voiceConsent
         self.recoveringTurn = recoveringTurn
     }
     public func encode(to encoder: Encoder) throws {
@@ -922,7 +920,6 @@ public struct CallEventBody: Encodable, Equatable, Sendable {
         try c.encodeIfPresent(text, forKey: .text)
         try c.encodeIfPresent(turnID, forKey: .turnID)
         try c.encodeIfPresent(asynchronous, forKey: .asynchronous)
-        try c.encodeIfPresent(voiceConsent, forKey: .voiceConsent)
     }
 }
 
@@ -990,26 +987,13 @@ public struct HealthResponse: Decodable, Equatable, Sendable {
     public var ok: Bool
     public var version: String?
     public var capabilities: CloudCapabilities? = nil
-    public var voicePrivacy: VoicePrivacyDisclosure? = nil
+    /// 音声会話の送信先。示さないサーバーもある。
+    public var voiceAI: VoiceAIDisclosure? = nil
 
     enum CodingKeys: String, CodingKey {
         case ok, version, capabilities
-        case voicePrivacy = "voice_privacy"
+        case voiceAI = "voice_ai"
     }
-}
-
-public struct VoicePrivacyDisclosure: Decodable, Equatable, Sendable {
-    public enum Provider: String, Decodable, Sendable {
-        case anthropic, meta
-        case claudeCode = "claude-code"
-    }
-    public struct Training: Decodable, Equatable, Sendable {
-        public let free: Bool?
-        public let plus: Bool?
-    }
-    public let id: String
-    public let provider: Provider
-    public let training: Training?
 }
 
 public struct CloudCapabilities: Decodable, Equatable, Sendable {
