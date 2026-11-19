@@ -1,10 +1,11 @@
-import { createRemoteJWKSet, importPKCS8, jwtVerify, SignJWT } from "jose";
+import { createRemoteJWKSet, customFetch, importPKCS8, jwtVerify, SignJWT } from "jose";
 import type { ServiceAccount } from "../../../relay/src/push/fcm.ts";
 import { VerificationError } from "./apple.ts";
 
 type Send = typeof fetch;
 const SCOPES =
   "https://www.googleapis.com/auth/androidpublisher https://www.googleapis.com/auth/playintegrity";
+const PRODUCT_TYPE_SUBSCRIPTION = 1;
 
 export interface GooglePurchase {
   /** Expiry of the entitlement in milliseconds; 0 when the purchase grants nothing. */
@@ -18,9 +19,7 @@ export interface GooglePurchase {
 /** Thin, bounded client for the Play Integrity and Play Developer APIs. */
 export class GooglePlay {
   private token: { value: string; expires: number } | null = null;
-  private readonly jwks = createRemoteJWKSet(
-    new URL("https://www.googleapis.com/oauth2/v3/certs"),
-  );
+  private readonly jwks: ReturnType<typeof createRemoteJWKSet>;
   constructor(
     readonly options: {
       packageName: string;
@@ -30,7 +29,12 @@ export class GooglePlay {
       fetch?: Send;
       now?: () => number;
     },
-  ) {}
+  ) {
+    this.jwks = createRemoteJWKSet(
+      new URL("https://www.googleapis.com/oauth2/v3/certs"),
+      options.fetch ? { [customFetch]: options.fetch } : undefined,
+    );
+  }
   private now() {
     return (this.options.now ?? Date.now)();
   }
@@ -182,7 +186,9 @@ export class GooglePlay {
     if (typeof data !== "string") return null;
     try {
       const event = JSON.parse(Buffer.from(data, "base64").toString("utf8"));
-      const token = event?.subscriptionNotification?.purchaseToken;
+      const voided = event?.voidedPurchaseNotification;
+      const token = event?.subscriptionNotification?.purchaseToken
+        ?? (voided?.productType === PRODUCT_TYPE_SUBSCRIPTION ? voided.purchaseToken : undefined);
       return event?.packageName === this.options.packageName && typeof token === "string"
         ? token
         : null;

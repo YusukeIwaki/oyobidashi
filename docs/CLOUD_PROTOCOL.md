@@ -328,9 +328,12 @@ Store notifications keep the state current without a device:
 `POST /v1/billing/webhooks/apple` takes App Store Server Notifications V2 and
 trusts only the verified `signedPayload`; `POST /v1/billing/webhooks/google`
 takes a Pub/Sub push whose OIDC bearer token must carry the configured audience
-and service account, and re-reads the purchase from Google instead of trusting
-the message. Unknown transactions are acknowledged and ignored. Webhooks are
-idempotent and unauthenticated bodies are bounded to 64KB. At most 16 webhook
+and service account. Both `subscriptionNotification` and a subscription's
+`voidedPurchaseNotification` trigger a purchase lookup from Google. If a refund
+leaves the subscription valid, access continues until the returned expiry.
+When Google reports that the subscription has ended, its access ends on sync.
+Unknown transactions are acknowledged and ignored. Webhooks are idempotent
+and unauthenticated bodies are bounded to 64KB. At most 16 webhook
 signature verifications run at once; excess requests get 429 and the store
 retries. A grace period in Apple renewal info extends only the subscription
 whose original transaction ID, environment and product it names. A Google Play

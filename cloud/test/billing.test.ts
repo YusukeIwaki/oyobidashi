@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
+import { SignJWT } from "jose";
 import { CloudApp } from "../src/app.ts";
 import { Billing, loadBillingConfig, type BillingConfig } from "../src/billing/service.ts";
 import { GooglePlay } from "../src/billing/google.ts";
@@ -548,14 +549,18 @@ describe("subscription billing", () => {
 
 describe("Google Play billing", () => {
   const PACKAGE = "com.example.android",
+    pubsub = { audience: "https://example/webhook", serviceAccount: "push@example.iam.gserviceaccount.com" },
     hashOf = (text: string) => createHash("sha256").update(text).digest("base64url");
   function google(overrides: { verdict?: Record<string, any>; purchases?: Record<string, any> } = {}, database?: Database) {
     const calls: string[] = [];
     let now = Date.now();
     const state = { requestHash: "", purchases: overrides.purchases ?? {} as Record<string, any> };
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
     const send = (async (url: string | URL | Request, init?: RequestInit) => {
       const u = String(url);
       calls.push(`${init?.method} ${u.replace(/^https:\/\/[^/]+/, "")}`);
+      if (u === "https://www.googleapis.com/oauth2/v3/certs")
+        return Response.json({ keys: [{ ...publicKey.export({ format: "jwk" }), kid: "test", alg: "RS256" }] });
       if (u.includes("oauth2")) return Response.json({ access_token: "t", expires_in: 3600 });
       if (u.includes(":decodeIntegrityToken"))
         return Response.json({
@@ -571,8 +576,6 @@ describe("Google Play billing", () => {
       const purchase = state.purchases[token];
       return purchase ? Response.json(purchase) : new Response("{}", { status: 404 });
     }) as typeof fetch;
-    // A throwaway RSA key in PKCS#8, only to sign the fake token exchange.
-    const { privateKey } = require("node:crypto").generateKeyPairSync("rsa", { modulusLength: 2048 });
     const play = new GooglePlay({
       packageName: PACKAGE,
       serviceAccount: {
@@ -580,7 +583,7 @@ describe("Google Play billing", () => {
         client_email: "billing@example.iam.gserviceaccount.com",
         private_key: privateKey.export({ type: "pkcs8", format: "pem" }) as string,
       },
-      pubsub: { audience: "https://example/webhook", serviceAccount: "push@example.iam.gserviceaccount.com" },
+      pubsub,
       fetch: send,
       now: () => now,
     });
@@ -591,7 +594,17 @@ describe("Google Play billing", () => {
       state.requestHash = hash ?? hashOf(payload);
       return s.call("POST", "/v1/billing/google", token, { integrity_token: "it", payload });
     };
-    return { s, calls, state, sync };
+    const notify = async (event: Record<string, unknown>) => {
+      const token = await new SignJWT({ email: pubsub.serviceAccount, email_verified: true })
+        .setProtectedHeader({ alg: "RS256", kid: "test" })
+        .setIssuer("https://accounts.google.com")
+        .setAudience(pubsub.audience)
+        .setExpirationTime("5m")
+        .sign(privateKey);
+      const data = Buffer.from(JSON.stringify({ packageName: PACKAGE, ...event })).toString("base64");
+      return s.call("POST", "/v1/billing/webhooks/google", token, { message: { data } });
+    };
+    return { s, calls, state, sync, notify };
   }
   const active = (now: number, extra: Record<string, unknown> = {}) => ({
     subscriptionState: "SUBSCRIPTION_STATE_ACTIVE",
@@ -769,6 +782,65 @@ describe("Google Play billing", () => {
     expect(r.status).toBe(200);
     expect(r.body.active).toBe(false);
     expect(g.calls.some((c) => c.includes(":acknowledge"))).toBe(false);
+  });
+
+  test("voided Play subscriptions retain access until expiry or lose it immediately after revocation", async () => {
+    const admin = url ? postgres(url, { max: 1, onnotice: () => {} }) : undefined;
+    const schema = `oyobidashi_test_${crypto.randomUUID().replaceAll("-", "")}`;
+    const db = url ? new PostgresDatabase(url, 2, schema) : undefined;
+    try {
+      if (admin && db) {
+        await admin.unsafe(`CREATE SCHEMA ${schema}`);
+        await db.migrate();
+      }
+      const g = google({}, db);
+      const { device_token } = await g.s.h.pair("alice", "android");
+      const activeStatus = async () => (await g.s.call("GET", "/v1/billing", device_token)).body;
+      const notifyVoided = (purchaseToken: string) => g.notify({
+        voidedPurchaseNotification: { purchaseToken, orderId: "test-order", productType: 1, refundType: 1 },
+      });
+
+      const now = g.s.h.clock.now;
+      const expiryTime = new Date(now + 60_000).toISOString();
+      g.state.purchases.refund = active(now, {
+        lineItems: [{ productId: "voice_monthly", expiryTime }],
+      });
+      expect((await g.sync(device_token, [{ purchase_token: "refund" }])).body.active).toBe(true);
+      g.state.purchases.refund.acknowledgementState = "ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED";
+      g.calls.length = 0;
+      expect((await notifyVoided("refund")).status).toBe(204);
+      expect(g.calls).toContain(`GET /androidpublisher/v3/applications/${PACKAGE}/purchases/subscriptionsv2/tokens/refund`);
+      expect(await activeStatus()).toMatchObject({ active: true, expires_at: expiryTime });
+      g.s.h.advance(59_999);
+      expect((await activeStatus()).active).toBe(true);
+      g.s.h.advance(1);
+      expect((await activeStatus()).active).toBe(false);
+
+      g.state.purchases.revoked = active(g.s.h.clock.now);
+      expect((await g.sync(device_token, [{ purchase_token: "revoked" }])).body.active).toBe(true);
+      // Play can report an ended state while the previous period was still on record.
+      g.state.purchases.revoked.subscriptionState = "SUBSCRIPTION_STATE_EXPIRED";
+      g.state.purchases.revoked.acknowledgementState = "ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED";
+      g.calls.length = 0;
+      expect((await notifyVoided("revoked")).status).toBe(204);
+      expect(g.calls).toContain(`GET /androidpublisher/v3/applications/${PACKAGE}/purchases/subscriptionsv2/tokens/revoked`);
+      expect(await activeStatus()).toMatchObject({ active: false, active_stores: [], expires_at: null });
+    } finally {
+      await db?.close();
+      if (admin) {
+        await admin.unsafe(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+        await admin.end();
+      }
+    }
+  });
+
+  test("voided one-time products do not trigger a subscription lookup", async () => {
+    const g = google();
+    const r = await g.notify({
+      voidedPurchaseNotification: { purchaseToken: "item", orderId: "test-order", productType: 2, refundType: 1 },
+    });
+    expect(r.status).toBe(204);
+    expect(g.calls.some((c) => c.includes("/purchases/"))).toBe(false);
   });
 
   test("Pub/Sub pushes without Google's signature are refused", async () => {
