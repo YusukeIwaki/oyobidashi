@@ -12,6 +12,7 @@ import { loadPushConfig } from "./push-config.ts";
 import { createAccountAuth } from "./account-auth.ts";
 import { PostgresOAuthStore } from "./oauth-postgres.ts";
 import { Billing, loadAppleSandboxReviewUids, loadBillingConfig } from "./billing/service.ts";
+import { ReviewPortal, loadReviewPortal } from "./app-review.ts";
 import { VoiceSecurity, loadVoiceConfig } from "./voice.ts";
 import { createFcmProvider } from "../../relay/src/push/fcm.ts";
 import {
@@ -48,6 +49,9 @@ export async function main(
   const official = config.publicUrl === OFFICIAL_CLOUD_ORIGIN;
   const models = voiceModels(process.env, official);
   const appleSandboxReviewUids = official ? loadAppleSandboxReviewUids(process.env) : null;
+  const reviewPortal = role === "api" && appleSandboxReviewUids
+    ? loadReviewPortal(process.env.APPLE_REVIEW_PORTAL, appleSandboxReviewUids)
+    : undefined;
   const voiceProofRequired = requiresVoiceProof(process.env, config.publicUrl);
   if (
     role === "worker" &&
@@ -106,6 +110,7 @@ export async function main(
           service.voiceProofRequired
             ? new VoiceSecurity(service, loadVoiceConfig(process.env))
             : undefined,
+          reviewPortal ? new ReviewPortal(service, reviewPortal) : undefined,
         )
       : null;
   const conversations =

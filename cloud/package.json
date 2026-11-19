@@ -11,13 +11,13 @@
     "build:auth": "bun build src/auth-browser.ts --target browser --minify --outfile public/auth.js && bun build src/oauth-browser.ts --target browser --minify --outfile public/oauth.js && bun build src/account-delete-browser.ts --target browser --minify --outfile public/account-delete.js"
   },
   "dependencies": {
-    "jose": "^6.1.0"
+    "jose": "^6.1.0",
+    "qrcode-generator": "2.0.4"
   },
   "devDependencies": {
     "@types/bun": "^1.4.4",
     "firebase": "13.3.0",
     "postgres": "^3.4.7",
-    "qrcode-generator": "2.0.4",
     "railway": "3.17.0",
     "typescript": "^7.0.2"
   }

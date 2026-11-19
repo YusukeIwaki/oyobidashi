@@ -23,6 +23,7 @@ import { OFFICIAL_CLOUD_ORIGIN } from "./config.ts";
 import type { Billing } from "./billing/service.ts";
 import { AccountDeletion } from "./account-deletion.ts";
 import { VoiceSecurity } from "./voice.ts";
+import type { ReviewPortal } from "./app-review.ts";
 
 /** Enables the hosted MCP endpoint and its OAuth authorization server. */
 export interface RemoteMcpOptions {
@@ -77,6 +78,7 @@ export class CloudApp {
     remote?: RemoteMcpOptions,
     readonly billing?: Billing,
     readonly voice?: VoiceSecurity,
+    readonly reviewPortal?: ReviewPortal,
   ) {
     this.accountDeletion = new AccountDeletion(service, verifier, accountAuth);
     // The consent page signs the human in with Firebase, so it needs the web configuration.
@@ -116,6 +118,8 @@ export class CloudApp {
         return json(200, this.accountAuth.publicConfig);
       }
       if (!internal) {
+        if (path.startsWith("/review/") && this.reviewPortal)
+          return await this.reviewPortal.fetch(req);
         if (path === "/v1/account/deletion" && method === "POST")
           return json(200, await this.accountDeletion.start(req));
         if (path === "/v1/account/deletion/apple" && method === "POST") {
