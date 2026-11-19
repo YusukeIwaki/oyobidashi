@@ -40,9 +40,11 @@ final class VoiceAIConsentTests: XCTestCase {
         // 知らない送信先の名前を推測で出さない。
         XCTAssertEqual(VoiceAIDisclosure(provider: "someone-new").recipientName, VoiceAIDisclosure.unknown.recipientName)
         let text = VoiceAIDisclosure(provider: "meta").paragraphs.joined()
-        for required in ["Meta", "文字に変換", "質問", "履歴", "音声そのものは送信しません", "文字や選択肢での回答は、AIへ送信されません"] {
+        for required in ["Meta", "文字に変換", "質問", "履歴", "音声そのものは送信しません"] {
             XCTAssertTrue(text.contains(required), required)
         }
+        // 同意の対象でない文字・選択肢での回答には触れない。
+        XCTAssertFalse(text.contains("選択肢での回答"))
     }
 
     func testHealthCarriesTheRecipientOnlyWhenTheServerStatesIt() async throws {
