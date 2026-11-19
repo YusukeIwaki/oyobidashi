@@ -152,6 +152,10 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
 
     // MARK: Speaking
 
+    /// 既定 (0.5) の約1.5倍速。rate は速度に比例しないので、ja-JP の音声で実測して決めた値
+    /// (0.575 → 約1.4倍、0.6 → 約1.6倍)。Android の `SPEECH_RATE` と揃える。
+    private static let speechRate: Float = 0.59
+
     private func speak(_ text: String, isFinalReply: Bool, gen: Int) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -164,7 +168,7 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
         phase = .speaking
         let utterance = AVSpeechUtterance(string: trimmed)
         utterance.voice = AVSpeechSynthesisVoice(language: "ja-JP")
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.rate = Self.speechRate
         synthesizer.speak(utterance)
     }
 

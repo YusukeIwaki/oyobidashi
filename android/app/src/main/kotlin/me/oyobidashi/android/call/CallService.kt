@@ -361,6 +361,8 @@ class CallService : Service() {
                     t.setAudioAttributes(android.media.AudioAttributes.Builder()
                         .setUsage(android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION)
                         .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                    // 端末の読み上げ速度設定に対する倍率。iOS の `speechRate` と揃える。
+                    t.setSpeechRate(SPEECH_RATE)
                     ttsReady = true
                     if (cont.isActive) cont.resume(true)
                 }
@@ -517,6 +519,9 @@ class CallService : Service() {
         const val EXTRA_INITIAL_REPLY = "initial_reply"
 
         const val MAX_LISTEN_ATTEMPTS = 3
+
+        /** 読み上げ速度の倍率 (1.0 が端末設定どおり)。 */
+        const val SPEECH_RATE = 1.5f
 
         fun start(context: Context, requestId: String, callId: String, initialReply: String) {
             startWithAction(context, requestId, callId, initialReply, ACTION_START)
