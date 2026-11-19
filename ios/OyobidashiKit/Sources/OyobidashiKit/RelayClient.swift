@@ -14,8 +14,8 @@ public struct URLSessionTransport: HTTPTransport {
 
     public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let path = request.url?.path ?? ""
-        let isBilling = path == "/v1/billing" || path.hasPrefix("/v1/billing/")
-        let (data, response) = try await session.data(for: request, delegate: isBilling ? RefuseRedirects() : nil)
+        let sensitive = path == "/v1/billing" || path.hasPrefix("/v1/billing/") || path.hasPrefix("/v1/account/")
+        let (data, response) = try await session.data(for: request, delegate: sensitive ? RefuseRedirects() : nil)
         guard let http = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
         }
@@ -62,6 +62,11 @@ public struct RelayClient: Sendable {
     public func updateDevice(_ body: DeviceUpdateBody) async throws -> Device {
         let envelope: DeviceEnvelope = try await perform("PUT", ["v1", "devices", "me"], body: body)
         return envelope.device
+    }
+
+    public func beginAccountDeletion() async throws -> AccountDeletionResponse {
+        guard endpoint.supportsCloudAccountDeletion else { throw RelayError.forbidden }
+        return try await perform("POST", ["v1", "account", "deletion"])
     }
 
     /// `DELETE /v1/devices/me` → 204
@@ -229,7 +234,7 @@ public struct RelayClient: Sendable {
         }
         let turnID = body.turnID ?? UUID().uuidString.lowercased()
         guard UUID(uuidString: turnID) != nil else { throw RelayError.invalidRequest(message: "invalid turn ID") }
-        let encoded = try OyobidashiJSON.makeEncoder().encode(CallEventBody(event: .turn, text: text, turnID: turnID, asynchronous: true))
+        let encoded = try OyobidashiJSON.makeEncoder().encode(CallEventBody(event: .turn, text: text, turnID: turnID, asynchronous: true, voiceConsent: body.voiceConsent))
         let deadline = voiceTurnPolicy.now() + voiceTurnPolicy.overallTimeout
         let postPath = ["v1", "requests", requestID, "call"]
         let pollPath = ["v1", "requests", requestID, "turns", turnID]

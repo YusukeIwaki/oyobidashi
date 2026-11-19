@@ -384,3 +384,11 @@ Errors use the existing `{error:{code,message}}` envelope. Invalid credentials a
 401, role violations 403, cross-user/unknown IDs 404, state conflicts 409, bounded
 overload 429, and temporary infrastructure failure 503. Internal details, tokens,
 transcripts and raw provider errors are never returned or logged.
+
+### iOS のアカウント削除と会話データ同意
+
+- 公式クラウドに接続した iOS の設定から、削除対象と定期購入の管理リンクを確認して、端末にパスコードが設定されている場合は Face ID やパスコードで本人確認する。`POST /v1/account/deletion` は iOS の端末トークンから対象 UID を決める。端末トークンを持つ利用停止中のアカウントも削除できる。
+- Apple でサインインを連携したアカウントでは、10 分間有効なチケットを返す。`/account/delete` で再認証し、同じ UID に対する最近の Apple サインインを確認したうえで、Apple の認可を取り消す。Firebase Authentication からユーザーを削除し、質問と回答、ジョブ、端末、連携トークンを消去する。途中で一時障害が起きた場合は、アプリの設定から再試行できる。
+- 購入取引の照合情報は、別 UID での再利用を防ぐために保持する。削除した UID はハッシュで照合し、発行済みの認証情報で再利用されるのを防ぐ。ストア側での定期購入の解約は別途行う。
+- `GET /healthz` の `voice_privacy` は、会話データの送信先、学習利用の条件、現在の同意対象を示す `id` を含む。iOS は着信への応答後、その内容を通話画面に表示する。明示的な同意がマイクと音声認識を開始する条件。文字での返信も選べる。
+- クラウドは、iOS から新たに受け付ける `turn` に現在の `voice_privacy.id` と一致する `voice_consent` を要求する。ワーカーはモデルへ送る直前に同意対象を自分の設定と照合する。iOS 1.0.0 は送信先を確認できない接続先では文字で返信できる。

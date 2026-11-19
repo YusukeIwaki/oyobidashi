@@ -13,6 +13,7 @@ async function setup() {
   await admin!.unsafe(`CREATE SCHEMA ${schema}`);
   const db = new PostgresDatabase(url!, 10, schema);
   resources.push({ db, schema });
+  await db.migrate();
   const store = new PostgresOAuthStore(db.sql);
   await store.migrate();
   await store.migrate();

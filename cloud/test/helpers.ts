@@ -1,11 +1,15 @@
+import type { AccountAuth } from "../src/account-auth.ts";
 import { CloudApp } from "../src/app.ts";
 import { LocalWakeBus } from "../src/bus.ts";
 import { CloudService, hash, type Principal } from "../src/service.ts";
 import { unauthorized } from "../src/errors.ts";
-import type { Database, Turn } from "../src/types.ts";
+import type { Database, IdentityVerifier, Turn } from "../src/types.ts";
 import { MemoryDatabase } from "./memory.ts";
 
-export function harness(database: Database = new MemoryDatabase()) {
+export function harness(
+  database: Database = new MemoryDatabase(),
+  account?: { auth: AccountAuth; verifier?: IdentityVerifier },
+) {
   const clock = { now: Date.now() };
   const bus = new LocalWakeBus(),
     service = new CloudService(database, bus, () => clock.now);
@@ -15,7 +19,7 @@ export function harness(database: Database = new MemoryDatabase()) {
       return token.slice(6);
     },
   };
-  const app = new CloudApp(service, verifier);
+  const app = new CloudApp(service, account?.verifier ?? verifier, undefined, account?.auth);
   const call = async (
     method: string,
     path: string,

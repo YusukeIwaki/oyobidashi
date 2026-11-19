@@ -32,7 +32,7 @@ final class CallKitCoordinator: NSObject, IncomingCallHandling {
     @ObservationIgnored private var uuidByCallID: [String: UUID] = [:]
     @ObservationIgnored private var requestIDByUUID: [UUID: String] = [:]
     @ObservationIgnored private var callIDByUUID: [UUID: UUID] = [:]
-    @ObservationIgnored private var pendingInitialReply: String?
+    @ObservationIgnored private var approvedStart: (requestID: String, text: String, policy: String)?
     @ObservationIgnored private var audioActivated = false
     @ObservationIgnored private var answeredCallIDs: Set<String> = []
 
@@ -121,7 +121,7 @@ final class CallKitCoordinator: NSObject, IncomingCallHandling {
         #endif
         voice.endConversation()
         answeredCallIDs.remove(callID)
-        pendingInitialReply = nil
+        approvedStart = nil
         audioActivated = false
         guard let uuid = uuidByCallID[callID] else {
             if model?.fallbackCallRequest?.id == requestID { model?.fallbackCallRequest = nil }
@@ -175,12 +175,28 @@ final class CallKitCoordinator: NSObject, IncomingCallHandling {
         callController.request(CXTransaction(action: CXEndCallAction(call: uuid))) { _ in }
     }
 
-    /// アプリ内フォールバックで応答したときに会話を開始する。
-    func startFallbackConversation(request: AgentRequest, initialReply: String) async {
+    /// Called by the foreground consent screen. A system answer alone never starts the microphone.
+    func startApprovedConversation(request: AgentRequest, policy: String) async {
+        guard let model, let current = model.store.request(id: request.id),
+              let call = current.call, call.id == request.call?.id,
+              call.state == .active, call.deviceID == model.myDeviceID else { return }
         activeRequestID = request.id
-        if let call = request.call { answeredCallIDs.insert(call.id) }
-        await voice.startConversation(requestID: request.id, initialText: initialReply.isEmpty ? request.question : initialReply, usesCallKitAudio: false)
+        let reply = call.transcript.last(where: { $0.role == .assistant })?.text ?? request.question
+        if activeCallUUID != nil && answeredCallIDs.contains(call.id) {
+            approvedStart = (request.id, reply, policy)
+            await startApprovedSystemAudio()
+        } else {
+            answeredCallIDs.insert(call.id)
+            await voice.startConversation(requestID: request.id, initialText: reply, usesCallKitAudio: false, consent: policy)
+        }
     }
+
+    private func startApprovedSystemAudio() async {
+        guard audioActivated, let start = approvedStart else { return }
+        approvedStart = nil
+        await voice.startConversation(requestID: start.requestID, initialText: start.text, usesCallKitAudio: true, consent: start.policy)
+    }
+
 }
 
 // MARK: - CXProviderDelegate
@@ -189,6 +205,9 @@ extension CallKitCoordinator: CXProviderDelegate {
     nonisolated func providerDidReset(_ provider: CXProvider) {
         Task { @MainActor [weak self] in
             self?.voice.endConversation()
+            self?.approvedStart = nil
+            self?.audioActivated = false
+            self?.answeredCallIDs.removeAll()
             self?.activeCallUUID = nil
             self?.activeRequestID = nil
             self?.uuidByCallID = [:]
@@ -215,13 +234,7 @@ extension CallKitCoordinator: CXProviderDelegate {
                 // The system's compact incoming banner does not open a call screen
                 // after answering while our app is foregrounded. Present our controls.
                 model.fallbackCallRequest = resp.request
-                self.pendingInitialReply = resp.reply ?? resp.request.question
                 action.fulfill()
-                // didActivate が既に来ていれば会話を開始。まだなら didActivate で開始。
-                if self.audioActivated, let reply = self.pendingInitialReply {
-                    self.pendingInitialReply = nil
-                    await self.voice.startConversation(requestID: requestID, initialText: reply, usesCallKitAudio: true)
-                }
             case .unauthorized, .unreachable, .failed:
                 action.fail()
                 // 応答できなかった通話は終了として伝える。
@@ -243,7 +256,7 @@ extension CallKitCoordinator: CXProviderDelegate {
             let callID = self.uuidByCallID.first(where: { $0.value == uuid })?.key
             let wasAnswered = callID.map { self.answeredCallIDs.contains($0) } ?? false
             self.voice.endConversation()
-            self.pendingInitialReply = nil
+            self.approvedStart = nil
             self.audioActivated = false
             // マッピング掃除
             if let callID {
@@ -281,10 +294,7 @@ extension CallKitCoordinator: CXProviderDelegate {
             self.audioActivated = true
             // CallKit が有効化したセッション上で音声会話を動かす。カテゴリは通話用に寄せる。
             try? audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .allowBluetoothA2DP])
-            if let reply = self.pendingInitialReply, let requestID = self.activeRequestID {
-                self.pendingInitialReply = nil
-                await self.voice.startConversation(requestID: requestID, initialText: reply, usesCallKitAudio: true)
-            }
+            await self.startApprovedSystemAudio()
         }
     }
 

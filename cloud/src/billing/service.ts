@@ -3,7 +3,6 @@ import { parseServiceAccount } from "../../../relay/src/push/fcm.ts";
 import { CloudError, conflict, invalid, missing, string } from "../errors.ts";
 import { hash, type CloudService, type Principal } from "../service.ts";
 import {
-  entitled,
   iso,
   newerAppleProof,
   type AppleBillingProof,
@@ -33,6 +32,13 @@ export interface BillingConfig {
     attestRoot?: string;
   };
   google?: { productIds: string[]; play: GooglePlay };
+}
+
+export function loadAppleSandboxReviewUids(env: Record<string, string | undefined>): ReadonlySet<string> {
+  const uids = new Set(list(env.APPLE_IAP_SANDBOX_REVIEW_UIDS));
+  if (uids.size > 32 || [...uids].some(uid => !/^[A-Za-z0-9_-]{1,128}$/.test(uid)))
+    throw new Error("APPLE_IAP_SANDBOX_REVIEW_UIDS is invalid");
+  return uids;
 }
 
 const list = (value: string | undefined) =>
@@ -126,15 +132,14 @@ export class Billing {
 
   async status(tx: Transaction) {
     if (!this.enabled) return { enabled: false };
-    const e = await tx.get("entitlement", "current");
     const now = this.now();
-    const activeSources = Object.values(e?.sources ?? {}).filter((source) => source.expires > now);
+    const activeSources = await this.service.activeEntitlementSources(tx, now);
     const expires = Math.max(0, ...activeSources.map((source) => source.expires));
     return {
       enabled: true,
       voice_training: this.service.voiceTrainingPolicy,
       purchase_account_id: purchaseAccountId(tx.uid),
-      active: entitled(e, now),
+      active: activeSources.length !== 0,
       expires_at: expires > now ? iso(expires) : null,
       active_stores: [...new Set(activeSources.map((source) => source.store))].sort(),
       ...(this.config.apple
@@ -251,6 +256,7 @@ export class Billing {
       } catch {
         continue;
       }
+      if (!this.acceptsSandboxPurchase(transaction, p.uid)) continue;
       const update = this.appleTransaction(transaction);
       if (update && newerAppleProof(updates.get(update.source) ?? null, update.proof))
         updates.set(update.source, update.proof);
@@ -258,6 +264,16 @@ export class Billing {
     for (const [source, proof] of updates)
       await this.service.db.applyAppleBilling(source, p.uid, proof, this.now());
     return this.service.db.transaction(p.uid, (tx) => this.status(tx));
+  }
+
+  private acceptsSandboxPurchase(transaction: Record<string, unknown>, uid?: string) {
+    const reviewUids = this.service.appleSandboxReviewUids;
+    if (transaction.environment !== "Sandbox" || !reviewUids) return true;
+    if (transaction.inAppOwnershipType !== "PURCHASED" || typeof transaction.appAccountToken !== "string")
+      return false;
+    const account = transaction.appAccountToken.toLowerCase();
+    if (uid !== undefined) return reviewUids.has(uid) && account === purchaseAccountId(uid);
+    return [...reviewUids].some(reviewer => account === purchaseAccountId(reviewer));
   }
 
   /** Accepts only verified, relevant StoreKit transactions. */
@@ -268,7 +284,9 @@ export class Billing {
       typeof t.productId !== "string" ||
       !apple.productIds.includes(t.productId) ||
       typeof t.environment !== "string" ||
-      !apple.environments.includes(t.environment) ||
+      (t.environment === "Sandbox" && this.service.appleSandboxReviewUids
+        ? this.service.appleSandboxReviewUids.size === 0
+        : !apple.environments.includes(t.environment)) ||
       typeof t.originalTransactionId !== "string" ||
       !/^[0-9]{1,40}$/.test(t.originalTransactionId) ||
       typeof t.expiresDate !== "number" || !Number.isFinite(t.expiresDate) ||
@@ -360,7 +378,7 @@ export class Billing {
     };
   }
 
-  async appleWebhook(body: Record<string, unknown>) {
+  async appleWebhook(body: Record<string, unknown>, expectedEnvironment?: "Production" | "Sandbox") {
     const apple = this.config.apple;
     if (!apple) throw missing();
     let notice: Record<string, unknown>;
@@ -373,14 +391,17 @@ export class Billing {
       throw new CloudError(401, "unauthorized", "invalid notification");
     }
     const data = notice.data as Record<string, unknown> | undefined;
-    if (!data || data.bundleId !== apple.bundleId || !data.signedTransactionInfo) return;
+    if (!data || data.bundleId !== apple.bundleId || !data.signedTransactionInfo ||
+        (expectedEnvironment && data.environment !== expectedEnvironment)) return;
     let transaction: Record<string, unknown>;
     try {
       transaction = await verifyAppleJws(data.signedTransactionInfo as string, this.now(), apple.storeRoot);
     } catch {
       return;
     }
-    if (typeof data.environment === "string" && data.environment !== transaction.environment) return;
+    if ((expectedEnvironment && transaction.environment !== expectedEnvironment) ||
+        (typeof data.environment === "string" && data.environment !== transaction.environment) ||
+        !this.acceptsSandboxPurchase(transaction)) return;
     let grace = 0;
     if (data.signedRenewalInfo)
       try {

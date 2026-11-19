@@ -11,7 +11,7 @@ import { MAX_WS_SNAPSHOT_BYTES } from "./app.ts";
 import { loadPushConfig } from "./push-config.ts";
 import { createAccountAuth } from "./account-auth.ts";
 import { PostgresOAuthStore } from "./oauth-postgres.ts";
-import { Billing, loadBillingConfig } from "./billing/service.ts";
+import { Billing, loadAppleSandboxReviewUids, loadBillingConfig } from "./billing/service.ts";
 import { VoiceSecurity, loadVoiceConfig } from "./voice.ts";
 import { createFcmProvider } from "../../relay/src/push/fcm.ts";
 import {
@@ -47,6 +47,7 @@ export async function main(
   const config = cloudConfig();
   const official = config.publicUrl === OFFICIAL_CLOUD_ORIGIN;
   const models = voiceModels(process.env, official);
+  const appleSandboxReviewUids = official ? loadAppleSandboxReviewUids(process.env) : null;
   const voiceProofRequired = requiresVoiceProof(process.env, config.publicUrl);
   if (
     role === "worker" &&
@@ -70,6 +71,12 @@ export async function main(
   const bus = new RedisWakeBus(config.redisUrl),
     service = new CloudService(db, bus);
   service.voiceTrainingPolicy = models.training;
+  service.appleSandboxReviewUids = appleSandboxReviewUids;
+  service.voicePrivacy = {
+    provider: models.provider,
+    id: ["v1", models.provider, models.training.free ?? "unknown", models.training.plus ?? "unknown"].join(":"),
+    training: models.training,
+  };
   service.voiceProofRequired = voiceProofRequired;
   const timers: ReturnType<typeof setInterval>[] = [];
   let draining = false;

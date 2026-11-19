@@ -54,8 +54,9 @@ bun run --cwd cloud worker
 | `VOICE_APPLE_TEAM_ID`, `VOICE_APPLE_BUNDLE_ID`, `VOICE_APP_ATTEST_ENVIRONMENTS` | API。クラウド音声のiOS端末証明。未設定時は`APPLE_TEAM_ID`、`APPLE_IAP_BUNDLE_ID`、`APPLE_APP_ATTEST_ENVIRONMENTS`を使う。課金の有効化は不要 |
 | `VOICE_ANDROID_PACKAGE_NAME`, `VOICE_GOOGLE_SERVICE_ACCOUNT_JSON` | API。クラウド音声のAndroid端末証明。未設定時はGoogle Play課金の同名設定を使う。アプリ側にはPlay Integrity用Cloud Project Numberも必要 |
 | `APPLE_IAP_PRODUCT_IDS`, `APPLE_IAP_BUNDLE_ID`, `APPLE_TEAM_ID` | API。App Storeの購読を受け付ける商品ID（カンマ区切り）、アプリのBundle ID、Team ID。商品IDが未設定ならAppleの課金は無効 |
-| `APPLE_IAP_ENVIRONMENTS` | API。受け付けるApp Storeの環境。`Production`（既定）と`Sandbox`のカンマ区切り。TestFlightと審査はSandbox |
-| `APPLE_APP_ATTEST_ENVIRONMENTS` | API。受け付けるApp Attestの環境。`production`（既定）と`development`のカンマ区切り。Xcodeから実機へ入れたビルドはdevelopment |
+| `APPLE_IAP_ENVIRONMENTS` | API。App Storeの取引環境。公式クラウドでは `Production` を設定し、Sandbox は下記の審査用 UID に限る |
+| `APPLE_IAP_SANDBOX_REVIEW_UIDS` | 公式クラウドのAPIとworkerに同じ値を設定。Sandbox購入を許可する審査用Firebase UIDのカンマ区切り。空ならSandboxによるPLUSは付与されない |
+| `APPLE_APP_ATTEST_ENVIRONMENTS` | API。受け付けるApp Attestの環境。公式クラウドでは `production` を設定。TestFlightとApp Storeでは本番の端末証明を使う |
 | `GOOGLE_PLAY_PRODUCT_IDS`, `GOOGLE_PLAY_PACKAGE_NAME`, `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | API。Google Playの購読を受け付ける商品ID、アプリのパッケージ名、Play Developer APIとPlay Integrity APIを呼べるサービスアカウントJSON |
 | `GOOGLE_PLAY_PUBSUB_AUDIENCE`, `GOOGLE_PLAY_PUBSUB_SERVICE_ACCOUNT` | API。リアルタイム デベロッパー通知のPub/Sub pushを認証するaudienceと、pushに使うサービスアカウントのメール。未設定ならGoogleのWebhookは拒否 |
 | `FCM_SERVICE_ACCOUNT_JSON` または `FCM_SERVICE_ACCOUNT_PATH` | Railwayの秘密変数に設定するサービスアカウントJSON、または保護されたファイル。両方の指定は拒否 |
@@ -229,3 +230,18 @@ bun test --cwd cloud
 通常の`bun test`では実DB／Redis試験だけをskipします。CIは隔離した両サービスを起動して全件実行します。試験には実ワーカープロセスのSIGKILL、DBバックエンド接続の強制終了、Redis購読TCP切断、実WebSocket再接続、HTTP本文途中切断を含みます。1000人の無言セッション・変更のない接続の一括確認・変更時の最大並列数も構造として検証します。これらはCPU別の同時収容数の実測ではありません。
 
 実Firebase、Railway、APNs/FCM、端末の音声は別の実測です。ローカルの障害注入試験を、それらの接続成功の代用にはしません。
+
+### iOS 1.0.0 の公開時に合わせる設定
+
+- API の `FIREBASE_AUTH_SERVICE_ACCOUNT_JSON` のサービスアカウントには、対象プロジェクトの `firebaseauth.users.get` と `firebaseauth.users.delete` が必要です。Apple でサインインした利用者については、Firebase 側の Apple プロバイダーにサービス ID と OAuth コードフローの設定も必要です。
+- 音声の送信先と学習利用条件は、API とワーカーの `VOICE_PROVIDER`、`VOICE_STANDARD_TRAINING`、`VOICE_FREE_TRAINING` から決まります。両サービスの設定を揃え、App Store 用のビルドで同意画面を確認します。新 API は同意情報を送らない旧 iOS からの音声ターンを拒否します。
+
+### Apple課金の本番と審査用Sandbox
+
+公式クラウドは、審査用UIDの購入時に設定された `appAccountToken` が一致するSandbox取引だけを受け付けます。審査用端末は専用アカウントから発行したペアリングコードで接続します。審査が終わったらAPIとworkerの許可リストからそのUIDを外すと、審査用購読によるPLUSの利用も終了します。TestFlightのStoreKit購入はSandboxで、音声と課金のApp Attestには `production` を使います。
+
+App Store Connectの「アプリ情報」にApp Storeサーバ通知のVersion 2として以下を登録します。APIは通知と取引の署名を検証し、受信先の環境と一致する取引だけで権利を更新します。
+
+- 本番 `https://api.oyobidashi.me/v1/billing/webhooks/apple/production`
+- Sandbox `https://api.oyobidashi.me/v1/billing/webhooks/apple/sandbox`
+- App Store Connect のプライバシーポリシー URL は `https://ai.oyobidashi.me/privacy/` です。製品サイトを公開した後、URL がログインなしで開けることを確認します。

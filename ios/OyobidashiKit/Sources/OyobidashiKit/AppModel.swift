@@ -53,6 +53,7 @@ public enum CallActionOutcome: Equatable, Sendable {
 public enum SignedOutReason: Equatable, Sendable {
     /// ユーザーがペアリングを解除した
     case userRequested
+    case accountDeleted
     /// サーバーが 401 を返した (トークン失効・サーバー側で解除)
     case unauthorized
 }
@@ -90,6 +91,7 @@ public final class AppModel: AnswerSubmitting {
 
     public private(set) var phase: Phase = .unpaired
     public private(set) var signedOutReason: SignedOutReason?
+    private var lastRevokedDeviceID: String?
     public private(set) var lastAnswerSubmission: AnswerSubmission?
     public private(set) var pairingState: PairingState = .idle
     public let store: RequestListStore
@@ -195,6 +197,7 @@ public final class AppModel: AnswerSubmitting {
             phase = .paired(new)
             lastAnswerSubmission = nil
             signedOutReason = nil
+            lastRevokedDeviceID = nil
             pairingState = .idle
             registeredPushToken = tokenAtRequest
             pushRegisteredAt = tokenAtRequest == nil ? nil : now()
@@ -226,8 +229,19 @@ public final class AppModel: AnswerSubmitting {
         try? await client?.deleteDevice()
     }
 
+    public func completeAccountDeletion(for previous: Credentials) {
+        if credentials == previous {
+            signOut(reason: .accountDeleted)
+        } else if credentials == nil, let deviceID = previous.deviceID, lastRevokedDeviceID == deviceID {
+            // The socket can observe revocation before the deletion response arrives.
+            signedOutReason = .accountDeleted
+            lastRevokedDeviceID = nil
+        }
+    }
+
     private func signOut(reason: SignedOutReason) {
-        guard isPaired else { return }
+        guard let credentials else { return }
+        lastRevokedDeviceID = reason == .unauthorized ? credentials.deviceID : nil
         stopStream()
         try? credentialStore.clear()
         phase = .unpaired
@@ -465,7 +479,7 @@ public final class AppModel: AnswerSubmitting {
     public func hangupCall(requestID: String) async -> CallActionOutcome {
         await performCallAction(requestID: requestID, body: CallEventBody(event: .hangup))
     }
-    public func sendCallTurn(requestID: String, text: String) async -> CallActionOutcome {
+    public func sendCallTurn(requestID: String, text: String, voiceConsent: String? = nil) async -> CallActionOutcome {
         guard !sendingVoiceRequests.contains(requestID) else { return .failed(.turnInProgress) }
         guard isPaired else { return .unauthorized }
         sendingVoiceRequests.insert(requestID)
@@ -477,7 +491,7 @@ public final class AppModel: AnswerSubmitting {
         let recovering = previous?.text == trimmed && previous?.voiceCallID == callID && previous?.voiceTurnID != nil
         let turnID = recovering ? previous!.voiceTurnID! : UUID().uuidString.lowercased()
         drafts.set(AnswerDraft(text: trimmed, usedVoice: true, voiceTurnID: turnID, voiceCallID: callID), for: requestID)
-        let outcome = await performCallAction(requestID: requestID, body: CallEventBody(event: .turn, text: trimmed, turnID: turnID, recoveringTurn: recovering))
+        let outcome = await performCallAction(requestID: requestID, body: CallEventBody(event: .turn, text: trimmed, turnID: turnID, recoveringTurn: recovering, voiceConsent: voiceConsent))
         if case .success = outcome {
             if drafts.draft(for: requestID)?.voiceTurnID == turnID { drafts.remove(requestID) }
             return outcome

@@ -64,6 +64,16 @@ final class AsyncVoiceTurnTests: XCTestCase {
         XCTAssertLessThanOrEqual(stub.requests[0].timeoutInterval, 95)
     }
 
+    func testAsyncTurnPreservesTheDisclosedConsentID() async throws {
+        stub.on("POST", path, status: 200, body: envelope(.completed, reply: "続けます"))
+        let body = CallEventBody(event: .turn, text: "はい", turnID: id, voiceConsent: "v1:anthropic:false:false")
+        _ = try await client().callAction(requestID: "r", body: body)
+        let data = try XCTUnwrap(stub.requests.first?.httpBody)
+        let observed = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(observed["voice_consent"] as? String, body.voiceConsent)
+        XCTAssertEqual(observed["async"] as? Bool, true)
+    }
+
     func testQueuedRunningCompletedReturnsFinalReplyAndNeverStartsAnotherPost() async throws {
         stub.on("POST", path, status: 202, body: envelope(.queued))
         var reads = 0

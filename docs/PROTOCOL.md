@@ -165,7 +165,11 @@ relay は `/healthz` を含む全エンドポイントで、接続元がプラ�
 クライアント→サーバー: `{ "type": "ping" }` のみ (それ以外は無視)。サーバーは30秒ごとにWebSocket pingフレームを送る。
 `request.created` は question / notification の両方で送る。`request.updated` は answered / cancelled / expired への遷移時。
 
-### GET /healthz (認証不要) → 200 `{ "ok": true, "version": "0.2.0" }`
+### GET /healthz (認証不要) → 200
+
+`{ "ok": true, "version": "0.2.0", "voice_privacy": { "id": "v1:claude-code", "provider": "claude-code" } }`
+
+iOS は `voice_privacy` に基づく送信先の表示と同意の後に音声会話を始めます。
 
 ## 6. Push 通知
 

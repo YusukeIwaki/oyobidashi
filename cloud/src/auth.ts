@@ -20,7 +20,7 @@ export function firebaseVerifier(
     );
   const cache = new Map<
     string,
-    { uid: string; provider: string | null; until: number }
+    { uid: string; provider: string | null; authenticatedAt: number; until: number }
   >();
   return {
     async verify(token) {
@@ -31,7 +31,7 @@ export function firebaseVerifier(
       const digest = hash(token),
         cached = cache.get(digest);
       if (cached && cached.until > now())
-        return { uid: cached.uid, provider: cached.provider };
+        return { uid: cached.uid, provider: cached.provider, authenticatedAt: cached.authenticatedAt };
       try {
         const { payload } = await jwtVerify(token, jwks, {
           algorithms: ["RS256"],
@@ -58,9 +58,10 @@ export function firebaseVerifier(
         cache.set(digest, {
           uid: payload.sub,
           provider,
+          authenticatedAt: payload.auth_time * 1000,
           until: Math.min(payload.exp! * 1000, now() + 60_000),
         });
-        return { uid: payload.sub, provider };
+        return { uid: payload.sub, provider, authenticatedAt: payload.auth_time * 1000 };
       } catch (e) {
         if (e instanceof CloudError) throw e;
         const code = (e as { code?: string })?.code;

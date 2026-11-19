@@ -7,7 +7,6 @@ import type { PushProviders } from "../../relay/src/push/types.ts";
 import { ProviderFailure } from "./provider.ts";
 import { CloudService, hash } from "./service.ts";
 import {
-  entitled,
   iso,
   liveTurn,
   turnView,
@@ -90,6 +89,7 @@ export class JobWorker {
     fn: (tx: Transaction, current: Job) => Promise<T>,
   ) {
     return this.service.db.transaction(j.uid, async (tx) => {
+      if (await tx.get("account_deletion", "current")) return null;
       const current = await tx.job(j.id);
       if (!this.valid(current, j)) return null;
       return fn(tx, current!);
@@ -214,6 +214,14 @@ export class JobWorker {
         await this.done(tx, current);
         return null;
       }
+      if (this.service.voicePrivacy) {
+        const device = await tx.get("device", t.deviceId);
+        if (!device || (device.platform === "ios" && t.voiceConsent !== this.service.voicePrivacy.id)) {
+          await this.failTurn(tx, r, t);
+          await this.done(tx, current);
+          return null;
+        }
+      }
       t.state = "running";
       r.call.turn = turnView(t);
       await tx.put("turn", t.id, t);
@@ -224,7 +232,7 @@ export class JobWorker {
         // Decided per turn: a subscription that starts or lapses mid-call takes effect at once.
         conversation:
           this.options.freeConversation &&
-          !entitled(await tx.get("entitlement", "current"), this.service.now())
+          (await this.service.activeEntitlementSources(tx)).length === 0
             ? this.options.freeConversation
             : this.options.conversation,
         call: {

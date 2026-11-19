@@ -56,6 +56,12 @@ public struct RelayEndpoint: Equatable, Hashable, Sendable, Codable, CustomStrin
     }
 
     /// `segments` を1つずつパーセントエンコードして `<base>/<segments…>` を作る。
+    public var supportsCloudAccountDeletion: Bool {
+        isOfficialCloud || (baseURL.scheme == "https" && host.lowercased() == "oyobidashi.up.railway.app"
+            && (baseURL.port ?? 443) == 443 && baseURL.path.isEmpty
+            && baseURL.user == nil && baseURL.password == nil)
+    }
+
     public func url(segments: [String], query: [URLQueryItem] = []) -> URL {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
         var allowed = CharacterSet.urlPathAllowed

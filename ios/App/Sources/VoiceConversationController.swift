@@ -53,6 +53,7 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
     @ObservationIgnored private let synthesizer = AVSpeechSynthesizer()
     @ObservationIgnored private weak var model: AppModel?
     @ObservationIgnored private var requestID: String?
+    @ObservationIgnored private var voiceConsent: String?
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var pendingResolvedEnd = false
     @ObservationIgnored private var usesCallKitAudio = false
@@ -75,11 +76,12 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
     // MARK: Lifecycle
 
     /// 会話開始。`initialText` は answer 応答の reply (無ければ質問文)。
-    func startConversation(requestID: String, initialText: String, usesCallKitAudio: Bool) async {
+    func startConversation(requestID: String, initialText: String, usesCallKitAudio: Bool, consent: String) async {
         cancelCurrentWork()
         generation += 1
         let gen = generation
         self.requestID = requestID
+        voiceConsent = consent
         self.usesCallKitAudio = usesCallKitAudio
         pendingResolvedEnd = false
         liveTranscript = ""
@@ -106,10 +108,14 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
 
     /// ユーザーが終了した/リモート終了したときの後片付け。冪等。
     func endConversation() {
+        voiceConsent = nil
         isMuted = false
         generation += 1
         cancelCurrentWork()
         phase = .ended
+        liveTranscript = ""
+        lastAssistantText = ""
+        lastUserText = ""
         requestID = nil
     }
 
@@ -326,7 +332,8 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
         }
         turnTask = Task { @MainActor [weak self] in
             guard let self, self.generation == gen else { return }
-            let outcome = await model.sendCallTurn(requestID: requestID, text: text)
+            guard let consent = self.voiceConsent else { return }
+            let outcome = await model.sendCallTurn(requestID: requestID, text: text, voiceConsent: consent)
             guard self.generation == gen else { return }
             self.turnTask = nil
             switch outcome {

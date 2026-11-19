@@ -544,3 +544,19 @@ Pixel 10aのダーク表示と専用エミュレータのライト表示で確�
 - APNs: キー名 `Oyobidashi Push`、Key ID `7GS4U6H2LS`、APNsのみ・Sandbox & Production・Team Scoped。秘密鍵は `.oyobidashi/keys/` に移動し、鍵と設定ファイルは権限0600・gitignore対象です。中継再起動後、APNs / FCMとも有効です。
 - `./scripts/dev.sh` / `./scripts/pair.sh` / `./scripts/mcp.sh` が同じローカル状態ディレクトリを使います。
 - Android専用検証AVD: `oyobidashi_qa`。既存AVDのデータは消去していません。
+
+## iOS 1.0.0 のプライバシーとアカウント削除（2026-11-19）
+
+iPhone 16 Pro を隔離したローカルのクラウド API・ワーカー・PostgreSQL に接続した。AI の応答と認証ディレクトリは検証用に差し替えた。
+
+| 項目 | 結果 |
+| --- | --- |
+| プライバシーポリシー | 設定からアプリ内の本文が開く。製品サイト版は 1440・820・390 px のプレビューで確認 |
+| 音声会話に同意しない | 着信に応答した後、「終了して文字で返信」から返信を送信。AI の呼び出しは 0 件 |
+| 音声会話に同意する | 送信先を表示し、同意後に読み上げと聞き取りを開始。実機の発話で音声ターンが 1 件完了し、音声回答を保存 |
+| 削除をキャンセル | 削除対象とストアの定期購入管理リンクを表示。確認画面でキャンセルした後も端末・MCP の認証は有効 |
+| 削除を確定 | iPhone で本人確認を完了。削除完了を表示してペアリング画面に戻った。対象 UID のレコード、ジョブ、OAuth 認証情報はすべて 0 件。削除前の連携端末と MCP の認証情報、およびエージェントによるペアリングコードの再発行はすべて HTTP 401 |
+
+別試験では、Apple連携のない使い捨てUIDを実Firebase Authenticationに作成し、iPhoneの1.0.0から本人確認して削除した。Firebaseユーザー削除APIのHTTP 200、管理APIの再照会で対象UIDが消えていること、隔離クラウドの対象レコードとジョブが0件になることを確認した。
+
+Apple連携の試験では、独立したAppleの主App ID・Services ID・認証鍵と、専用のFirebase Authenticationプロジェクトを使った。iPhoneの検証版で使い捨てUIDにAppleでサインインを連携し、管理APIから `apple.com` の登録を確認した。アプリの「アカウント削除」で端末の本人確認とAppleの再認証を行うと、Appleのトークン取り消しを実行するFirebase APIがHTTP 200、Firebaseユーザー削除APIがHTTP 200、アプリの削除確認APIがHTTP 204を返した。Firebaseの再照会でUIDが存在せず、隔離クラウドの対象レコードとジョブは0件。iPhoneには「クラウドアカウントを削除しました」と表示された。 続けて同じiPhoneのApple Account設定の「Appleでサインイン」の一覧を確認した。検証用の連携は表示されず、普段使いの「Oyobidashi」の連携は一覧に残っていた。

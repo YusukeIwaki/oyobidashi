@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import postgres from "postgres";
+import { PostgresOAuthStore } from "../src/oauth-postgres.ts";
 import { PostgresDatabase } from "../src/postgres.ts";
 import { harness } from "./helpers.ts";
 import { JobWorker } from "../src/worker.ts";
@@ -28,6 +29,26 @@ afterAll(async () => {
 });
 
 suite("real PostgreSQL concurrency and forced failure", () => {
+  test("account erasure revokes OAuth and keeps anonymized purchase ownership", async () => {
+    const { h, db } = await setup(1);
+    const oauth = new PostgresOAuthStore(db.sql);
+    await oauth.migrate();
+    const device = await h.pair();
+    const grant = { kind: "access" as const, id: "test-access", uid: "alice", grant: "test-grant",
+      doc: { client: "test" }, created: h.clock.now, expires: h.clock.now + 600_000, used: null };
+    await oauth.insert(grant);
+    await db.sql.unsafe("INSERT INTO cloud_billing_claims(source,uid) VALUES('fixture','alice')");
+    await db.transaction("alice", (tx) => tx.eraseAccount());
+
+    expect(await oauth.get("access", grant.id)).toBeNull();
+    await expect(oauth.insert(grant)).rejects.toThrow();
+    expect(await db.billingHolders("fixture")).toEqual([expect.stringMatching(/^deleted:[0-9a-f]{64}$/)]);
+    expect((await h.call("GET", "/v1/requests", device.device_token)).status).toBe(401);
+    expect((await h.call("GET", "/v1/requests", "agent-alice")).status).toBe(401);
+    expect(await db.sql.unsafe("SELECT * FROM cloud_records WHERE uid='alice'")).toHaveLength(0);
+    await db.close();
+  });
+
   test("API pools share the same rolling voice budget", async () => {
     const { h, db, schema } = await setup(1);
     const call = await h.setup();

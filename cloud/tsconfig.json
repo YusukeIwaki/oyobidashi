@@ -1,6 +1,6 @@
 {
   "extends": "../relay/tsconfig.json",
-  "exclude": ["src/auth-browser.ts", "src/oauth-browser.ts"],
+  "exclude": ["src/account-delete-browser.ts", "src/auth-browser.ts", "src/oauth-browser.ts"],
   "include": [
     ".railway/railway.ts",
     "src",

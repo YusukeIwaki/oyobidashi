@@ -35,6 +35,7 @@ export interface Turn extends TurnView {
   requestId: string;
   callId: string;
   deviceId: string;
+  voiceConsent?: string;
   text: string;
   deadline: number;
 }
@@ -86,10 +87,11 @@ export function newerAppleProof(previous: AppleBillingProof | null, next: AppleB
 export interface Entitlement {
   sources: Record<string, EntitlementSource>;
 }
-export const entitled = (e: Entitlement | null, now: number) =>
-  !!e && Object.values(e.sources).some((s) => s.expires > now);
 export interface Records {
   entitlement: Entitlement;
+  account_deletion: { started: number };
+  account_delete_ticket: { deviceId: string; expires: number };
+
   /** App Attest key of one iOS device, keyed by device ID. */
   attest: { key_id: string; public_key: string; counter: number };
   /** Single-use billing challenge, keyed by its hash. */
@@ -142,6 +144,8 @@ export type NewJob = Pick<
 > & { id?: string; available?: number };
 export interface Transaction {
   readonly uid: string;
+  accountDeleted(): Promise<boolean>;
+  eraseAccount(): Promise<void>;
   get<K extends Kind>(kind: K, id: string): Promise<Records[K] | null>;
   put<K extends Kind>(
     kind: K,
@@ -175,6 +179,7 @@ export interface Database {
   findDevice(hash: string): Promise<{ uid: string; device: Device } | null>;
   findPairing(hash: string): Promise<string | null>;
   findPreview(hash: string): Promise<string | null>;
+  findAccountDeletion(hash: string): Promise<string | null>;
   isBanned(uid: string): Promise<boolean>;
   claim(kind: Job["kind"], now: number, leaseMs: number): Promise<Job | null>;
   dueOwners(now: number, limit?: number): Promise<string[]>;
@@ -196,7 +201,7 @@ export interface WakeBus {
 export interface IdentityVerifier {
   verify(token: string): Promise<string>;
   /** Also reports how the user signed in ("anonymous", "google.com", ...) when known. */
-  identify?(token: string): Promise<{ uid: string; provider: string | null }>;
+  identify?(token: string): Promise<{ uid: string; provider: string | null; authenticatedAt?: number }>;
 }
 export const turnView = (t: Turn): TurnView => ({
   id: t.id,

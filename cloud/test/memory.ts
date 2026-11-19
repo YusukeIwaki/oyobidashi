@@ -34,6 +34,7 @@ export class MemoryDatabase implements Database {
   pushOwners = new Map<string, { uid: string; deviceId: string }>();
   versions = new Map<string, number>();
   displaced = new Set<string>();
+  private deleted = new Set<string>();
   private check() {
     if (this.fail)
       throw new Error("injected database disconnection with private details");
@@ -62,10 +63,18 @@ export class MemoryDatabase implements Database {
     );
     const claims = new Map<string, { uid: string; deviceId: string } | null>();
     let bumps = 0;
+    let erased = false;
     const displaced = new Set<string>();
     const key = (kind: Kind, id: string) => `${uid}:${kind}:${id}`;
     const tx: Transaction = {
       uid,
+      accountDeleted: async () => erased || this.deleted.has(uid),
+      eraseAccount: async () => {
+        rows.clear();
+        jobs.clear();
+        for (const [key, owner] of this.pushOwners) if (owner.uid === uid) claims.set(key, null);
+        erased = true;
+      },
       get: async <K extends Kind>(kind: K, id: string) =>
         (kind === "device" &&
         (this.displaced.has(`${uid}:${id}`) || displaced.has(`${uid}:${id}`))
@@ -187,6 +196,13 @@ export class MemoryDatabase implements Database {
         if (v) this.pushOwners.set(k, v);
         else this.pushOwners.delete(k);
       if (bumps) this.versions.set(uid, (this.versions.get(uid) ?? 0) + bumps);
+      if (erased) {
+        const marker = "deleted:" + new Bun.CryptoHasher("sha256").update(uid).digest("hex");
+        for (const owners of this.billing.values()) if (owners.delete(uid)) owners.add(marker);
+        this.deleted.add(uid);
+        this.versions.delete(uid);
+        for (const key of this.displaced) if (key.startsWith(uid + ":")) this.displaced.delete(key);
+      }
       for (const old of displaced) {
         this.displaced.add(old);
         const owner = old.slice(0, old.indexOf(":"));
@@ -223,6 +239,9 @@ export class MemoryDatabase implements Database {
         (r) => r.kind === "preview" && r.id === hash,
       )?.uid ?? null
     );
+  }
+  async findAccountDeletion(hash: string) {
+    return [...this.records.values()].find(row => row.kind === "account_delete_ticket" && row.id === hash)?.uid ?? null;
   }
   async isBanned(uid: string) {
     this.check();
@@ -275,12 +294,14 @@ export class MemoryDatabase implements Database {
     }
   }
   private async updateEntitlement(owner: string, source: string, value: EntitlementSource | null, predecessor?: string) {
-    await this.transaction(owner, async (tx) => {
+    return await this.transaction(owner, async (tx) => {
+      if (owner.startsWith("deleted:") || await tx.accountDeleted() || await tx.get("account_deletion", "current")) return false;
       const entitlement = (await tx.get("entitlement", "current")) ?? { sources: {} };
       if (predecessor) delete entitlement.sources[predecessor];
       if (value) entitlement.sources[source] = value;
       else delete entitlement.sources[source];
       await tx.put("entitlement", "current", entitlement);
+      return true;
     });
   }
   async applyAppleBilling(source: string, uid: string | null, proof: AppleBillingProof, now: number) {
@@ -296,8 +317,8 @@ export class MemoryDatabase implements Database {
       if (!owner && (uid !== null || owners.length > 0)) return;
       const active = !proof.revoked && proof.value.expires > now;
       if (owner && (owners.length > 0 || active)) {
-        this.billing.set(source, new Set([owner]));
-        await this.updateEntitlement(owner, source, active ? proof.value : null);
+        if (await this.updateEntitlement(owner, source, active ? proof.value : null))
+          this.billing.set(source, new Set([owner]));
       }
       this.appleState.set(source, structuredClone(proof));
     });
@@ -312,6 +333,7 @@ export class MemoryDatabase implements Database {
       if (predecessor) owners.push(...await this.billingHolders(predecessor));
       const owner = resolvePurchaseOwner(owners, uid, proof.accountId);
       if (!owner || (!active && !owners.length)) return false;
+      if (!await this.updateEntitlement(owner, source, active ? proof.value : null, predecessor)) return false;
       if (active) {
         this.billing.set(source, new Set([owner]));
         if (predecessor) {
@@ -319,7 +341,6 @@ export class MemoryDatabase implements Database {
           this.billingSuperseded.set(predecessor, source);
         }
       }
-      await this.updateEntitlement(owner, source, active ? proof.value : null, predecessor);
       return active;
     });
   }

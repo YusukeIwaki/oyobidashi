@@ -9,6 +9,7 @@ node_modules/
 *.tsbuildinfo
 cloud/public/auth.js
 cloud/public/oauth.js
+cloud/public/account-delete.js
 site/dist/
 site/.astro/
 

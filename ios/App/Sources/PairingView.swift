@@ -28,6 +28,11 @@ struct PairingView: View {
                 }
                 .listRowBackground(PagerTheme.cream)
 
+                if model.signedOutReason == .accountDeleted {
+                    Section {
+                        Label("クラウドアカウントを削除しました", systemImage: "checkmark.circle")
+                    }
+                }
                 if model.signedOutReason == .unauthorized {
                     Section {
                         Label("ペアリングが無効になりました。もう一度ペアリングしてください。", systemImage: "exclamationmark.triangle")
@@ -57,6 +62,10 @@ struct PairingView: View {
                         .font(.body.monospaced())
                     Button("ペアリング") { pairManually() }
                         .disabled(model.pairingState == .pairing)
+                }
+
+                Section {
+                    NavigationLink("プライバシーポリシー") { PrivacyPolicyView() }
                 }
 
                 if model.pairingState == .pairing {

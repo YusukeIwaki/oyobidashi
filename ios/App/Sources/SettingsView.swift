@@ -55,6 +55,12 @@ struct SettingsView: View {
                         Text("現在のプラン")
                     }
                 }
+                Section("プライバシー") {
+                    NavigationLink("プライバシーポリシー") { PrivacyPolicyView() }
+                    if model.credentials?.endpoint.supportsCloudAccountDeletion == true {
+                        NavigationLink("アカウント削除") { AccountDeletionView() }
+                    }
+                }
                 Section {
                     LabeledContent("バージョン", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-")
                 }

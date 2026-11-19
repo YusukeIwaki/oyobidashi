@@ -17,7 +17,8 @@ WORKDIR /app
 COPY cloud/src ./cloud/src
 COPY relay/src ./relay/src
 RUN bun build cloud/src/auth-browser.ts --target browser --minify --outfile /app/auth.js \
-    && bun build cloud/src/oauth-browser.ts --target browser --minify --outfile /app/oauth.js
+    && bun build cloud/src/oauth-browser.ts --target browser --minify --outfile /app/oauth.js \
+    && bun build cloud/src/account-delete-browser.ts --target browser --minify --outfile /app/account-delete.js
 
 FROM oven/bun:1.4.4 AS runtime
 WORKDIR /app
@@ -33,6 +34,7 @@ COPY mcp/package.json ./mcp/package.json
 COPY mcp/src ./mcp/src
 COPY --from=browser /app/auth.js ./cloud/public/auth.js
 COPY --from=browser /app/oauth.js ./cloud/public/oauth.js
+COPY --from=browser /app/account-delete.js ./cloud/public/account-delete.js
 USER bun
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

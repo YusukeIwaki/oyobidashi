@@ -255,6 +255,7 @@ export class OAuthServer {
       : { uid: await this.deps.verifier.verify(token), provider: null };
     if (!["google.com", "apple.com", "github.com"].includes(identity.provider ?? ""))
       throw new CloudError(403, "forbidden", "sign in with Google, Apple or GitHub");
+    await this.deps.service.db.transaction(identity.uid, (tx) => this.deps.service.ensureAccount(tx));
     if (await this.deps.service.db.isBanned(identity.uid))
       throw new CloudError(403, "account_banned", "this account is disabled");
     return identity.uid;

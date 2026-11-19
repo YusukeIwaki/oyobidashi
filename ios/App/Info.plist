@@ -38,6 +38,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSFaceIDUsageDescription</key>
+	<string>クラウドアカウントの削除時に本人確認を行います。</string>
 	<key>NSCameraUsageDescription</key>
 	<string>ペアリング用のQRコードを読み取るためにカメラを使用します。</string>
 	<key>NSLocalNetworkUsageDescription</key>

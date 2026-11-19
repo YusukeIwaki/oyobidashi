@@ -18,6 +18,8 @@ targets:
     sources:
       - path: App/Sources
       - path: App/Assets.xcassets
+      - path: ../site/src/content/privacy-policy.json
+        buildPhase: resources
     dependencies:
       - package: OyobidashiKit
       - target: OyobidashiNotificationService
@@ -25,7 +27,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.oyobidashi.ios
         PRODUCT_NAME: Oyobidashi
-        MARKETING_VERSION: "0.2.0"
+        MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "2"
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1,2"
@@ -52,6 +54,7 @@ targets:
             CFBundleTypeRole: Editor
             CFBundleURLSchemes:
               - oyobidashi
+        NSFaceIDUsageDescription: クラウドアカウントの削除時に本人確認を行います。
         NSCameraUsageDescription: ペアリング用のQRコードを読み取るためにカメラを使用します。
         NSMicrophoneUsageDescription: エージェントからの質問に音声で回答するためにマイクを使用します。
         NSSpeechRecognitionUsageDescription: 音声での回答を文字に変換するために音声認識を使用します。
@@ -82,7 +85,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.oyobidashi.ios.NotificationService
-        MARKETING_VERSION: "0.2.0"
+        MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "2"
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: NO

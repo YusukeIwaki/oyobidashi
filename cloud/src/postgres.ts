@@ -21,6 +21,8 @@ import {
 // One JSON document per entity, never a whole user's history. UID is part of
 // every primary key and is supplied by the verified server identity only.
 export const SCHEMA = `
+CREATE TABLE IF NOT EXISTS cloud_deleted_accounts (uid_hash text PRIMARY KEY);
+
 CREATE TABLE IF NOT EXISTS cloud_records (
   uid text NOT NULL, kind text NOT NULL, id text NOT NULL, doc jsonb NOT NULL,
   due_at bigint, touched_at bigint NOT NULL,
@@ -57,6 +59,8 @@ CREATE TABLE IF NOT EXISTS cloud_push_owners (
 CREATE INDEX IF NOT EXISTS cloud_push_owner_device ON cloud_push_owners(uid,device_id);
 -- Store ownership survives loss of access and is used by future restores.
 CREATE TABLE IF NOT EXISTS cloud_billing_claims(source text NOT NULL,uid text NOT NULL,PRIMARY KEY(source,uid));
+CREATE INDEX IF NOT EXISTS cloud_billing_claims_owner ON cloud_billing_claims(uid);
+CREATE UNIQUE INDEX IF NOT EXISTS cloud_account_delete_ticket ON cloud_records(id) WHERE kind='account_delete_ticket';
 CREATE TABLE IF NOT EXISTS cloud_billing_superseded(source text PRIMARY KEY,successor text NOT NULL);
 CREATE TABLE IF NOT EXISTS cloud_apple_billing_state(source text PRIMARY KEY,doc jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS cloud_owner_versions(uid text PRIMARY KEY,revision bigint NOT NULL);
@@ -83,6 +87,25 @@ const jobFrom = (r: Record<string, unknown>): Job => ({
 });
 
 class PgTransaction implements Transaction {
+  async accountDeleted() {
+    const marker = new Bun.CryptoHasher("sha256").update(this.uid).digest("hex");
+    const rows = await this.sql.unsafe("SELECT 1 FROM cloud_deleted_accounts WHERE uid_hash=$1", [marker]);
+    return rows.length > 0;
+  }
+  async eraseAccount() {
+    const marker = new Bun.CryptoHasher("sha256").update(this.uid).digest("hex");
+    await this.sql.unsafe("INSERT INTO cloud_deleted_accounts(uid_hash) VALUES($1) ON CONFLICT DO NOTHING", [marker]);
+    // Keep the previously claimed purchase unavailable for a new UID.
+    await this.sql.unsafe(
+      "UPDATE cloud_billing_claims SET uid=$2 WHERE uid=$1",
+      [this.uid, "deleted:" + marker],
+    );
+    const [oauth] = await this.sql.unsafe("SELECT to_regclass('cloud_oauth') AS relation");
+    if (oauth?.relation) await this.sql.unsafe("DELETE FROM cloud_oauth WHERE uid=$1", [this.uid]);
+    for (const table of ["cloud_jobs", "cloud_records", "cloud_push_owners", "cloud_displaced_devices", "cloud_owner_versions"])
+      await this.sql.unsafe("DELETE FROM " + table + " WHERE uid=$1", [this.uid]);
+  }
+
   constructor(
     readonly uid: string,
     private sql: Query,
@@ -314,6 +337,10 @@ export class PostgresDatabase implements Database {
     );
     return (rows[0]?.uid as string) ?? null;
   }
+  async findAccountDeletion(hash: string) {
+    const rows = await this.sql.unsafe("SELECT uid FROM cloud_records WHERE kind='account_delete_ticket' AND id=$1", [hash]);
+    return (rows[0]?.uid as string) ?? null;
+  }
   async findPreview(hash: string) {
     const rows = await this.sql.unsafe(
       "SELECT uid FROM cloud_records WHERE kind='preview' AND id=$1",
@@ -373,12 +400,15 @@ export class PostgresDatabase implements Database {
     sql: Query, owner: string, source: string, value: EntitlementSource | null, predecessor?: string,
   ) {
     await sql.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [owner]);
+    if (owner.startsWith("deleted:")) return false;
     const tx = new PgTransaction(owner, sql);
+    if (await tx.accountDeleted() || await tx.get("account_deletion", "current")) return false;
     const entitlement = (await tx.get("entitlement", "current")) ?? { sources: {} };
     if (predecessor) delete entitlement.sources[predecessor];
     if (value) entitlement.sources[source] = value;
     else delete entitlement.sources[source];
     await tx.put("entitlement", "current", entitlement);
+    return true;
   }
   async applyAppleBilling(source: string, uid: string | null, proof: AppleBillingProof, now: number) {
     await this.sql.begin(async (sql) => {
@@ -396,8 +426,8 @@ export class PostgresDatabase implements Database {
       if (!owner && (uid !== null || owners.length > 0)) return;
       const active = !proof.revoked && proof.value.expires > now;
       if (owner && (owners.length > 0 || active)) {
-        if (!owners.length) await this.recordPurchaseOwner(sql, source, owner);
-        await this.updateEntitlement(sql, owner, source, active ? proof.value : null);
+        const updated = await this.updateEntitlement(sql, owner, source, active ? proof.value : null);
+        if (updated && !owners.length) await this.recordPurchaseOwner(sql, source, owner);
       }
       await sql.unsafe(
         "INSERT INTO cloud_apple_billing_state(source,doc) VALUES($1,$2::text::jsonb) ON CONFLICT(source) DO UPDATE SET doc=EXCLUDED.doc",
@@ -428,6 +458,7 @@ export class PostgresDatabase implements Database {
       const owner = resolvePurchaseOwner(owners, uid, proof.accountId);
       if (!owner || (!active && !owners.length)) return false;
 
+      if (!await this.updateEntitlement(sql, owner, source, active ? proof.value : null, predecessor)) return false;
       if (active) {
         await this.recordPurchaseOwner(sql, source, owner);
         if (predecessor) {
@@ -438,7 +469,6 @@ export class PostgresDatabase implements Database {
           );
         }
       }
-      await this.updateEntitlement(sql, owner, source, active ? proof.value : null, predecessor);
       return active;
     });
   }

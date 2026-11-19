@@ -5,10 +5,14 @@ import SwiftUI
 struct InAppCallView: View {
     let request: AgentRequest
     @Environment(AppModel.self) private var model
+    @Environment(Router.self) private var router
     @Environment(CallKitCoordinator.self) private var callKit
     @State private var answering = false
     @State private var actionError: String?
     @State private var hasAnswered = false
+    @State private var disclosure: VoicePrivacyDisclosure?
+    @State private var startingVoice = false
+    @State private var disclosureUnavailable = false
 
     init(request: AgentRequest) {
         self.request = request
@@ -16,54 +20,62 @@ struct InAppCallView: View {
     }
 
     var body: some View {
-        VStack(spacing: 20) {
-            header
-            if !CallKitCoordinator.isCallKitAvailable {
-                Label("シミュレータのため、アプリ内通話画面で表示しています", systemImage: "iphone")
-                    .font(.caption)
-                    .foregroundStyle(PagerTheme.inkSoft)
-                    .padding(10)
-                    .frame(maxWidth: .infinity)
-                    .background(PagerTheme.lcd.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
-            } else if let err = callKit.lastReportError {
-                Label("通話画面を表示できませんでした (\(err))。アプリ内で応答できます", systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            }
+        ScrollView {
+            VStack(spacing: 20) {
+                header
+                if !CallKitCoordinator.isCallKitAvailable {
+                    Label("シミュレータのため、アプリ内通話画面で表示しています", systemImage: "iphone")
+                        .font(.caption)
+                        .foregroundStyle(PagerTheme.inkSoft)
+                        .padding(10)
+                        .frame(maxWidth: .infinity)
+                        .background(PagerTheme.lcd.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+                } else if let err = callKit.lastReportError {
+                    Label("通話画面を表示できませんでした (\(err))。アプリ内で応答できます", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
 
-            if let subject = CallPresentation.singleLine(request.subject) {
-                Text(subject)
-                    .font(.headline)
-                    .foregroundStyle(PagerTheme.orange)
+                if let subject = CallPresentation.singleLine(request.subject) {
+                    Text(subject)
+                        .font(.headline)
+                        .foregroundStyle(PagerTheme.orange)
+                        .multilineTextAlignment(.center)
+                }
+
+                Text(request.question)
+                    .font(.title3.bold())
+                    .foregroundStyle(PagerTheme.ink)
                     .multilineTextAlignment(.center)
+
+                if let context = request.context, !context.isEmpty {
+                    Text(context)
+                        .font(.callout)
+                        .foregroundStyle(PagerTheme.inkSoft)
+                        .multilineTextAlignment(.center)
+                }
+
+                statusArea
+
+                if let actionError {
+                    Text(actionError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+
+                controls
             }
-
-            Text(request.question)
-                .font(.title3.bold())
-                .foregroundStyle(PagerTheme.ink)
-                .multilineTextAlignment(.center)
-
-            if let context = request.context, !context.isEmpty {
-                Text(context)
-                    .font(.callout)
-                    .foregroundStyle(PagerTheme.inkSoft)
-                    .multilineTextAlignment(.center)
-            }
-
-            statusArea
-
-            if let actionError {
-                Text(actionError)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-
-            controls
-            Spacer()
+            .padding(24)
         }
-        .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PagerTheme.cream.ignoresSafeArea())
+        .task(id: hasAnswered) {
+            guard hasAnswered, let credentials = model.credentials else { return }
+            let client = RelayClient(endpoint: credentials.endpoint, deviceToken: nil)
+            disclosure = try? await client.health().voicePrivacy
+            if Task.isCancelled { return }
+            disclosureUnavailable = disclosure == nil
+        }
         .onChange(of: model.store.request(id: request.id)?.call?.state) { _, state in
             if state == .active, model.store.request(id: request.id)?.call?.deviceID == model.myDeviceID {
                 hasAnswered = true
@@ -109,9 +121,7 @@ struct InAppCallView: View {
                 HStack { ProgressView(); Text("送信中…") }.foregroundStyle(PagerTheme.inkSoft)
             case .failed(let message):
                 Label(message, systemImage: "exclamationmark.circle").foregroundStyle(.red).font(.callout)
-            case .ended:
-                Label("通話が終了しました", systemImage: "phone.down.fill").foregroundStyle(PagerTheme.inkSoft)
-            case .idle:
+            case .idle, .ended:
                 EmptyView()
             }
             if !voice.lastUserText.isEmpty {
@@ -153,20 +163,22 @@ struct InAppCallView: View {
         } else {
             VStack(spacing: 12) {
                 if voice.phase == .idle || voice.phase == .ended {
-                    Text("通話が中断されました。再開するか、終了して文字で返信できます")
-                        .font(.caption)
-                        .foregroundStyle(PagerTheme.inkSoft)
-                    Button {
-                        Task {
-                            let reply = request.call?.transcript.last(where: { $0.role == .assistant })?.text ?? request.question
-                            await callKit.startFallbackConversation(request: request, initialReply: reply)
+                    if let disclosure {
+                        VoiceConsentNotice(disclosure: disclosure)
+                        Button("同意して音声で話す") {
+                            startingVoice = true
+                            Task {
+                                defer { startingVoice = false }
+                                await callKit.startApprovedConversation(request: model.store.request(id: request.id) ?? request, policy: disclosure.id)
+                            }
                         }
-                    } label: {
-                        Label("通話を再開", systemImage: "mic.fill")
-                            .frame(maxWidth: .infinity)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(startingVoice)
+                    } else if disclosureUnavailable {
+                        Text("会話データの送信先を確認できません。文字で返信できます。")
+                    } else {
+                        ProgressView("会話データの送信先を確認中")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(PagerTheme.orange)
                 }
                 if voice.phase == .listening {
                     Button {
@@ -202,7 +214,7 @@ struct InAppCallView: View {
                 Button(role: .destructive) {
                     Task { await hangup() }
                 } label: {
-                    Label("終了", systemImage: "phone.down.fill")
+                    Label("終了して文字で返信", systemImage: "phone.down.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -217,9 +229,8 @@ struct InAppCallView: View {
         defer { answering = false }
         let outcome = await model.answerCall(requestID: request.id)
         switch outcome {
-        case .success(let resp):
+        case .success:
             hasAnswered = true
-            await callKit.startFallbackConversation(request: resp.request, initialReply: resp.reply ?? resp.request.question)
         case .unauthorized:
             actionError = "認証に失敗しました。ペアリングし直してください"
         case .unreachable:
@@ -235,6 +246,7 @@ struct InAppCallView: View {
     }
 
     private func hangup() async {
+        router.open(requestID: request.id)
         if CallKitCoordinator.isCallKitAvailable, callKit.activeCallUUID != nil {
             callKit.endActiveCallViaSystem()
             return

@@ -1,4 +1,5 @@
 import { importPKCS8, SignJWT } from "jose";
+import { firebaseAccountDirectory, type AccountDirectory } from "./account-deletion.ts";
 import {
   ACCOUNT_PROVIDERS,
   type AccountProvider,
@@ -11,6 +12,7 @@ export interface PublicAuthConfig {
 }
 export interface AccountAuth {
   publicConfig: PublicAuthConfig;
+  directory?: AccountDirectory;
   issueLinkToken(uid: string): Promise<string>;
 }
 
@@ -56,6 +58,7 @@ export async function createAccountAuth(
     }
   }
   return {
+    ...(key ? { directory: firebaseAccountDirectory(projectId, apiKey, email, key, now) } : {}),
     publicConfig: {
       firebase: {
         apiKey,
@@ -101,3 +104,8 @@ export function authPageHeaders(type: string): Record<string, string> {
       "default-src 'none'; script-src 'self' https://apis.google.com; style-src 'unsafe-inline'; connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://*.firebaseapp.com; frame-src https://*.firebaseapp.com https://accounts.google.com https://appleid.apple.com https://github.com; form-action http://127.0.0.1:*; base-uri 'none'; frame-ancestors 'none'; object-src 'none'",
   };
 }
+
+export const ACCOUNT_DELETION_PAGE = AUTH_PAGE
+  .replace("/auth.js", "/account-delete.js")
+  .replace("お呼び出しのアカウント", "お呼び出しのアカウント削除")
+  .replace("お使いのパソコンのMCPに接続します。認証画面はご自身で開始した場合だけ進めてください。", "アプリから削除を開始した場合だけ進めてください。");

@@ -1,4 +1,5 @@
 import type { SQL } from "bun";
+import { unauthorized } from "./errors.ts";
 import type { OAuthKind, OAuthRow, OAuthStore } from "./oauth.ts";
 
 // Registered MCP clients, authorization codes and tokens. Secrets are stored as
@@ -36,10 +37,21 @@ export class PostgresOAuthStore implements OAuthStore {
     });
   }
   async insert(row: OAuthRow) {
-    await this.sql.unsafe(
-      "INSERT INTO cloud_oauth(kind,id,uid,grant_id,doc,created_at,expires_at,used_at) VALUES($1,$2,$3,$4,$5::text::jsonb,$6,$7,$8)",
-      [row.kind, row.id, row.uid, row.grant, JSON.stringify(row.doc), row.created, row.expires, row.used],
-    );
+    await this.sql.begin(async sql => {
+      if (row.uid) {
+        await sql.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [row.uid]);
+        const marker = new Bun.CryptoHasher("sha256").update(row.uid).digest("hex");
+        const [blocked] = await sql.unsafe(
+          "SELECT EXISTS(SELECT 1 FROM cloud_deleted_accounts WHERE uid_hash=$1) OR EXISTS(SELECT 1 FROM cloud_records WHERE uid=$2 AND kind='account_deletion') AS blocked",
+          [marker, row.uid],
+        );
+        if (blocked?.blocked) throw unauthorized();
+      }
+      await sql.unsafe(
+        "INSERT INTO cloud_oauth(kind,id,uid,grant_id,doc,created_at,expires_at,used_at) VALUES($1,$2,$3,$4,$5::text::jsonb,$6,$7,$8)",
+        [row.kind, row.id, row.uid, row.grant, JSON.stringify(row.doc), row.created, row.expires, row.used],
+      );
+    });
   }
   async get(kind: OAuthKind, id: string) {
     const rows = await this.sql.unsafe("SELECT * FROM cloud_oauth WHERE kind=$1 AND id=$2", [kind, id]);

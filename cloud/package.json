@@ -8,7 +8,7 @@
     "migrate": "bun run src/main.ts migrate",
     "test": "bun test",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.browser.json",
-    "build:auth": "bun build src/auth-browser.ts --target browser --minify --outfile public/auth.js && bun build src/oauth-browser.ts --target browser --minify --outfile public/oauth.js"
+    "build:auth": "bun build src/auth-browser.ts --target browser --minify --outfile public/auth.js && bun build src/oauth-browser.ts --target browser --minify --outfile public/oauth.js && bun build src/account-delete-browser.ts --target browser --minify --outfile public/account-delete.js"
   },
   "dependencies": {
     "jose": "^6.1.0"

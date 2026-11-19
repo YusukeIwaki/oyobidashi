@@ -12,6 +12,7 @@ import {
 import { CloudService, hash, type Principal } from "./service.ts";
 import type { IdentityVerifier } from "./types.ts";
 import {
+  ACCOUNT_DELETION_PAGE,
   AUTH_PAGE,
   authPageHeaders,
   type AccountAuth,
@@ -20,6 +21,7 @@ import { MCP_PATH, OAuthServer, requestOrigin, type OAuthStore } from "./oauth.t
 import { serveMcp } from "./mcp-http.ts";
 import { OFFICIAL_CLOUD_ORIGIN } from "./config.ts";
 import type { Billing } from "./billing/service.ts";
+import { AccountDeletion } from "./account-deletion.ts";
 import { VoiceSecurity } from "./voice.ts";
 
 /** Enables the hosted MCP endpoint and its OAuth authorization server. */
@@ -65,6 +67,7 @@ export class CloudApp {
   private billingWebhookInFlight = 0;
   private waiters = new Map<string, Set<() => void>>();
   private readonly oauth?: OAuthServer;
+  private readonly accountDeletion: AccountDeletion;
   constructor(
     readonly service: CloudService,
     readonly verifier: IdentityVerifier,
@@ -75,6 +78,7 @@ export class CloudApp {
     readonly billing?: Billing,
     readonly voice?: VoiceSecurity,
   ) {
+    this.accountDeletion = new AccountDeletion(service, verifier, accountAuth);
     // The consent page signs the human in with Firebase, so it needs the web configuration.
     if (remote && accountAuth)
       this.oauth = new OAuthServer({ ...remote, service, verifier });
@@ -100,6 +104,7 @@ export class CloudApp {
         return json(200, {
           ok: true,
           version: "0.3.0",
+          voice_privacy: this.service.voicePrivacy,
           capabilities: { async_turns: true, turn_idempotency: true },
         });
       if (path === "/readyz" && method === "GET") {
@@ -109,6 +114,21 @@ export class CloudApp {
       if (path === "/v1/auth/config" && method === "GET") {
         if (!this.accountAuth) throw unavailable();
         return json(200, this.accountAuth.publicConfig);
+      }
+      if (!internal) {
+        if (path === "/v1/account/deletion" && method === "POST")
+          return json(200, await this.accountDeletion.start(req));
+        if (path === "/v1/account/deletion/apple" && method === "POST") {
+          const uid = await this.accountDeletion.verifyApple(await readBody(req));
+          this.notify(uid);
+          void this.refresh(uid);
+          return new Response(null, { status: 204 });
+        }
+        if (path === "/account/delete" && method === "GET")
+          return new Response(ACCOUNT_DELETION_PAGE, { headers: authPageHeaders("text/html; charset=utf-8") });
+        if (path === "/account-delete.js" && method === "GET")
+          return new Response(await Bun.file(new URL("../public/account-delete.js", import.meta.url)).text(),
+            { headers: authPageHeaders("text/javascript; charset=utf-8") });
       }
       if (path === "/auth" && method === "GET") {
         if (!this.accountAuth) throw unavailable();
@@ -134,6 +154,7 @@ export class CloudApp {
           throw new CloudError(403, "account_banned", "このアカウントは利用を停止しました。");
         return await this.service.db.transaction(uid, async (tx) => {
           await this.service.reconcile(tx);
+          await this.service.ensureAccount(tx);
           const preview = await tx.get("preview", key);
           if (
             !preview ||
@@ -184,8 +205,15 @@ export class CloudApp {
           throw new CloudError(429, "rate_limited", "please retry shortly");
         this.billingWebhookInFlight++;
         try {
-          if (path === "/v1/billing/webhooks/apple")
-            await this.billing.appleWebhook(await readBody(req));
+          if (path === "/v1/billing/webhooks/apple/sandbox")
+            await this.billing.appleWebhook(await readBody(req), "Sandbox");
+          else if (path === "/v1/billing/webhooks/apple/production")
+            await this.billing.appleWebhook(await readBody(req), "Production");
+          else if (path === "/v1/billing/webhooks/apple")
+            await this.billing.appleWebhook(
+              await readBody(req),
+              this.service.appleSandboxReviewUids ? "Production" : undefined,
+            );
           else if (path === "/v1/billing/webhooks/google")
             await this.billing.googleWebhook(
               req.headers.get("authorization"),
@@ -279,6 +307,7 @@ export class CloudApp {
       }
       if (path === "/v1/events" && method === "GET") {
         requireRole(p, "device");
+        await this.service.run(p, async () => {});
         const ownerConnections = (this.owners.get(p.uid)?.size ?? 0) +
           [...this.upgrades.keys()].filter((data) => data.principal.uid === p.uid).length;
         if (ownerConnections >= MAX_OWNER_CONNECTIONS)

@@ -387,7 +387,7 @@ describe("serve", () => {
     expect(out.join("\n")).not.toContain(config.agent_token);
     expect(existsSync(dbPath(home))).toBe(true);
 
-    expect(await (await fetch(`${handle.url}/healthz`)).json()).toEqual({ ok: true, version: "0.2.0" });
+    expect(await (await fetch(`${handle.url}/healthz`)).json()).toEqual({ ok: true, version: "0.2.0", voice_privacy: { id: "v1:claude-code", provider: "claude-code" } });
     const created = await fetch(`${handle.url}/v1/requests`, {
       method: "POST",
       headers: { authorization: `Bearer ${config.agent_token}` },

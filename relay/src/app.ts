@@ -789,7 +789,7 @@ export function createApp(opts: AppOptions): App {
       if (method === "GET") return getPresence(req, peer);
       if (method === "PUT") return putPresence(req);
     }
-    if (path === "/healthz" && method === "GET") return json(200, { ok: true, version: VERSION });
+    if (path === "/healthz" && method === "GET") return json(200, { ok: true, version: VERSION, voice_privacy: { id: "v1:claude-code", provider: "claude-code" } });
     if (path === "/v1/requests") {
       if (method === "POST") return createRequest(req, peer);
       if (method === "GET") return listRequests(req, url.searchParams);

@@ -12,7 +12,6 @@ import {
   unauthorized,
 } from "./errors.ts";
 import {
-  entitled,
   iso,
   liveTurn,
   turnView,
@@ -57,8 +56,17 @@ export class CloudService {
     plus: null,
   };
   voiceProofRequired = false;
+  voicePrivacy: { provider: "anthropic" | "meta"; id: string; training: { free: boolean | null; plus: boolean | null } } | null = null;
+  /** On the hosted service, only these accounts can use Apple Sandbox access. */
+  appleSandboxReviewUids: ReadonlySet<string> | null = null;
+  async ensureAccount(tx: Transaction) {
+    if (await tx.accountDeleted()) throw unauthorized();
+    if (await tx.get("account_deletion", "current"))
+      throw conflict("account_deleting", "アカウント削除を処理しています。設定から削除を再試行できます。");
+  }
   async run<T>(p: Principal, fn: (tx: Transaction) => Promise<T>): Promise<T> {
     return this.db.transaction(p.uid, async (tx) => {
+      await this.ensureAccount(tx);
       if (await tx.get("ban", "current"))
         throw new CloudError(403, "account_banned", "このアカウントは利用を停止しました。");
       if (p.role === "device") {
@@ -112,6 +120,9 @@ export class CloudService {
     return false;
   }
 
+  async accountDeletionAttempt(tx: Transaction) {
+    await this.quota(tx, "account_delete", 5);
+  }
   async accountLinkAttempt(tx: Transaction) {
     await this.quota(tx, "account_link", 10);
   }
@@ -121,11 +132,18 @@ export class CloudService {
   async voiceProofAttempt(tx: Transaction) {
     await this.quota(tx, "voice_proof", 12);
   }
+  async activeEntitlementSources(tx: Transaction, now = this.now()) {
+    const entitlement = await tx.get("entitlement", "current");
+    const allowAppleSandbox = !this.appleSandboxReviewUids || this.appleSandboxReviewUids.has(tx.uid);
+    return Object.entries(entitlement?.sources ?? {})
+      .filter(([key, source]) => source.expires > now && (allowAppleSandbox || !key.startsWith("apple:Sandbox:")))
+      .map(([, source]) => source);
+  }
   /** True when this owner's voice calls may be used for model training. */
   async voiceTraining(tx: Transaction) {
     const { free, plus } = this.voiceTrainingPolicy;
     if (free === plus) return free === true;
-    const active = entitled(await tx.get("entitlement", "current"), this.now());
+    const active = (await this.activeEntitlementSources(tx)).length !== 0;
     return (active ? plus : free) === true;
   }
   async oauthAttempt(tx: Transaction) {
@@ -227,6 +245,7 @@ export class CloudService {
     );
   }
   async reconcile(tx: Transaction) {
+    if (await tx.get("account_deletion", "current")) return;
     const now = this.now();
     for (const due of await tx.due(now)) {
       if (due.kind !== "request") {
@@ -600,6 +619,10 @@ export class CloudService {
       );
     if (c.device_id && c.device_id !== deviceId)
       throw conflict("call_claimed", "call was answered on another device");
+    const consent = event === "turn" && this.voicePrivacy && (await tx.get("device", deviceId))?.platform === "ios"
+      ? this.voicePrivacy.id : undefined;
+    if (consent && b.voice_consent !== consent)
+      throw new CloudError(403, "voice_consent_required", "送信先を確認し、会話データの送信に同意してください。");
     if (this.voiceProofRequired && (event === "answer" || event === "turn")) {
       const access = await tx.get("voice_access", deviceId);
       if (!voiceToken || !access || access.expires <= this.now() || access.tokenHash !== hash(voiceToken))
@@ -676,6 +699,7 @@ export class CloudService {
       requestId: id,
       callId: c.id,
       deviceId,
+      ...(consent ? { voiceConsent: consent } : {}),
       text: text!,
       state: "queued",
       reply: null,
@@ -742,6 +766,7 @@ export class CloudService {
       );
     if (!uid) throw bad();
     return this.db.transaction(uid, async (tx) => {
+      await this.ensureAccount(tx);
       if (await tx.get("ban", "current"))
         throw new CloudError(403, "account_banned", "このアカウントは利用を停止しました。");
       const pairing = await tx.get("pairing", key);
