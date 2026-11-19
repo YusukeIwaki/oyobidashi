@@ -82,6 +82,43 @@ describe("tool listing", () => {
     expect(updateProps.delivery_mode.enum).toEqual(["auto", "actions", "text", "call"]);
   });
 
+  test("the agent is told why and how to batch what it asks a busy human", async () => {
+    const { h } = await setup();
+    const { tools } = await h.client.listTools();
+    const tool = tools.find((t) => t.name === "ask_human")!;
+    const ask = tool.description!;
+    // The reason comes first: the human is busy and their experience is the priority.
+    expect(ask).toMatch(/because they are busy/i);
+    expect(ask).toMatch(/their experience comes first/i);
+    // Both failure modes are named, and the agent is told to balance them.
+    expect(ask).toMatch(/interrupted again and again/i);
+    expect(ask).toMatch(/one long interruption/i);
+    expect(ask).toMatch(/balance how often you interrupt against how long/i);
+    // What to do about it.
+    expect(ask).toMatch(/ask it in ONE request/);
+    expect(ask).toMatch(/does not block you yet can wait/i);
+    expect(ask).toMatch(/3 to 5 items/);
+    // How several items are laid out, and that choices do not fit them.
+    expect(ask).toMatch(/how many items there are and state the first one/i);
+    expect(ask).toMatch(/remaining items in "context" as a numbered list/i);
+    expect(ask).toMatch(/only "question" is read aloud/i);
+    expect(ask).toMatch(/do not pass "choices" with several items/i);
+    // The old one-question wording contradicted batching.
+    expect(ask).not.toMatch(/one complete question/i);
+    // No fixed waiting time between interruptions: that depends on the human.
+    expect(ask).not.toMatch(/\b\d+\s*(minutes?|seconds?|hours?)\b[^.]*(between|before (calling|asking|interrupting) again)/i);
+    const props = tool.inputSchema.properties as Record<string, { description: string }>;
+    expect(props.question!.description).toMatch(/first thing read aloud on a call/i);
+    expect(props.question!.description).toMatch(/count and the first item/i);
+    expect(props.context!.description).toMatch(/numbered list of the remaining items/i);
+    expect(props.context!.description).toMatch(/not read aloud/i);
+    const instructions = h.client.getInstructions()!;
+    expect(instructions).toMatch(/human is busy/i);
+    expect(instructions).toMatch(/focus comes first/i);
+    expect(instructions).toMatch(/one short request/i);
+    expect(instructions).toMatch(/instead of calling again and again/i);
+  });
+
   test("descriptions tell the agent when to call, about voice errors, and how to continue on pending", async () => {
     const { h } = await setup();
     const { tools } = await h.client.listTools();

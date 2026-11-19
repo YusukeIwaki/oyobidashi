@@ -83,9 +83,16 @@ const ASK_HUMAN_DESCRIPTION = `Ask your human (the user who started you) a quest
 The relay tries to notify the human's smartphone (oyobidashi app). Delivery depends on the device, network, and OS and is never guaranteed. They answer by typing, by voice, or by tapping one of the choices you offer, and the answer is returned to you.
 
 WHEN TO USE: you are blocked on something only the human can decide or provide, and they are probably not watching the terminal (long-running or autonomous work, they said they would step away, or a question in the chat went unanswered). Typical cases: approval for a risky or irreversible action (deploy, DB migration, deleting data, force-push), choosing between designs with real trade-offs, ambiguous requirements, missing information (not secrets), or "I finished X, should I continue with Y?". Asking is much better than guessing wrong or stopping silently and leaving the human unaware that you are stuck.
-WHEN NOT TO USE: things you can find out yourself (reading code, running a command, searching), trivial choices, or pure status updates (use notify_human). Every call interrupts a person, so ask one complete question rather than several small ones.
+WHEN NOT TO USE: things you can find out yourself (reading code, running a command, searching), trivial choices, or pure status updates (use notify_human).
+
+RESPECT THEIR ATTENTION: the human uses this tool because they are busy with something else and want to be pulled away only when it is worth it. Their experience comes first, ahead of your convenience. Two things break their focus: being interrupted again and again with small questions, and being held on one long interruption. Balance how often you interrupt against how long each interruption takes:
+- Before you interrupt, and above all before a call, work out everything you currently need from them and ask it in ONE request. Do not send one question now and the next a few minutes later.
+- A question that does not block you yet can wait. Note it, keep doing the work that does not depend on it, and ask it together with the others at the point where you are really blocked or have a natural batch.
+- Keep each interruption short. Ask only what changes what you do next, word each item so it can be answered in a few words, and settle everything you can settle yourself first. A call should cover about 3 to 5 items at most. If you have more, ask the ones that block you and send the rest as a low-priority text question.
+- After they answer, use the answer to get as far as you can before interrupting again.
 
 HOW TO ASK: the human reads this on a small phone screen without your conversation in front of them. Make the question self-contained, short and specific, in the language the human uses with you. Put supporting detail in "context". Whenever the answer is one of a few options, pass "choices" so they can answer with one tap (free-form text/voice answers remain possible).
+Several items in one request: number them. In "question", say how many items there are and state the first one (e.g. "I have 3 things to confirm. First: deploy to production now?"). Put the remaining items in "context" as a numbered list, each with the background needed to answer it. On a call only "question" is read aloud; the voice intermediary then goes through the items in "context" one at a time and returns one answer per item number. Do not pass "choices" with several items, because one tap can answer only one of them.
 
 PRIORITY AND DELIVERY: "priority" is low/normal/high/urgent (default normal). Prefer low with short choice-only questions (3 or fewer choices) when the human can answer at leisure. Use "delivery_mode" auto (default) unless you have a reason: auto uses one-tap action buttons for short choice-only questions and a text view otherwise. Use text when the question needs context or a long free-form answer. Use call ONLY when priority is high/urgent AND you are actually blocked; check get_human_status before escalating to a call. If a call was declined, hung up, missed, or failed, do NOT redial: continue over text. "urgency" (normal/high) is a legacy alias of priority and is only sent for compatibility; prefer "priority".
 
@@ -184,6 +191,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
       capabilities: { resources: subscriptions ? { subscribe: true } : {} },
       instructions:
         "oyobidashi lets you try to reach your human on their phone while they are away from the keyboard. Delivery is never guaranteed. " +
+        "Your human is busy, which is why they use this: their focus comes first. Many small interruptions and one long interruption both cost them, so collect what you need, keep working on what is not blocked, and ask everything in one short request (numbered items) instead of calling again and again. " +
         "Use ask_human when you are blocked on a decision only they can make; if it returns status \"pending\", keep calling wait_for_answer with the request_id. " +
         "Use get_human_status before escalating priority or delivery. Use update_request to change priority or delivery of a pending question. " +
         "Use notify_human for one-way news (e.g. a long task finished); withdraw it with cancel_request when it is no longer useful. " +
@@ -353,7 +361,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
         question: z
           .string()
           .max(4000)
-          .describe("The question, self-contained and concise (1-4000 characters). It is the body of the phone notification, so lead with the decision you need."),
+          .describe("The question, self-contained and concise (1-4000 characters). It is the body of the phone notification and the first thing read aloud on a call, so lead with the decision you need. With several items, give the count and the first item here and the rest in context."),
         subject: z
           .string()
           .refine((value) => Array.from(value).length <= 40, "subject must be at most 40 characters")
@@ -363,7 +371,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
           .string()
           .max(8000)
           .optional()
-          .describe("Optional background shown under the question when the human opens it: what you are doing, why you ask, consequences of each option (max 8000 characters). Use delivery_mode text when context matters."),
+          .describe("Optional background shown under the question when the human opens it: what you are doing, why you ask, consequences of each option (max 8000 characters). With several items, the numbered list of the remaining items goes here. It is not read aloud on a call, but the voice intermediary uses it. Use delivery_mode text when a single question needs context to be read."),
         choices: z
           .array(z.string().min(1).max(200))
           .max(8)

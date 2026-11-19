@@ -87,6 +87,22 @@ describe.each(["anthropic", "meta"] as const)(
         model: "test-model",
         fetch: send,
       });
+    test("tells the model to walk through numbered items briefly and answer per item", async () => {
+      let system = "";
+      await provider(
+        fetcher(async (_url, init) => {
+          system = JSON.parse(String(init?.body)).system;
+          return json(payload());
+        }),
+      ).turn(request, call, new AbortController().signal);
+      expect(system).toMatch(/several numbered items/i);
+      expect(system).toMatch(/"context" lists the rest/);
+      expect(system).toMatch(/human is busy, so keep the call short/i);
+      expect(system).toMatch(/one item per turn/i);
+      expect(system).toMatch(/record it as deferred and move on/i);
+      expect(system).toMatch(/resolved=true only when every item is answered or explicitly deferred/i);
+      expect(system).toMatch(/numbered list with one line per item number/i);
+    });
     test("sends only the conversation data with no tools and forwards cancellation", async () => {
       const controller = new AbortController();
       const result = await provider(

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { makeHarness } from "./helpers.ts";
-import { validateConversationResult } from "../src/conversation.ts";
+import { CONVERSATION_SYSTEM, validateConversationResult, type ConversationProvider } from "../src/conversation.ts";
 
 const resolvedProvider = { turn: async () => ({reply:"承知しました。エージェントに伝えて電話を切ります。",resolved:true,answer:"明日10時に実施してください"}) };
 
@@ -65,6 +65,43 @@ describe("call lifecycle",()=>{
   const turn=await event(a.token,"turn","明日10時に実施してください");
   expect(turn.status).toBe(200);
   expect(turn.body.request).toMatchObject({status:"answered",answer:{text:"明日10時に実施してください",input_method:"voice"},call:{state:"ended",outcome:"resolved"}});
+ });
+ test("the voice intermediary is told to walk through numbered items briefly and answer per item",()=>{
+  expect(CONVERSATION_SYSTEM).toMatch(/several numbered items/i);
+  expect(CONVERSATION_SYSTEM).toMatch(/"context" lists the rest/);
+  expect(CONVERSATION_SYSTEM).toMatch(/human is busy, so keep the call short/i);
+  expect(CONVERSATION_SYSTEM).toMatch(/one item per turn/i);
+  expect(CONVERSATION_SYSTEM).toMatch(/record it as deferred and move on/i);
+  expect(CONVERSATION_SYSTEM).toMatch(/resolved=true only when every item is answered or explicitly deferred/i);
+  expect(CONVERSATION_SYSTEM).toMatch(/numbered list with one line per item number/i);
+ });
+ test("one call carries several items: only the question is read first, the call stays open until all are settled, answers come back per item",async()=>{
+  const question="3点確認があります。1点目、本番に反映してよいですか？";
+  const context="2. 移行は今夜実行しますか？\n3. リリースノートは公開しますか？";
+  const answer="1. 反映してよい\n2. 今夜実行する\n3. deferred";
+  const seen:{question:string;context:string|null;said:string[]}[]=[];
+  const provider:ConversationProvider={turn:async(request,call)=>{
+   const said=call.transcript.filter(t=>t.role==="user").map(t=>t.text);
+   seen.push({question:request.question,context:request.context,said});
+   return said.length<3 ? {reply:`${said.length+1}点目です。`,resolved:false,answer:null} : {reply:"承知しました。お伝えします。",resolved:true,answer};
+  }};
+  const h=makeHarness({conversation:provider});
+  const a=await h.pair();
+  const r=await h.ask({question,context,choices:null,priority:"high",delivery_mode:"call"});
+  expect(r.delivery_mode).toBe("call");
+  const event=(name:string,text?:string)=>h.json("POST",`/v1/requests/${r.id}/call`,{token:a.token,body:{event:name,text}});
+  const opened=await event("answer");
+  expect(opened.body.reply).toBe(question);
+  expect(opened.body.reply).not.toContain("移行");
+  for (const text of ["はい","今夜で"]) {
+   const turn=await event("turn",text);
+   expect(turn.body).toMatchObject({resolved:false,request:{status:"pending",call:{state:"active"}}});
+  }
+  const last=await event("turn","それは後で決めます");
+  expect(last.body.request).toMatchObject({status:"answered",answer:{text:answer,input_method:"voice"},call:{state:"ended",outcome:"resolved"}});
+  expect(seen).toHaveLength(3);
+  expect(seen.every(s=>s.question===question&&s.context===context)).toBe(true);
+  expect(seen[2]!.said).toEqual(["はい","今夜で","それは後で決めます"]);
  });
  test("ring timeout and human hangup retain text request",async()=>{
   const {h,r,a,event}=await callSetup();h.clock.advance(45_001);h.app.sweep();
