@@ -560,3 +560,14 @@ iPhone 16 Pro を隔離したローカルのクラウド API・ワーカー・Po
 別試験では、Apple連携のない使い捨てUIDを実Firebase Authenticationに作成し、iPhoneの1.0.0から本人確認して削除した。Firebaseユーザー削除APIのHTTP 200、管理APIの再照会で対象UIDが消えていること、隔離クラウドの対象レコードとジョブが0件になることを確認した。
 
 Apple連携の試験では、独立したAppleの主App ID・Services ID・認証鍵と、専用のFirebase Authenticationプロジェクトを使った。iPhoneの検証版で使い捨てUIDにAppleでサインインを連携し、管理APIから `apple.com` の登録を確認した。アプリの「アカウント削除」で端末の本人確認とAppleの再認証を行うと、Appleのトークン取り消しを実行するFirebase APIがHTTP 200、Firebaseユーザー削除APIがHTTP 200、アプリの削除確認APIがHTTP 204を返した。Firebaseの再照会でUIDが存在せず、隔離クラウドの対象レコードとジョブは0件。iPhoneには「クラウドアカウントを削除しました」と表示された。 続けて同じiPhoneのApple Account設定の「Appleでサインイン」の一覧を確認した。検証用の連携は表示されず、普段使いの「Oyobidashi」の連携は一覧に残っていた。
+
+## iOS 1.0.0 の TestFlight 実機検証（2026-11-19）
+
+iPhone 16 Pro に TestFlight のビルド2をインストールし、審査用 Firebase アカウントを本番クラウドにペアリングした。
+
+- ロック画面に CallKit の着信が届き、応答で通話が有効になった。音声用の App Attest 登録が HTTP 204、トークン発行と通話応答が HTTP 200 だった。
+- ビルド2では、ロック画面で応答したあとアプリ内の同意画面が出るまで無音になった。ビルド3では応答後に送信先と学習利用を読み上げ、端末内の音声認識で明示的な同意を確認してから音声会話を開始するよう変更した。ビルド3を内部テストで配布し、同じ iPhone にインストールした。
+- ビルド2で Sandbox の月額購読を購入した。課金用の App Attest 登録が HTTP 204、購入の同期が HTTP 200 で、審査用アカウントが FREE から PLUS に切り替わった。ビルド3への更新後も、同じアカウントに PLUS と Sandbox 専用の返金テストボタンが表示された。
+- ビルド3で「購入を復元」を実行し、Apple Account の認証後に購入の同期が HTTP 200 で完了した。同じ審査用アカウントの PLUS は有効だった。
+- iPhone の TestFlight 用返金シートから申請した。申請直後は PLUS を維持した。Apple の返金履歴で返金確定と購読の失効を確認し、確定直後の Sandbox 通知を API が HTTP 204 で受理した。返金確定から FREE を確認するまでの間、iPhone からの購入同期は入っていない。iPhone の設定画面を開き直すと FREE が表示された。照会用の一時キーは無効化し、秘密鍵を削除した。
+- ビルド3でもロック画面で着信・応答できた。終話後に同じ質問へアプリから文字で返信し、回答完了の表示と API の `answered`・`input_method: text` を確認した。音声同意と音声会話の導線は別途検討する。
