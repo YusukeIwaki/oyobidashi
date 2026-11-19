@@ -112,6 +112,9 @@ h1, h2 {
 
 .stores { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
 .stores--center { justify-content: center; }
+.stores--badged { gap: 14px; }
+.store-badge { align-self: center; flex: none; border-radius: 8px; }
+.store-badge img { width: auto; height: 56px; }
 .store {
   display: inline-flex; flex-direction: column; justify-content: center;
   min-width: 168px; padding: 10px 22px 11px;
@@ -446,6 +449,7 @@ h1, h2 {
   .lcd-strip { font-size: 0.72rem; letter-spacing: 0.04em; padding: 8px 10px; gap: 8px; }
   .lcd-strip--big { font-size: 0.9rem; }
   .store { min-width: 0; flex: 1 1 140px; padding-inline: 16px; }
+  .stores--badged .store { flex: 0 1 auto; }
 
   .stage { grid-template-columns: minmax(0, 1fr); justify-items: center; }
   .term { margin: 0 0 -40px; width: 100%; }

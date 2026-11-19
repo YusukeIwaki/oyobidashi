@@ -1,5 +1,5 @@
 ---
-import { GITHUB_URL } from "../config";
+import { GITHUB_URL, STORE_URLS } from "../config";
 ---
 <footer class="foot">
   <div class="wrap foot__in">
@@ -10,6 +10,15 @@ import { GITHUB_URL } from "../config";
       <a href="/privacy/">プライバシーポリシー</a>
       <a href={GITHUB_URL} rel="noopener">GitHub</a>
     </nav>
-    <p class="foot__legal">© 2026 Oyobidashi ・ 記載の製品名・サービス名は各社の商標または登録商標です。</p>
+    <p class="foot__legal">
+      © 2026 Oyobidashi ・ 記載の製品名・サービス名は各社の商標または登録商標です。
+      {STORE_URLS.ios && (
+        <>
+          <br />
+          Apple、Appleロゴ、iPhoneは、米国およびその他の国や地域で登録されたApple Inc.の商標です。
+          App StoreはApple Inc.のサービスマークです。
+        </>
+      )}
+    </p>
   </div>
 </footer>
