@@ -43,6 +43,7 @@ struct PlanChangeSheet: View {
     @ObservedObject var store: BillingStore
     @State private var selection: BillingPlanPresentation.Plan
     @State private var showingManagement = false
+    @State private var sandboxRefundTransactionID: UInt64?
 
     init(store: BillingStore) {
         self.store = store
@@ -61,7 +62,8 @@ struct PlanChangeSheet: View {
                 selection: $selection,
                 confirm: confirm,
                 restore: { Task { await store.restore() } },
-                reload: { Task { await store.refresh() } }
+                reload: { Task { await store.refresh() } },
+                sandboxRefundTransactionID: sandboxRefundTransactionID
             )
             .navigationTitle("プランを変更")
             .navigationBarTitleDisplayMode(.inline)
@@ -92,6 +94,9 @@ struct PlanChangeSheet: View {
             if !enabled { dismiss() }
         }
         .task(id: store.status?.expiresAt) { await store.refreshAtExpiration() }
+        .task(id: store.status) {
+            sandboxRefundTransactionID = await store.sandboxRefundTransactionID()
+        }
         .task {
             store.clearFeedback()
             await store.refreshAndSync()
@@ -123,6 +128,7 @@ private struct PlanPickerContent: View {
     let confirm: () -> Void
     let restore: () -> Void
     let reload: () -> Void
+    var sandboxRefundTransactionID: UInt64? = nil
 
     var body: some View {
         ScrollView {
@@ -211,12 +217,29 @@ private struct PlanPickerContent: View {
                 .buttonStyle(.plain)
                 .disabled(!presentation.canRestore(isWorking: isWorking))
                 .accessibilityIdentifier("billing.restore")
+
+                if let sandboxRefundTransactionID {
+                    SandboxRefundButton(transactionID: sandboxRefundTransactionID)
+                        .disabled(isWorking)
+                }
             }
             .frame(maxWidth: 560)
             .padding(24)
             .frame(maxWidth: .infinity)
         }
         .background(PagerTheme.cream.ignoresSafeArea())
+    }
+}
+
+private struct SandboxRefundButton: View {
+    let transactionID: UInt64
+    @State private var showingRefund = false
+
+    var body: some View {
+        Button("Sandboxの返金をテスト") { showingRefund = true }
+            .font(.footnote)
+            .accessibilityIdentifier("billing.sandboxRefund")
+            .refundRequestSheet(for: transactionID, isPresented: $showingRefund)
     }
 }
 

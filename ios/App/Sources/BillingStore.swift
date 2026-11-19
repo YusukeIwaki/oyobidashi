@@ -190,6 +190,19 @@ final class BillingStore: ObservableObject {
         }
     }
 
+    func sandboxRefundTransactionID() async -> UInt64? {
+        guard let credentials = displayedCredentials, credentials == model.credentials,
+              let status, status.active == true, let accountID = status.purchaseAccountID,
+              let products = status.apple?.productIDs else { return nil }
+        for await result in Transaction.currentEntitlements {
+            guard case .verified(let transaction) = result,
+                  transaction.environment == .sandbox, transaction.ownershipType == .purchased,
+                  transaction.appAccountToken == accountID, products.contains(transaction.productID) else { continue }
+            return model.credentials == credentials && self.status == status ? transaction.id : nil
+        }
+        return nil
+    }
+
     func clearFeedback() {
         errorMessage = nil
         noticeMessage = nil
