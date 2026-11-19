@@ -298,9 +298,14 @@ private final class VoicePollObservation {
     var model: AppModel?
     var resolved: AgentRequest?
     var observed = false
+    var keptCallDuringReconnect = false
     func deliverResolution() {
         guard !observed, let model, let resolved else { return }
         observed = true
+        // The reconnect snapshot contains pending requests only, so a completed
+        // voice turn may vanish before its polling response reaches the app.
+        model.reconcileCalls(for: [])
+        keptCallDuringReconnect = model.fallbackCallRequest?.id == resolved.id
         model.store.upsert(resolved)
         model.reconcileCalls(for: resolved)
     }
@@ -381,12 +386,16 @@ final class AsyncVoiceAppModelTests: XCTestCase {
         stub.onAny { _ in .init(200, self.response(live, id: id, completed: true)) }
         guard case .success(let reply) = await model.sendCallTurn(requestID: "r", text: "はい") else { return XCTFail("polling failed") }
         XCTAssertTrue(observation.observed)
+        XCTAssertTrue(observation.keptCallDuringReconnect)
         XCTAssertEqual(reply.reply, "お伝えします")
         XCTAssertNotNil(model.fallbackCallRequest)
         model.reconcileCalls(for: resolved)
+        model.reconcileCalls(for: [])
         XCTAssertNotNil(model.fallbackCallRequest)
+        XCTAssertTrue(model.callReconciler.isReported(callID: "c"))
         model.finishVoiceCall(requestID: "r")
         XCTAssertNil(model.fallbackCallRequest)
+        XCTAssertTrue(model.callReconciler.hasEnded(callID: "c"))
     }
 
     func testRevokedPairingDuringPollingSignsOutAndClearsPendingUtterance() async throws {

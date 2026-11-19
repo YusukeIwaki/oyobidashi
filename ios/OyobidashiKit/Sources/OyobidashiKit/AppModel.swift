@@ -441,13 +441,14 @@ public final class AppModel: AnswerSubmitting {
     }
 
     public func reconcileCalls(for requests: [AgentRequest]) {
-        for action in callReconciler.reconcileHello(requests: requests.map { req in
-            guard shouldFinishSpeaking(req) else { return req }
-            var speaking = req
-            speaking.status = .pending
-            speaking.call?.state = .active
-            return speaking
-        }, myDeviceID: myDeviceID) {
+        // A reconnect snapshot can omit an answered request while its final
+        // voice reply is still being fetched or read aloud.
+        let awaitingVoiceReply = sendingVoiceRequests.union(finishingVoiceRequests)
+        for action in callReconciler.reconcileHello(
+            requests: requests.filter { !shouldFinishSpeaking($0) },
+            myDeviceID: myDeviceID,
+            preservingMissingRequestIDs: awaitingVoiceReply
+        ) {
             switch action {
             case .restoreActive(let call, let req):
                 callReconciler.markReported(callID: call.id, requestID: req.id)
@@ -549,7 +550,10 @@ public final class AppModel: AnswerSubmitting {
         let turnID = recovering ? previous!.voiceTurnID! : UUID().uuidString.lowercased()
         drafts.set(AnswerDraft(text: trimmed, usedVoice: true, voiceTurnID: turnID, voiceCallID: callID), for: requestID)
         let outcome = await performCallAction(requestID: requestID, body: CallEventBody(event: .turn, text: trimmed, turnID: turnID, recoveringTurn: recovering))
-        if case .success = outcome {
+        if case .success(let response) = outcome {
+            if shouldFinishSpeaking(response.request) {
+                finishingVoiceRequests.insert(requestID)
+            }
             if drafts.draft(for: requestID)?.voiceTurnID == turnID { drafts.remove(requestID) }
             return outcome
         }
@@ -565,11 +569,9 @@ public final class AppModel: AnswerSubmitting {
         return outcome
     }
     private func shouldFinishSpeaking(_ request: AgentRequest) -> Bool {
-        guard request.status == .answered, request.call?.outcome == .resolved,
-              request.call?.deviceID == myDeviceID,
-              sendingVoiceRequests.contains(request.id) || finishingVoiceRequests.contains(request.id) else { return false }
-        finishingVoiceRequests.insert(request.id)
-        return true
+        request.status == .answered && request.call?.outcome == .resolved &&
+            request.call?.deviceID == myDeviceID &&
+            (sendingVoiceRequests.contains(request.id) || finishingVoiceRequests.contains(request.id))
     }
 
     /// The response and WebSocket update may arrive in either order. The local voice owner

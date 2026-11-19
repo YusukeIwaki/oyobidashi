@@ -133,14 +133,16 @@ public final class CallReconciler: @unchecked Sendable {
         }
     }
 
-    public func reconcileHello(requests: [AgentRequest], myDeviceID: String?) -> [CallReconcileAction] {
+    public func reconcileHello(
+        requests: [AgentRequest], myDeviceID: String?, preservingMissingRequestIDs: Set<String> = []
+    ) -> [CallReconcileAction] {
         // hello に含まれない報告済み通話は終了扱い (切断中に解決された)
         var actions: [CallReconcileAction] = []
         let liveIDs: Set<String> = Set(requests.compactMap { $0.call?.id })
         let snapshot: [(String, String)] = lock.withLock {
             callIDByRequestID.filter { reportedCallIDs.contains($0.value) }.map { ($0.key, $0.value) }
         }
-        for (reqID, callID) in snapshot where !liveIDs.contains(callID) {
+        for (reqID, callID) in snapshot where !liveIDs.contains(callID) && !preservingMissingRequestIDs.contains(reqID) {
             // hello の pending にその request 自体が無ければ終了
             if !requests.contains(where: { $0.id == reqID }) {
                 markEnded(callID: callID)
