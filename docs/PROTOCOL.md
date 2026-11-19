@@ -169,7 +169,7 @@ relay は `/healthz` を含む全エンドポイントで、接続元がプラ�
 
 `{ "ok": true, "version": "0.2.0", "voice_privacy": { "id": "v1:claude-code", "provider": "claude-code" } }`
 
-iOS は `voice_privacy` に基づく送信先の表示と同意の後に音声会話を始めます。
+iOS は `voice_privacy` に基づく送信先と学習利用の条件を、システム着信では音声、アプリ内の着信では画面で案内します。明示的な同意を確認してから音声会話を始めます。システム着信での同意への返答は端末内で認識し、送信・保存しません。
 
 ## 6. Push 通知
 

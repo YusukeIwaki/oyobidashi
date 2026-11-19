@@ -234,7 +234,7 @@ bun test --cwd cloud
 ### iOS 1.0.0 の公開時に合わせる設定
 
 - API の `FIREBASE_AUTH_SERVICE_ACCOUNT_JSON` のサービスアカウントには、対象プロジェクトの `firebaseauth.users.get` と `firebaseauth.users.delete` が必要です。Apple でサインインした利用者については、Firebase 側の Apple プロバイダーにサービス ID と OAuth コードフローの設定も必要です。
-- 音声の送信先と学習利用条件は、API とワーカーの `VOICE_PROVIDER`、`VOICE_STANDARD_TRAINING`、`VOICE_FREE_TRAINING` から決まります。両サービスの設定を揃え、App Store 用のビルドで同意画面を確認します。新 API は同意情報を送らない旧 iOS からの音声ターンを拒否します。
+- 音声の送信先と学習利用条件は、API とワーカーの `VOICE_PROVIDER`、`VOICE_STANDARD_TRAINING`、`VOICE_FREE_TRAINING` から決まります。両サービスの設定を揃え、App Store 用のビルドでロック画面から応答した際の音声同意と、アプリ内の同意画面を確認します。新 API は同意情報を送らない旧 iOS からの音声ターンを拒否します。
 
 ### Apple課金の本番と審査用Sandbox
 

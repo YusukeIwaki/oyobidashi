@@ -70,7 +70,7 @@ struct InAppCallView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PagerTheme.cream.ignoresSafeArea())
         .task(id: hasAnswered) {
-            guard hasAnswered, let credentials = model.credentials else { return }
+            guard hasAnswered, callKit.activeCallUUID == nil, let credentials = model.credentials else { return }
             let client = RelayClient(endpoint: credentials.endpoint, deviceToken: nil)
             disclosure = try? await client.health().voicePrivacy
             if Task.isCancelled { return }
@@ -100,6 +100,8 @@ struct InAppCallView: View {
         let voice = callKit.voice
         VStack(spacing: 8) {
             switch voice.phase {
+            case .confirmingConsent:
+                Label("音声で同意を確認中", systemImage: "mic.fill").foregroundStyle(PagerTheme.inkSoft)
             case .speaking:
                 Label("読み上げ中…", systemImage: "speaker.wave.2.fill").foregroundStyle(PagerTheme.inkSoft)
                 if !voice.lastAssistantText.isEmpty {
@@ -162,7 +164,7 @@ struct InAppCallView: View {
             }
         } else {
             VStack(spacing: 12) {
-                if voice.phase == .idle || voice.phase == .ended {
+                if callKit.activeCallUUID == nil && (voice.phase == .idle || voice.phase == .ended) {
                     if let disclosure {
                         VoiceConsentNotice(disclosure: disclosure)
                         Button("同意して音声で話す") {

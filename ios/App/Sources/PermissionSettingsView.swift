@@ -37,7 +37,7 @@ struct PermissionSettingsView: View {
         } header: {
             Text("権限")
         } footer: {
-            Text("通知・通話・QRコードに必要な権限を確認できます。Macへ接続できない場合は、ローカルネットワークへのアクセスも確認してください。")
+            Text("ロック画面から音声で応答するには、マイクと音声認識を許可してください。Macへ接続できない場合は、ローカルネットワークへのアクセスを確認してください。")
         }
         .task { await refresh() }
         .onChange(of: scenePhase) { _, phase in

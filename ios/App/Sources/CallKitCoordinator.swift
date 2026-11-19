@@ -31,8 +31,8 @@ final class CallKitCoordinator: NSObject, IncomingCallHandling {
     @ObservationIgnored let voice = VoiceConversationController()
     @ObservationIgnored private var uuidByCallID: [String: UUID] = [:]
     @ObservationIgnored private var requestIDByUUID: [UUID: String] = [:]
-    @ObservationIgnored private var callIDByUUID: [UUID: UUID] = [:]
-    @ObservationIgnored private var approvedStart: (requestID: String, text: String, policy: String)?
+    @ObservationIgnored private var systemStart: (requestID: String, text: String, disclosure: VoicePrivacyDisclosure?)?
+    @ObservationIgnored private var audioActivationDeadline: Task<Void, Never>?
     @ObservationIgnored private var audioActivated = false
     @ObservationIgnored private var answeredCallIDs: Set<String> = []
 
@@ -121,7 +121,7 @@ final class CallKitCoordinator: NSObject, IncomingCallHandling {
         #endif
         voice.endConversation()
         answeredCallIDs.remove(callID)
-        approvedStart = nil
+        clearSystemStart()
         audioActivated = false
         guard let uuid = uuidByCallID[callID] else {
             if model?.fallbackCallRequest?.id == requestID { model?.fallbackCallRequest = nil }
@@ -131,7 +131,6 @@ final class CallKitCoordinator: NSObject, IncomingCallHandling {
         defer {
             uuidByCallID.removeValue(forKey: callID)
             requestIDByUUID.removeValue(forKey: uuid)
-            callIDByUUID.removeValue(forKey: uuid)
             if activeCallUUID == uuid { activeCallUUID = nil; activeRequestID = nil }
         }
         guard Self.isCallKitAvailable else { return }
@@ -166,7 +165,6 @@ final class CallKitCoordinator: NSObject, IncomingCallHandling {
         let uuid = UUID(uuidString: callID) ?? UUID()
         uuidByCallID[callID] = uuid
         requestIDByUUID[uuid] = requestID
-        callIDByUUID[uuid] = uuid
         return uuid
     }
 
@@ -175,26 +173,42 @@ final class CallKitCoordinator: NSObject, IncomingCallHandling {
         callController.request(CXTransaction(action: CXEndCallAction(call: uuid))) { _ in }
     }
 
-    /// Called by the foreground consent screen. A system answer alone never starts the microphone.
+    /// The fallback UI confirms consent explicitly when there is no system call.
     func startApprovedConversation(request: AgentRequest, policy: String) async {
-        guard let model, let current = model.store.request(id: request.id),
+        guard activeCallUUID == nil, let model, let current = model.store.request(id: request.id),
               let call = current.call, call.id == request.call?.id,
               call.state == .active, call.deviceID == model.myDeviceID else { return }
         activeRequestID = request.id
         let reply = call.transcript.last(where: { $0.role == .assistant })?.text ?? request.question
-        if activeCallUUID != nil && answeredCallIDs.contains(call.id) {
-            approvedStart = (request.id, reply, policy)
-            await startApprovedSystemAudio()
-        } else {
-            answeredCallIDs.insert(call.id)
-            await voice.startConversation(requestID: request.id, initialText: reply, usesCallKitAudio: false, consent: policy)
-        }
+        answeredCallIDs.insert(call.id)
+        await voice.startConversation(requestID: request.id, initialText: reply, consent: policy)
     }
 
-    private func startApprovedSystemAudio() async {
-        guard audioActivated, let start = approvedStart else { return }
-        approvedStart = nil
-        await voice.startConversation(requestID: start.requestID, initialText: start.text, usesCallKitAudio: true, consent: start.policy)
+    private func clearSystemStart() {
+        systemStart = nil
+        audioActivationDeadline?.cancel()
+        audioActivationDeadline = nil
+    }
+
+    private func startSystemAudio() {
+        guard audioActivated, let start = systemStart else { return }
+        clearSystemStart()
+        voice.askSpokenConsent(requestID: start.requestID, initialText: start.text, disclosure: start.disclosure)
+    }
+
+    private func waitForSystemAudio(uuid: UUID, requestID: String) {
+        audioActivationDeadline = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(8)) } catch { return }
+            guard let self, self.activeCallUUID == uuid, self.systemStart != nil else { return }
+            self.audioActivationDeadline = nil
+            self.clearSystemStart()
+            if let callID = self.uuidByCallID.first(where: { $0.value == uuid })?.key {
+                self.handleCallEnded(callID: callID, requestID: requestID, reason: .failed)
+            } else {
+                self.provider.reportCall(with: uuid, endedAt: Date(), reason: .failed)
+            }
+            _ = await self.model?.failCall(requestID: requestID)
+        }
     }
 
 }
@@ -205,7 +219,7 @@ extension CallKitCoordinator: CXProviderDelegate {
     nonisolated func providerDidReset(_ provider: CXProvider) {
         Task { @MainActor [weak self] in
             self?.voice.endConversation()
-            self?.approvedStart = nil
+            self?.clearSystemStart()
             self?.audioActivated = false
             self?.answeredCallIDs.removeAll()
             self?.activeCallUUID = nil
@@ -221,20 +235,31 @@ extension CallKitCoordinator: CXProviderDelegate {
         #endif
         let uuid = action.callUUID
         Task { @MainActor [weak self] in
-            guard let self, let requestID = self.requestIDByUUID[uuid], let model = self.model else {
+            guard let self, let requestID = self.requestIDByUUID[uuid], let model = self.model,
+                  let credentials = model.credentials else {
                 action.fail()
                 return
             }
             self.activeCallUUID = uuid
             self.activeRequestID = requestID
+            let client = RelayClient(endpoint: credentials.endpoint, deviceToken: nil, timeout: 4)
+            async let disclosure = try? client.health().voicePrivacy
             let outcome = await model.answerCall(requestID: requestID)
             switch outcome {
             case .success(let resp):
+                let privacy = await disclosure
+                guard self.activeCallUUID == uuid, model.credentials == credentials else {
+                    action.fail()
+                    return
+                }
                 if let call = resp.call { self.answeredCallIDs.insert(call.id) }
-                // The system's compact incoming banner does not open a call screen
-                // after answering while our app is foregrounded. Present our controls.
+                self.systemStart = (requestID, resp.reply ?? resp.request.question, privacy)
                 model.fallbackCallRequest = resp.request
+                // CallKit activates the configured session after the answer is fulfilled.
+                try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .allowBluetoothA2DP])
+                self.waitForSystemAudio(uuid: uuid, requestID: requestID)
                 action.fulfill()
+                self.startSystemAudio()
             case .unauthorized, .unreachable, .failed:
                 action.fail()
                 // 応答できなかった通話は終了として伝える。
@@ -256,7 +281,7 @@ extension CallKitCoordinator: CXProviderDelegate {
             let callID = self.uuidByCallID.first(where: { $0.value == uuid })?.key
             let wasAnswered = callID.map { self.answeredCallIDs.contains($0) } ?? false
             self.voice.endConversation()
-            self.approvedStart = nil
+            self.clearSystemStart()
             self.audioActivated = false
             // マッピング掃除
             if let callID {
@@ -264,7 +289,6 @@ extension CallKitCoordinator: CXProviderDelegate {
                 self.uuidByCallID.removeValue(forKey: callID)
             }
             self.requestIDByUUID.removeValue(forKey: uuid)
-            self.callIDByUUID.removeValue(forKey: uuid)
             if self.activeCallUUID == uuid { self.activeCallUUID = nil; self.activeRequestID = nil }
             action.fulfill()
             guard let requestID, let model = self.model else { return }
@@ -292,9 +316,7 @@ extension CallKitCoordinator: CXProviderDelegate {
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.audioActivated = true
-            // CallKit が有効化したセッション上で音声会話を動かす。カテゴリは通話用に寄せる。
-            try? audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .allowBluetoothA2DP])
-            await self.startApprovedSystemAudio()
+            self.startSystemAudio()
         }
     }
 

@@ -37,37 +37,12 @@ struct VoiceConsentNotice: View {
     let disclosure: VoicePrivacyDisclosure
     @State private var showingPolicy = false
 
-    private var provider: String {
-        switch disclosure.provider {
-        case .anthropic: return "Anthropic"
-        case .meta: return "Meta"
-        case .claudeCode: return "Anthropic（接続先の Claude Code）"
-        }
-    }
-
-    private var training: String {
-        guard disclosure.provider != .claudeCode else {
-            return "データの取り扱いには、接続先で使用するClaude Codeの設定とAnthropicの条件が適用されます。"
-        }
-        func description(_ value: Bool?) -> String {
-            switch value {
-            case true: return "学習利用の可能性があります"
-            case false: return "学習には利用されません"
-            case nil: return "学習利用の条件を確認できていません"
-            }
-        }
-        let free = disclosure.training?.free
-        let plus = disclosure.training?.plus
-        if free == plus { return description(free) + "。" }
-        return "FREEでは" + description(free) + "。PLUSでは" + description(plus) + "。"
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("会話データを \(provider) に送信").font(.headline)
+            Text("会話データを \(disclosure.providerName) に送信").font(.headline)
             Text("音声で話すと、発話を文字に変換し、元の質問、補足、選択肢と関連する会話履歴とともに送信します。音声認識のため、Appleが音声を処理する場合があります。")
-            Text(training)
-            if disclosure.provider == .meta && (disclosure.training?.free == true || disclosure.training?.plus == true) {
+            Text(disclosure.trainingNotice)
+            if disclosure.hasContributorTraining {
                 Text("学習利用の対象となる通話には、個人情報や機密情報を含めないでください。こうした情報を含む場合は、文字で返信できます。")
             }
             Button("プライバシーポリシー") { showingPolicy = true }
@@ -86,5 +61,45 @@ struct VoiceConsentNotice: View {
                 }
             }
         }
+    }
+}
+
+extension VoicePrivacyDisclosure {
+    fileprivate var providerName: String {
+        switch provider {
+        case .anthropic: return "Anthropic"
+        case .meta: return "Meta"
+        case .claudeCode: return "Anthropic（接続先の Claude Code）"
+        }
+    }
+
+    fileprivate var trainingNotice: String {
+        guard provider != .claudeCode else {
+            return "データの取り扱いには、接続先で使用するClaude Codeの設定とAnthropicの条件が適用されます。"
+        }
+        func description(_ value: Bool?) -> String {
+            switch value {
+            case true: return "学習利用の可能性があります"
+            case false: return "学習には利用されません"
+            case nil: return "学習利用の条件を確認できていません"
+            }
+        }
+        let free = training?.free
+        let plus = training?.plus
+        if free == plus { return description(free) + "。" }
+        return "FREEでは" + description(free) + "。PLUSでは" + description(plus) + "。"
+    }
+
+    fileprivate var hasContributorTraining: Bool {
+        provider == .meta && (training?.free == true || training?.plus == true)
+    }
+
+    var spokenPrompt: String {
+        let personalDataNotice = hasContributorTraining
+            ? "学習利用の対象となる通話に個人情報や機密情報を含めないでください。"
+            : ""
+        return "発話を文字にして、質問や履歴と一緒に\(providerName)に送ります。音声認識にAppleが音声を処理する場合があります。"
+            + trainingNotice + personalDataNotice
+            + "音声で続ける場合は、同意します。文字で返信する場合は、同意しません、と話してください。"
     }
 }

@@ -182,6 +182,12 @@ public final class CallReconciler: @unchecked Sendable {
 
 /// 会話ターン送信ポリシー: 部分結果は絶対に送らない。
 public enum ConversationPolicy {
+    public static func grantsSpokenConsent(text: String, isFinal: Bool) -> Bool {
+        guard isFinal else { return false }
+        let phrase = text.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        return phrase == "同意します"
+    }
+
     public static func shouldSendTurn(text: String, isFinal: Bool) -> Bool {
         guard isFinal else { return false }
         return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
