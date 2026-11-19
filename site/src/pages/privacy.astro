@@ -1,0 +1,25 @@
+---
+import Base from "../layouts/Base.astro";
+import policy from "../content/privacy-policy.json";
+---
+<Base title="プライバシーポリシー | お呼び出し" description="お呼び出しのアプリとクラウドサービスにおけるデータの取り扱い、音声会話の同意、アカウント削除について。">
+  <main id="main" class="wrap policy">
+    <a href="/">お呼び出し トップへ</a>
+    <h1>プライバシーポリシー</h1>
+    {policy.map(({ title, paragraphs, link }) => (
+      <section>
+        <h2>{title}</h2>
+        {paragraphs.map(paragraph => <p>{paragraph}</p>)}
+        {link && <p><a href={link}>問い合わせ窓口を開く</a></p>}
+      </section>
+    ))}
+  </main>
+</Base>
+
+<style>
+  .policy { max-width: 50rem; padding-block: clamp(2rem, 6vw, 4.5rem); }
+  h1 { margin-block: 1.3rem 2.4rem; font-size: clamp(1.55rem, 4vw, 2.5rem); }
+  h2 { font-size: 1.15rem; margin-block: 2rem .65rem; }
+  p { line-height: 1.85; margin-block: .7rem; }
+  a { text-decoration: underline; text-underline-offset: .22em; }
+</style>
