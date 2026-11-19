@@ -244,6 +244,8 @@ bun test --cwd cloud
 
 App Review の審査メモに公式APIの `/review/` へのリンクを記載し、ログイン名とパスワードは App Review のサインイン情報欄に入力します。審査担当者はここで発行したQRコードかアプリを開くリンクで1台のiPhoneをペアリングし、テスト着信を送れます。普段のアカウントとは別の審査専用UIDで運用します。審査後は `APPLE_REVIEW_PORTAL` を外します。
 
+審査用UIDがFREEの入力制限の対象なら、ポータルで審査担当者本人が制限に同意してからテスト着信を送れます。アプリではペアリング時に、会話データの第三者AIへの送信について別に同意します。
+
 App Store Connectの「アプリ情報」にApp Storeサーバ通知のVersion 2として以下を登録します。APIは通知と取引の署名を検証し、受信先の環境と一致する取引だけで権利を更新します。
 
 - 本番 `https://api.oyobidashi.me/v1/billing/webhooks/apple/production`

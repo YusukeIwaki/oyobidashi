@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import qrcode from "qrcode-generator";
 import { OFFICIAL_CLOUD_ORIGIN } from "./config.ts";
 import { CloudError, missing } from "./errors.ts";
+import { INPUT_RESTRICTION_VERSION } from "./input-restriction.ts";
 import { requestOrigin } from "./oauth.ts";
 import { CloudService, hash } from "./service.ts";
 
@@ -25,6 +26,7 @@ export function loadReviewPortal(
 }
 
 const root = "/review/";
+const consentAction = `input-consent/${INPUT_RESTRICTION_VERSION}`;
 const headers = {
   "content-type": "text/html; charset=utf-8",
   "cache-control": "no-store",
@@ -71,7 +73,7 @@ export class ReviewPortal {
     const path = new URL(request.url).pathname;
     const action = path.slice(root.length);
     if ((request.method !== "GET" || path !== root) &&
-        (request.method !== "POST" || !["pair", "call", "text", "reset"].includes(action))) throw missing();
+        (request.method !== "POST" || !["pair", "call", "text", "reset", consentAction].includes(action))) throw missing();
     const basic = /^Basic ([A-Za-z0-9+/=]{1,256})$/i.exec(request.headers.get("authorization") ?? "");
     const value = basic ? Buffer.from(basic[1]!, "base64").toString("utf8") : "";
     const separator = value.indexOf(":");
@@ -85,6 +87,11 @@ export class ReviewPortal {
       throw new CloudError(403, "forbidden", "Open the review page to perform this action.");
     const principal = { uid: this.config.uid, role: "agent" } as const;
     const response = await this.service.run(principal, async tx => {
+      const consentRequired = await this.service.inputConsentMissing(tx);
+      if (action === consentAction) {
+        if (consentRequired) await this.service.acceptInputRestriction(tx, INPUT_RESTRICTION_VERSION);
+        return new Response(null, { status: 303, headers: { ...headers, location: root } });
+      }
       const devices = await tx.list("device", {}, 33);
       if (action === "pair") {
         if (devices.length) return page(`<p>A demo iPhone is already paired. To pair another, disconnect the previous demo iPhone first.</p><p><a href="${root}">Return to the review page</a></p>`, 409);
@@ -105,6 +112,8 @@ export class ReviewPortal {
       const phone = devices.length === 1 && devices[0]?.platform === "ios" ? devices[0] : null;
       const ready = !!phone && !!phone.voip_token && await tx.ownsPush(phone, "voip_token");
       if (action === "call" || action === "text") {
+        if (action === "call" && consentRequired)
+          return page(`<p>Accept the FREE plan input restriction in the review portal before sending a test call.</p><p><a href="${root}">Return to the review page</a></p>`, 409);
         if (!phone || (action === "call" && !ready))
           return page(`<p>Pair one iPhone and open Oyobidashi once. Wait for the page to show that the iPhone is ready.</p><p><a href="${root}">Check the iPhone</a></p>`, 409);
         const result = await this.service.create(tx, {
@@ -119,11 +128,15 @@ export class ReviewPortal {
           "Test message created. Open Oyobidashi to reply.";
         return page(`<p role="status">${message}</p><p><a href="${root}">Return to the review page</a></p>`);
       }
+      const consent = consentRequired
+        ? `<h2>FREE plan input restriction</h2><p>The FREE voice model may use questions and conversation content for AI training. Questions, context and answer choices sent by an agent must contain no personal or confidential information. Do not speak personal or confidential information during calls.</p>${form(consentAction, "I agree not to send personal or confidential information")}`
+        : "";
       return page(`<p>Pair an iPhone running the build under review, then trigger a test call or text question.</p>
-<p role="status">${ready ? "The review iPhone is ready for calls." : phone ? "The iPhone is paired. Open Oyobidashi to finish enabling calls, then refresh this page." : devices.length ? "Disconnect the previous demo pairing to continue." : "No review iPhone is paired."}</p>
+<p role="status">${ready && !consentRequired ? "The review iPhone is ready for calls." : ready ? "The review iPhone is paired. Accept the FREE plan input restriction below to enable test calls." : phone ? "The iPhone is paired. Open Oyobidashi to finish enabling calls, then refresh this page." : devices.length ? "Disconnect the previous demo pairing to continue." : "No review iPhone is paired."}</p>
+${consent}
 ${devices.length ? "" : form("pair", "Pair an iPhone")}
 ${phone ? form("text", "Send a test message") : ""}
-${ready ? form("call", "Send a test call") : ""}
+${ready && !consentRequired ? form("call", "Send a test call") : ""}
 ${devices.length ? form("reset", "Disconnect the demo iPhone") : ""}
 <p>For purchase and restore, open Settings → Change plan in the app.</p>`);
     });
