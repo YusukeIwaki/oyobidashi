@@ -30,7 +30,8 @@
 | `src/styles/global.css` | 色・書体・レイアウト。全体で1ファイル |
 | `src/scripts/main.ts` | ヒーローのデモとコピーボタン |
 | `src/config.ts` | ストアURL (`STORE_URLS`) とGitHubのURL |
-| `public/` | そのまま配信するファイル (favicon) |
+| `public/` | そのまま配信するファイル (favicon、OGP画像 `og.png`) |
+| `og/` | OGP画像の原稿 (`og.html`、1200×630)。App Storeのヘッダ画像と同じ絵柄。変えたら `./site/scripts/og-image.sh` で `public/og.png` を書き出し、画像を開いて確かめる。メタタグは `src/layouts/Base.astro`、絶対URLの基点は `astro.config.mjs` の `site` |
 | `Caddyfile` | 配信設定。`$PORT` で待ち受け、`/_astro/*` を長期キャッシュ |
 | `../Dockerfile.site` | ビルドと配信イメージ。リポジトリルートがコンテキスト |
 | `../.dockerignore` | 許可リスト方式。**`site/` 直下に新しいファイル・ディレクトリを足してDockerで使うなら、ここにも足す** |
