@@ -440,8 +440,8 @@ h1, h2 {
 .foot { background: var(--ink); color: #C9C0AA; padding: 40px 0 48px; font-size: 0.86rem; }
 .foot__in { display: grid; grid-template-columns: 1fr auto; gap: 14px 24px; align-items: center; }
 .foot__brand { font-family: var(--logo); font-weight: 800; font-size: 1.36rem; color: var(--paper); letter-spacing: 0.01em; }
-.foot nav { display: flex; gap: 22px; }
-.foot nav a { text-decoration: none; }
+.foot nav { display: flex; flex-wrap: wrap; gap: 6px 22px; }
+.foot nav a { text-decoration: none; white-space: nowrap; }
 .foot nav a:hover { color: var(--paper); text-decoration: underline; }
 .foot__legal { grid-column: 1 / -1; font-size: 0.76rem; color: #9C947F; border-top: 1px solid #3A362D; padding-top: 16px; }
 
@@ -509,6 +509,7 @@ h1, h2 {
   .faq details p { padding-right: 0; }
 
   .foot__in { grid-template-columns: minmax(0, 1fr); }
+  .foot nav { column-gap: 14px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
