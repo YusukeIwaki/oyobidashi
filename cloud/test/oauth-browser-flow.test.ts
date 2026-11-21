@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { OFFICIAL_CLOUD_ORIGIN } from "../src/config.ts";
-import { authorizationParams, isHostedService, isPhoneToPair, pairedDevices, pairingUrl, qrPath } from "../src/oauth-browser-flow.ts";
+import { appPairingState, authorizationParams, isHostedService, isPhoneToPair, openedByApp, pairedDevices, pairingUrl, qrPath } from "../src/oauth-browser-flow.ts";
 
 test("only known authorization fields are forwarded", () => {
   const out = authorizationParams("?client_id=kmc_1&state=s&decision=approve&uid=mallory&redirect_uri=http%3A%2F%2F127.0.0.1%2Fcb&state=second");
@@ -9,6 +9,17 @@ test("only known authorization fields are forwarded", () => {
 });
 test("the pairing URL matches the terminal command's format", () => {
   expect(pairingUrl("https://api.example.test", "a_b-c")).toBe("oyobidashi://pair?url=https%3A%2F%2Fapi.example.test&code=a_b-c");
+});
+test("only the link back to the app that opened the page carries its one-time value", () => {
+  const state = "s".repeat(43);
+  expect(appPairingState(`?from=app&state=${state}`)).toBe(state);
+  expect(appPairingState("?from=app")).toBeNull();
+  expect(appPairingState("?from=app&state=short")).toBeNull();
+  expect(appPairingState(`?state=${"s".repeat(42)}%26`)).toBeNull();
+  expect(openedByApp(`?from=app&state=${state}`)).toBe(true);
+  expect(openedByApp(`?state=${state}`)).toBe(false);
+  expect(pairingUrl("https://api.example.test", "a_b-c", state)).toBe(`oyobidashi://pair?url=https%3A%2F%2Fapi.example.test&code=a_b-c&state=${state}`);
+  expect(pairingUrl("https://api.example.test", "a_b-c", null)).toBe("oyobidashi://pair?url=https%3A%2F%2Fapi.example.test&code=a_b-c");
 });
 test("a pairing URL fits a QR code with a quiet zone and finder patterns", () => {
   const { size, path } = qrPath(pairingUrl("https://api.oyobidashi.me", "A".repeat(43)));

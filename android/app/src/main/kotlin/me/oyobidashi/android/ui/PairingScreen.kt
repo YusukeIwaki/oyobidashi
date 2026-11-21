@@ -134,7 +134,7 @@ fun PairingScreen(vm: MainViewModel, onClose: (() -> Unit)? = null) {
                     onClick = {
                         vm.pairingError = null
                         try {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(OFFICIAL_CLOUD_PAIRING_PAGE)))
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(vm.beginCloudPairing())))
                         } catch (e: ActivityNotFoundException) {
                             vm.pairingError = "ブラウザを開けませんでした。ブラウザで api.oyobidashi.me/pair を開いてください。"
                         }
@@ -219,9 +219,6 @@ fun PairingScreen(vm: MainViewModel, onClose: (() -> Unit)? = null) {
         }
     }
 }
-
-/** 公式クラウドのペアリングページ。`from=app` で、ページは「アプリを開く」を先頭に出す。 */
-private const val OFFICIAL_CLOUD_PAIRING_PAGE = "https://api.oyobidashi.me/pair?from=app"
 
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable

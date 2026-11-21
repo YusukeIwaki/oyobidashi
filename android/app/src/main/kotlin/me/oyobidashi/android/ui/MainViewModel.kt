@@ -9,6 +9,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import me.oyobidashi.android.core.OyobidashiJson
 import me.oyobidashi.android.core.NotificationContent
+import me.oyobidashi.android.core.PairingAttempt
+import me.oyobidashi.android.core.PairingError
 import me.oyobidashi.android.core.PairingInfo
 import me.oyobidashi.android.core.PairingParseResult
 import me.oyobidashi.android.core.PairingUri
@@ -37,6 +39,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** ディープリンクで受け取ったペアリング情報。意図しないサーバーに繋がないよう、必ず確認ダイアログを出す。 */
     var pendingLink by mutableStateOf<PairingInfo?>(null)
 
+    /** ブラウザにいる間にアプリが終了しても戻れるよう、始めたペアリングの控えは保存しておく。 */
+    private val attempts = app.getSharedPreferences("pairing_attempt", android.content.Context.MODE_PRIVATE)
+
     // ---- ペアリング解除 ----
     var unpairBusy by mutableStateOf(false)
         private set
@@ -50,9 +55,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun purchasePlan(activity: Activity) = graph.billingManager.launchBillingFlow(activity)
 
+    /** 公式クラウドのペアリングを始め、ブラウザで開くページのURLを返す。 */
+    fun beginCloudPairing(): String {
+        val attempt = PairingAttempt.begin(OFFICIAL_CLOUD_URL, System.currentTimeMillis())
+        attempts.edit()
+            .putString("state", attempt.state)
+            .putString("url", attempt.url)
+            .putLong("expires", attempt.expiresAtMillis)
+            .apply()
+        return attempt.pageUrl
+    }
+
+    /** リンクは外部から誰でも開ける。このアプリが始めたペアリングへの戻りだけを受け付ける。 */
     fun onPairingLink(uri: String) {
-        when (val result = PairingUri.parse(uri)) {
-            is PairingParseResult.Success -> pendingLink = result.info
+        val state = attempts.getString("state", null)
+        val url = attempts.getString("url", null)
+        val result = if (state != null && url != null) {
+            PairingAttempt(state, url, attempts.getLong("expires", 0)).accept(uri, System.currentTimeMillis())
+        } else {
+            // 形式の誤りはその内容を伝える。正しい形式なら、始めていないことを伝える。
+            PairingUri.parse(uri).let {
+                if (it is PairingParseResult.Success) PairingParseResult.Failure(PairingError.NOT_STARTED_IN_APP) else it
+            }
+        }
+        when (result) {
+            is PairingParseResult.Success -> {
+                // 1回限り。合わなかったリンクでは消さず、進行中の正規のペアリングを妨げさせない。
+                attempts.edit().clear().apply()
+                pairingError = null
+                pendingLink = result.info
+            }
             is PairingParseResult.Failure -> pairingError = Texts.pairingError(result.error)
         }
     }
@@ -117,3 +149,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         navigation = navigation.openRequest(id)
     }
 }
+
+/** 公式クラウド。「Oyobidashiクラウドに接続」が開くペアリングページの接続先。 */
+private const val OFFICIAL_CLOUD_URL = "https://api.oyobidashi.me"

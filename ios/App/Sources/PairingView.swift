@@ -46,7 +46,7 @@ struct PairingView: View {
 
                 Section {
                     Button {
-                        openURL(RelayEndpoint.officialCloudPairingPage)
+                        openURL(router.beginCloudPairing())
                     } label: {
                         Label("Oyobidashiクラウドに接続", systemImage: "cloud")
                             .font(.body.weight(.semibold))
@@ -111,6 +111,17 @@ struct PairingView: View {
                 Text(model.isPaired
                     ? "\(info.endpoint.description) に接続します。現在のペアリングは解除されます。"
                     : "\(info.endpoint.description) に接続します。")
+            }
+            .alert(
+                "ペアリングできません",
+                isPresented: Binding(
+                    get: { onClose != nil && router.deepLinkError != nil },
+                    set: { if !$0 { router.deepLinkError = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(router.deepLinkError ?? "")
             }
             .sheet(item: $awaitingConsent) { pending in
                 VoiceAIConsentView(

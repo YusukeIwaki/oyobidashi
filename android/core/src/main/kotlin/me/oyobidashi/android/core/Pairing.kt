@@ -17,6 +17,9 @@ enum class PairingError {
 
     /** code に空白・制御文字が含まれる、または長すぎる */
     INVALID_CODE,
+
+    /** このアプリが始めたペアリングへの戻りリンクではない */
+    NOT_STARTED_IN_APP,
 }
 
 sealed interface PairingParseResult {
@@ -36,16 +39,22 @@ object PairingUri {
     private const val MAX_CODE_LENGTH = 256
 
     fun parse(raw: String): PairingParseResult {
+        val params = params(raw) ?: return PairingParseResult.Failure(PairingError.NOT_PAIRING_URI)
+        return validate(params["url"].orEmpty(), params["code"].orEmpty())
+    }
+
+    /** リンクに載っている `state` (アプリがペアリングページへ渡した1回限りの値)。無ければ null。 */
+    fun state(raw: String): String? = params(raw)?.get("state")?.takeIf { it.isNotEmpty() }
+
+    private fun params(raw: String): Map<String, String>? {
         val text = raw.trim()
-        if (!text.regionMatches(0, PREFIX, 0, PREFIX.length, ignoreCase = true)) {
-            return PairingParseResult.Failure(PairingError.NOT_PAIRING_URI)
-        }
+        if (!text.regionMatches(0, PREFIX, 0, PREFIX.length, ignoreCase = true)) return null
         var rest = text.substring(PREFIX.length).substringBefore('#')
         if (rest.startsWith("/")) rest = rest.substring(1)
         val query = when {
             rest.isEmpty() -> ""
             rest.startsWith("?") -> rest.substring(1)
-            else -> return PairingParseResult.Failure(PairingError.NOT_PAIRING_URI) // oyobidashi://pairing, oyobidashi://pair/x など
+            else -> return null // oyobidashi://pairing, oyobidashi://pair/x など
         }
         val params = LinkedHashMap<String, String>()
         for (part in query.split('&')) {
@@ -54,7 +63,7 @@ object PairingUri {
             val value = percentDecode(part.substringAfter('=', "")) ?: ""
             if (key !in params) params[key] = value
         }
-        return validate(params["url"].orEmpty(), params["code"].orEmpty())
+        return params
     }
 
     /** 手入力 (URL とコード) の検証。URL欄に `oyobidashi://pair?...` を貼られた場合はそれを解釈する。 */
@@ -110,6 +119,41 @@ object PairingUri {
             Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(out.toByteArray())).toString()
         } catch (e: java.nio.charset.CharacterCodingException) {
             null
+        }
+    }
+}
+
+/**
+ * アプリが自分で始めたペアリングの控え。
+ *
+ * `oyobidashi://pair` のリンクは外部から誰でも開ける。届いたリンクのコードが他人のアカウントのものでも
+ * 見分けがつかないため、リンクからのペアリングは、アプリがブラウザへ渡した1回限りの値 ([state]) を
+ * そのまま返したものだけを受け付ける。QR読み取りと手入力は、利用者がアプリ内で始めるのでこの対象外。
+ */
+data class PairingAttempt(val state: String, val url: String, val expiresAtMillis: Long) {
+    /** ブラウザで開くペアリングページ。ページは [state] を「アプリを開く」のリンクにそのまま載せる。 */
+    val pageUrl: String get() = "$url/pair?from=app&state=$state"
+
+    /** 届いたリンクが、この控えのペアリングへの戻りであれば、その内容を返す。 */
+    fun accept(uri: String, nowMillis: Long): PairingParseResult {
+        val parsed = PairingUri.parse(uri)
+        if (parsed !is PairingParseResult.Success) return parsed
+        val returned = PairingUri.state(uri)
+        if (nowMillis >= expiresAtMillis || returned == null || returned != state || parsed.info.url != url) {
+            return PairingParseResult.Failure(PairingError.NOT_STARTED_IN_APP)
+        }
+        return parsed
+    }
+
+    companion object {
+        /** ログインにかかる時間と、コードの有効期間 (10分) を足した余裕。 */
+        const val LIFETIME_MILLIS = 30 * 60 * 1000L
+
+        /** 新しい控えを作る。[state] は推測できない256ビットの乱数 (base64url、43文字)。 */
+        fun begin(url: String, nowMillis: Long, random: java.security.SecureRandom = java.security.SecureRandom()): PairingAttempt {
+            val bytes = ByteArray(32).also(random::nextBytes)
+            val state = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+            return PairingAttempt(state, url, nowMillis + LIFETIME_MILLIS)
         }
     }
 }

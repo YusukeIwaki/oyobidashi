@@ -14,7 +14,7 @@ import {
 } from "firebase/auth";
 import type {AccountProvider} from "../../relay/src/auth-handoff.ts";
 import {browserAuthFailure, parsePublicAuthConfig} from "./auth-browser-flow.ts";
-import {authorizationParams, canPostponeInputConsent, isHostedService, isPhoneToPair, pairedDevices, pairingUrl, qrPath, stepAfterSignIn} from "./oauth-browser-flow.ts";
+import {appPairingState, authorizationParams, canPostponeInputConsent, isHostedService, isPhoneToPair, openedByApp, pairedDevices, pairingUrl, qrPath, stepAfterSignIn} from "./oauth-browser-flow.ts";
 import {INPUT_RESTRICTION_TERMS, UNRESTRICTED_INPUT, parseInputRestriction, type InputRestriction} from "./input-restriction.ts";
 
 // Consent page for a hosted MCP client (/oauth/authorize) and the standalone
@@ -30,6 +30,8 @@ const mode = main?.dataset.mode === "pair" ? "pair" : main?.dataset.mode === "co
 const clientName = main?.dataset.client || "名前のないアプリ";
 const request = authorizationParams(location.search);
 const thisPhone = isPhoneToPair(location.search, navigator.userAgent);
+const fromApp = openedByApp(location.search);
+const appState = appPairingState(location.search);
 const labels: Record<AccountProvider,string> = {google:"Google", apple:"Apple", github:"GitHub"};
 const UNREACHABLE = "通信できませんでした。接続を確認して、もう一度お試しください。";
 let user: User | undefined;
@@ -239,17 +241,28 @@ async function showPairing(alreadyPaired: number) {
     : alreadyPaired > 0 ? `登録済みのスマホが${alreadyPaired}台あります。追加するスマホを登録します。` : "質問や通知を受け取るスマホを登録します。";
   details.hidden = true;
   const qrHint = "お呼び出しアプリの「QRコードを読み取る」でも登録できます。コードは10分間、1回だけ使えます。";
-  if (thisPhone) {
+  const otherPhone = (self: HTMLButtonElement) => {
+    drawQr(link);
+    pairingHint.textContent = "登録するスマホのお呼び出しアプリで、このQRコードを読み取ってください。コードは10分間、1回だけ使えます。";
+    message("スマホの登録を待っています…");
+    self.remove();
+  };
+  if (fromApp) {
     // The phone in hand cannot scan its own screen: lead with the way back into the app.
+    // Only this link carries the app's one-time value; the QR code is for another phone.
+    const back = pairingUrl(location.origin, issued.code, appState);
     qr.replaceChildren();
     qr.hidden = true;
     pairingHint.textContent = "下のボタンでお呼び出しアプリに戻り、ペアリングを確認してください。ボタンは10分間、1回だけ使えます。";
-    actions.replaceChildren(button("アプリを開く", () => {location.href = link;}), button("別のスマホで読み取るQRコードを表示", self => {
-      drawQr(link);
-      pairingHint.textContent = "登録するスマホのお呼び出しアプリで、このQRコードを読み取ってください。コードは10分間、1回だけ使えます。";
-      message("スマホの登録を待っています…");
-      self.remove();
-    }, true));
+    actions.replaceChildren(button("アプリを開く", () => {location.href = back;}), button("別のスマホで読み取るQRコードを表示", otherPhone, true));
+  } else if (thisPhone) {
+    // A phone browser on its own: the app accepts a link only for a pairing it started itself.
+    qr.replaceChildren();
+    qr.hidden = true;
+    pairingHint.textContent = isHostedService(location.origin)
+      ? "このスマホを登録するには、お呼び出しアプリを開いて「Oyobidashiクラウドに接続」を押し、このアカウントでログインしてください。安全のため、アプリから始めたペアリングだけを受け付けます。"
+      : "このスマホを登録するには、このページをパソコンなど別の画面で開いてQRコードを表示し、お呼び出しアプリの「自分で用意したサーバーに接続」→「QRコードを読み取る」で読み取ってください。";
+    actions.replaceChildren(button("別のスマホで読み取るQRコードを表示", otherPhone, true));
   } else {
     drawQr(link);
     pairingHint.textContent = isHostedService(location.origin)
@@ -259,7 +272,7 @@ async function showPairing(alreadyPaired: number) {
     actions.replaceChildren();
   }
   if (mode === "authorize") actions.append(button("あとでペアリングする", () => showApproval(), true));
-  // On the phone itself the next step is the button above; "waiting" would read as a delay.
+  // On the phone itself the next step is described above; "waiting" would read as a delay.
   message(thisPhone ? "" : "スマホの登録を待っています…");
 
   const poll = async () => {
@@ -357,7 +370,7 @@ if (mode === "authorize") {
   describe(clientDetails);
 } else if (mode === "pair") {
   heading.textContent = "スマホをペアリング";
-  explanation.textContent = thisPhone
+  explanation.textContent = fromApp
     ? "エージェント（MCP）の接続に使ったアカウントでログインすると、このスマホを登録できます。"
     : "エージェント（MCP）の接続に使ったアカウントでログインすると、スマホを登録する手順を表示します。";
 } else {

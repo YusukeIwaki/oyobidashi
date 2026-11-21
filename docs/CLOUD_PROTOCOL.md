@@ -101,9 +101,15 @@ the registered client name is marked as unverified. An account
 without an external identity could not be recovered once the client lost its
 tokens. If the account has no paired phone, the page obtains a pairing code
 and waits for the device before returning to the client. On a computer it shows
-the code as a QR code; on the phone being paired (a phone user agent, or
-`?from=app`, which the app's "Oyobidashiクラウドに接続" button adds to `/pair`)
-it leads with a link that opens the app with the same `oyobidashi://pair` URL.
+the code as a QR code. The app's "Oyobidashiクラウドに接続" button opens
+`/pair?from=app&state=<one-time value>`; there the page leads with a link that
+opens the app with the same `oyobidashi://pair` URL plus that `state`. The app
+pairs from a link only when the link returns the `state` it issued for the same
+server within 30 minutes, once: anyone can open an `oyobidashi://pair` link on
+somebody else's phone, and a code alone does not say whose account it belongs
+to. In a phone browser that the app did not open, the page shows no such link
+and tells the human to start from the app. QR scanning and manual entry start
+inside the app and need no `state`.
 Signing in with an identity already linked through the stdio flow yields the same
 UID and therefore the same paired devices.
 

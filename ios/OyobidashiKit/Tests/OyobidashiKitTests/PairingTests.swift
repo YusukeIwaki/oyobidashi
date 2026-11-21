@@ -146,4 +146,51 @@ final class PairingTests: XCTestCase {
         try store.clear()
         XCTAssertNil(try store.load())
     }
+
+    // MARK: - アプリが始めたペアリングだけをリンクから受け付ける
+
+    private let cloud = try! RelayEndpoint("https://api.oyobidashi.me")
+
+    private func link(url: String = "https%3A%2F%2Fapi.oyobidashi.me", code: String = "c1", state: String?) -> String {
+        "oyobidashi://pair?url=\(url)&code=\(code)" + (state.map { "&state=\($0)" } ?? "")
+    }
+
+    func testAttemptIssuesAnUnguessableStateAndOpensThePairingPageWithIt() throws {
+        let first = PairingAttempt.begin(endpoint: cloud), second = PairingAttempt.begin(endpoint: cloud)
+        XCTAssertNotEqual(first.state, second.state)
+        XCTAssertNotNil(first.state.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression))
+        XCTAssertEqual(first.pageURL.absoluteString, "https://api.oyobidashi.me/pair?from=app&state=\(first.state)")
+    }
+
+    func testAttemptAcceptsOnlyTheLinkThatReturnsItsState() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let attempt = PairingAttempt.begin(endpoint: cloud, now: now)
+        let info = try attempt.accept(uri: link(state: attempt.state), now: now.addingTimeInterval(60))
+        XCTAssertEqual(info, PairingInfo(endpoint: cloud, code: "c1"))
+
+        func assertRejected(_ uri: String, at date: Date = now, file: StaticString = #filePath, line: UInt = #line) {
+            XCTAssertThrowsError(try attempt.accept(uri: uri, now: date), file: file, line: line) {
+                XCTAssertEqual($0 as? PairingParseError, .notStartedInApp, file: file, line: line)
+            }
+        }
+        // 他人が送ってきたリンク: state を知らない。
+        assertRejected(link(code: "attacker", state: nil))
+        assertRejected(link(code: "attacker", state: ""))
+        assertRejected(link(code: "attacker", state: String(repeating: "A", count: 43)))
+        // state が合っても、アプリが開いたのとは別のサーバーには繋がない。
+        assertRejected(link(url: "https%3A%2F%2Fevil.example", state: attempt.state))
+        // 期限切れ。
+        assertRejected(link(state: attempt.state), at: now.addingTimeInterval(PairingAttempt.lifetime))
+        // 形式の誤りは従来どおりの理由を返す。
+        XCTAssertThrowsError(try attempt.accept(uri: "https://example.com/pair", now: now)) {
+            XCTAssertEqual($0 as? PairingParseError, .wrongScheme)
+        }
+    }
+
+    func testAttemptSurvivesBeingStoredWhileTheBrowserIsOpen() throws {
+        let attempt = PairingAttempt.begin(endpoint: cloud)
+        let restored = try JSONDecoder().decode(PairingAttempt.self, from: JSONEncoder().encode(attempt))
+        XCTAssertEqual(restored, attempt)
+        XCTAssertNoThrow(try restored.accept(uri: link(state: attempt.state)))
+    }
 }

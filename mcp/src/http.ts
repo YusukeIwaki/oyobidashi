@@ -50,9 +50,9 @@ export async function handleMcpHttp(req: Request, options: HttpMcpOptions): Prom
     ...(options.pairUrl ? {
       noDeviceWarning:
         "No phone is paired with this oyobidashi account, so nobody was notified. " +
-        `Tell the user (in your normal reply) to open ${options.pairUrl} on the phone they want to pair, sign in with the same account and tap "アプリを開く" ` +
-        `(for the hosted service, the "Oyobidashiクラウドに接続" button of the お呼び出し app opens that page). ` +
-        "Opened on a computer, the same page shows a QR code the app can scan instead. " +
+        `Tell the user (in your normal reply) how to pair: for the hosted service, open the お呼び出し app on the phone, tap "Oyobidashiクラウドに接続", ` +
+        `sign in with the same account and tap "アプリを開く". The app only accepts that link when it opened the page itself, so do not send the user a pairing link. ` +
+        `Otherwise open ${options.pairUrl} on a computer and sign in with the same account: it shows a QR code the app can scan. ` +
         "A phone paired later will still see this request while it is pending.",
     } : {}),
   });

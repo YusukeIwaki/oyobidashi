@@ -33,21 +33,41 @@ export function authorizationParams(search: string): Record<string, string> {
   return out;
 }
 
-/** The same one-time URL the terminal pairing command prints; the app reads it from a QR code. */
-export function pairingUrl(origin: string, code: string): string {
+/**
+ * The same one-time URL the terminal pairing command prints; the app reads it from a QR code.
+ * `state` is added only to the link that returns to the app that opened this page.
+ */
+export function pairingUrl(origin: string, code: string, state?: string | null): string {
   const url = new URL("oyobidashi://pair");
   url.searchParams.set("url", origin);
   url.searchParams.set("code", code);
+  if (state) url.searchParams.set("state", state);
   return url.href;
 }
 
 /**
  * Whether this page is open on the phone that is being paired: the app opened
  * it (`?from=app`), or a phone browser did. Such a phone cannot scan its own
- * screen, so the page leads with the link back into the app, not the QR code.
+ * screen, so the page does not lead with the QR code.
  */
 export function isPhoneToPair(search: string, userAgent: string): boolean {
-  return new URLSearchParams(search).get("from") === "app" || /Android|iPhone|iPad|iPod/i.test(userAgent);
+  return openedByApp(search) || /Android|iPhone|iPad|iPod/i.test(userAgent);
+}
+
+/** The app's own "connect" button opened this page, so a link can return to it. */
+export function openedByApp(search: string): boolean {
+  return new URLSearchParams(search).get("from") === "app";
+}
+
+/**
+ * The one-time value the app put on this page's address. The app pairs from a
+ * link only when the link returns the value it issued, so a link that somebody
+ * else sent cannot pair the phone with their account. Apps older than this
+ * check send none and accept any link.
+ */
+export function appPairingState(search: string): string | null {
+  const state = new URLSearchParams(search).get("state");
+  return state !== null && /^[A-Za-z0-9_-]{43}$/.test(state) ? state : null;
 }
 
 /** The hosted service: the only origin the app's own "connect" button opens. */

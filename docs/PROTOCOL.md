@@ -209,7 +209,8 @@ oyobidashi://pair?url=<URLエンコードしたベースURL>&code=<pairing code>
 ```
 
 - ベースURLは `--public-url` 指定、無ければ `http://<MacのLAN内プライベートIPv4>:<port>` (既定ルートのインターフェースのアドレス。プライベートIPv4が見つからなければエラーにして `--public-url` を促す)。ngrok 等のトンネルは使わない。
-- アプリは QR 読み取り / `oyobidashi://` ディープリンク / 手入力 (URL とコード) の3通りで受け付け、`POST /v1/pair` を呼び、`url` と `device_token` を安全な領域 (Keychain / EncryptedSharedPreferences 等) に保存する。
+- アプリは QR 読み取り / 手入力 (URL とコード) で受け付け、`POST /v1/pair` を呼び、`url` と `device_token` を安全な領域 (Keychain / EncryptedSharedPreferences 等) に保存する。
+- `oyobidashi://` ディープリンクは外部から誰でも開けるので、アプリ自身が始めたペアリングへの戻りだけを受け付ける。アプリは推測できない1回限りの値を発行してペアリングページ (`<ベースURL>/pair?from=app&state=<値>`) をブラウザで開き、同じ `state` と同じベースURLを持つリンクが30分以内に戻ったときだけ確認ダイアログを出す。それ以外のリンクは拒否する (他人が発行したコードのリンクを踏ませて、その人のアカウントにペアリングさせる攻撃を防ぐ)。
 - アプリが受け付ける `url` は `http` / `https` のみ。平文 HTTP でLAN内アドレスに接続できるよう、iOS は ATS のローカルネットワーク例外 (`NSAllowsLocalNetworking`) と `NSLocalNetworkUsageDescription`、Android は release ビルドでも cleartext 通信を許可する。
 - Mac のIPが変わったら再ペアリングする (v1 の割り切り。`--public-url http://<ホスト名>.local:8787` のように mDNS 名を指定してもよい)。
 - Push (APNs/FCM) は relay からの外向き通信なので外出先でも鳴るが、**回答の送信は同一LAN内にいるときだけ可能**。圏外のときアプリは「中継サーバーに接続できない」旨を表示し、入力中の回答は保持する。

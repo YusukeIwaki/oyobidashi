@@ -32,6 +32,8 @@ object Texts {
         PairingError.MISSING_CODE -> "ペアリングコードを入力してください"
         PairingError.INVALID_URL -> "URLは http:// または https:// で始まる形式で入力してください (例: http://192.168.1.10:8787)"
         PairingError.INVALID_CODE -> "ペアリングコードの形式が正しくありません"
+        PairingError.NOT_STARTED_IN_APP ->
+            "このリンクからはペアリングできません。アプリの「Oyobidashiクラウドに接続」を押して、もう一度やり直してください。"
     }
 
     fun pairFailure(e: RelayException): String = when (e) {

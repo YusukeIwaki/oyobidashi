@@ -135,4 +135,37 @@ class PairingUriTest {
         assertEquals(ok("https://a.example", "c9"), PairingUri.fromManualInput("oyobidashi://pair?url=https%3A%2F%2Fa.example&code=c9", ""))
         assertEquals(fail(PairingError.NOT_PAIRING_URI), PairingUri.fromManualInput("oyobidashi://other", "c1"))
     }
+
+    // ---- アプリが始めたペアリングだけをリンクから受け付ける ----
+
+    private val cloud = "https://api.oyobidashi.me"
+    private fun link(url: String = "https%3A%2F%2Fapi.oyobidashi.me", code: String = "c1", state: String? = null) =
+        "oyobidashi://pair?url=$url&code=$code" + (state?.let { "&state=$it" } ?: "")
+
+    @Test
+    fun `attempt issues an unguessable state and opens the pairing page with it`() {
+        val first = PairingAttempt.begin(cloud, 0)
+        val second = PairingAttempt.begin(cloud, 0)
+        assertEquals(false, first.state == second.state)
+        assertEquals(true, Regex("^[A-Za-z0-9_-]{43}$").matches(first.state))
+        assertEquals("https://api.oyobidashi.me/pair?from=app&state=${first.state}", first.pageUrl)
+    }
+
+    @Test
+    fun `attempt accepts only the link that returns its state`() {
+        val now = 1_800_000_000_000L
+        val attempt = PairingAttempt.begin(cloud, now)
+        val rejected = fail(PairingError.NOT_STARTED_IN_APP)
+        assertEquals(ok(cloud, "c1"), attempt.accept(link(state = attempt.state), now + 60_000))
+        // 他人が送ってきたリンク: state を知らない。
+        assertEquals(rejected, attempt.accept(link(code = "attacker"), now))
+        assertEquals(rejected, attempt.accept(link(code = "attacker", state = ""), now))
+        assertEquals(rejected, attempt.accept(link(code = "attacker", state = "A".repeat(43)), now))
+        // state が合っても、アプリが開いたのとは別のサーバーには繋がない。
+        assertEquals(rejected, attempt.accept(link(url = "https%3A%2F%2Fevil.example", state = attempt.state), now))
+        // 期限切れ。
+        assertEquals(rejected, attempt.accept(link(state = attempt.state), now + PairingAttempt.LIFETIME_MILLIS))
+        // 形式の誤りは従来どおりの理由を返す。
+        assertEquals(fail(PairingError.NOT_PAIRING_URI), attempt.accept("https://example.com/pair", now))
+    }
 }

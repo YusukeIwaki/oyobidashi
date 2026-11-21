@@ -49,8 +49,8 @@ public struct RelayEndpoint: Equatable, Hashable, Sendable, Codable, CustomStrin
 
     public var host: String { baseURL.host ?? "" }
 
-    /// 公式クラウドのペアリングページ。`from=app` で、ページは「アプリを開く」を先頭に出す。
-    public static let officialCloudPairingPage = URL(string: "https://api.oyobidashi.me/pair?from=app")!
+    /// 公式クラウド。アプリの「Oyobidashiクラウドに接続」が開くペアリングページの接続先。
+    public static let officialCloud = try! RelayEndpoint("https://api.oyobidashi.me")
 
     public var isOfficialCloud: Bool {
         baseURL.scheme == "https" && host.lowercased() == "api.oyobidashi.me"

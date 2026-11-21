@@ -62,22 +62,14 @@ button{font:inherit;padding:.65rem 1rem;margin:.4rem 0;cursor:pointer;border:1px
 }
 
 function pairingPage(code: string, root: string, phoneName: string) {
-  const link = `oyobidashi://pair?url=${encodeURIComponent(OFFICIAL_CLOUD_ORIGIN)}&amp;code=${encodeURIComponent(code)}`;
+  const link = `oyobidashi://pair?url=${encodeURIComponent(OFFICIAL_CLOUD_ORIGIN)}&code=${encodeURIComponent(code)}`;
   const qr = qrcode(0, "M");
-  qr.addData(link.replace("&amp;", "&"));
+  qr.addData(link);
   qr.make();
-  if (phoneName === "iPhone") {
-    return page(`<p>If this page is open in Safari on the iPhone under review, use this link:</p>
-  <p><a href="${link}">Open Oyobidashi and pair this iPhone</a></p>
-  <p>If this page is open on another device, open the pairing screen in Oyobidashi on the review iPhone. Tap <strong lang="ja">自分で用意したサーバーに接続</strong> (Connect to your own server), then <strong lang="ja">QRコードを読み取る</strong> (Scan QR code) and scan the code below.</p>
-  <img src="${qr.createDataURL(5)}" width="220" height="220" alt="Pairing QR code for the review iPhone">
-  <p>Follow the prompts in Oyobidashi to finish pairing. The code works for 10 minutes and can be used once.</p>
-  <p><a href="${root}">Return to the review page</a></p>`);
-  }
-  const instructions = 'On the Android device under review, open this page in Chrome and tap the app link. If this page is on a computer, open Oyobidashi on the Android device, select <strong lang="ja">自分で用意したサーバーに接続</strong> (Connect to your own server), then <strong lang="ja">QRコードを読み取る</strong> (Scan QR code).';
-  return page(`<p>${instructions}</p>
-<img src="${qr.createDataURL(5)}" width="220" height="220" alt="Pair the review ${phoneName}">
-<p><a href="${link}">Open Oyobidashi and pair this ${phoneName}</a></p>
+  return page(`<p>On the review ${phoneName}, open Oyobidashi and tap <strong lang="ja">自分で用意したサーバーに接続</strong> (Connect to your own server).</p>
+<p>If this page is open on another screen, tap <strong lang="ja">QRコードを読み取る</strong> (Scan QR code) and scan this code:</p>
+<img src="${qr.createDataURL(5)}" width="220" height="220" alt="Pairing QR code for the review ${phoneName}">
+<p>If this page is open on the review ${phoneName}, use the manual fields in the app instead. Server URL: <code>${OFFICIAL_CLOUD_ORIGIN}</code>. Pairing code: <code>${code}</code>.</p>
 <p>Confirm pairing in the app. The code works for 10 minutes and can be used once.</p>
 <p><a href="${root}">Return to the review page</a></p>`);
 }

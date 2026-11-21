@@ -73,15 +73,34 @@ final class Router {
         path = []
     }
 
+    /// 公式クラウドのペアリングを始め、ブラウザで開くページを返す。
+    /// ブラウザにいる間にアプリが終了しても戻れるよう、控えは保存しておく。
+    func beginCloudPairing() -> URL {
+        let attempt = PairingAttempt.begin(endpoint: .officialCloud)
+        if let data = try? JSONEncoder().encode(attempt) { UserDefaults.standard.set(data, forKey: Self.attemptKey) }
+        return attempt.pageURL
+    }
+
+    /// リンクは外部から誰でも開ける。このアプリが始めたペアリングへの戻りだけを受け付ける。
     func handleDeepLink(_ url: URL) {
         do {
-            pendingPairing = try PairingInfo.parse(url: url)
+            guard let data = UserDefaults.standard.data(forKey: Self.attemptKey),
+                  let attempt = try? JSONDecoder().decode(PairingAttempt.self, from: data) else {
+                // 形式の誤りはその内容を伝える。正しい形式なら、始めていないことを伝える。
+                _ = try PairingInfo.parse(url: url)
+                throw PairingParseError.notStartedInApp
+            }
+            pendingPairing = try attempt.accept(uri: url.absoluteString)
+            // 1回限り。合わなかったリンクでは消さず、進行中の正規のペアリングを妨げさせない。
+            UserDefaults.standard.removeObject(forKey: Self.attemptKey)
         } catch let error as PairingParseError {
             deepLinkError = error.userMessage
         } catch {
             deepLinkError = PairingParseError.malformed.userMessage
         }
     }
+
+    private static let attemptKey = "pairingAttempt"
 }
 
 /// ネットワーク経路が使えるようになったら (Wi‑Fi に戻った等) 通知する。

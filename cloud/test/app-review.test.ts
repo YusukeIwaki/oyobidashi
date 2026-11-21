@@ -33,7 +33,9 @@ test.each([false, true])("reviewers get their own pairing, call and reset contro
   expect((await (await visit(""))!.text()).includes(consentButton)).toBe(restricted);
   expect((await visit("call"))?.status).toBe(409);
   const pairedPage = await (await visit("pair"))!.text();
-  const code = /&amp;code=([A-Za-z0-9_-]+)/.exec(pairedPage)?.[1];
+  expect(pairedPage).not.toContain("href=\"oyobidashi://pair");
+  expect(pairedPage).toContain("QRコードを読み取る");
+  const code = /Pairing code: <code>([A-Za-z0-9_-]+)<\/code>/.exec(pairedPage)?.[1];
   expect(code).toBeTruthy();
   const paired = await h.service.pair({ code, device_name: "review iPhone", platform: "ios" });
   const device = await h.devicePrincipal(paired.device_token);
@@ -100,7 +102,11 @@ test("Google Play review is isolated and pairs one Android device", async () => 
   expect((await visit("plus"))?.status).toBe(303);
   h.advance(2 * 60 * 60_000 + 1);
   expect(await hasPlus()).toBe(false);
-  const issue = async () => /&amp;code=([A-Za-z0-9_-]+)/.exec(await (await visit("pair"))!.text())![1];
+  const issue = async () => {
+    const page = await (await visit("pair"))!.text();
+    expect(page).not.toContain("href=\"oyobidashi://pair");
+    return /Pairing code: <code>([A-Za-z0-9_-]+)<\/code>/.exec(page)![1];
+  };
   const code = await issue();
   const secondCode = await issue();
   await expect(h.service.pair({ code, device_name: "iPhone", platform: "ios" })).rejects.toMatchObject({ code: "pairing_code_invalid" });

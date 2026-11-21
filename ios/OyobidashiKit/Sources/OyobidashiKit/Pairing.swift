@@ -11,6 +11,8 @@ public enum PairingParseError: Error, Equatable, Sendable {
     case missingCode
     /// `url` が http(s) の URL でない
     case invalidRelayURL
+    /// このアプリが始めたペアリングへの戻りリンクではない
+    case notStartedInApp
 
     public var userMessage: String {
         switch self {
@@ -22,6 +24,8 @@ public enum PairingParseError: Error, Equatable, Sendable {
             return "ペアリングコードを入力してください"
         case .invalidRelayURL:
             return "サーバーのURLが正しくありません (http:// または https:// で始まるURL)"
+        case .notStartedInApp:
+            return "このリンクからはペアリングできません。アプリの「Oyobidashiクラウドに接続」を押して、もう一度やり直してください。"
         }
     }
 }
@@ -78,5 +82,55 @@ public struct PairingInfo: Equatable, Sendable {
         guard let endpoint = try? RelayEndpoint(candidate) else { throw PairingParseError.invalidRelayURL }
         guard !normalizedCode.isEmpty else { throw PairingParseError.missingCode }
         return PairingInfo(endpoint: endpoint, code: normalizedCode)
+    }
+}
+
+/// アプリが自分で始めたペアリングの控え。
+///
+/// `oyobidashi://pair` のリンクは外部から誰でも開ける。届いたリンクのコードが他人のアカウントのものでも
+/// 見分けがつかないため、リンクからのペアリングは、アプリがブラウザへ渡した1回限りの値 (`state`) を
+/// そのまま返したものだけを受け付ける。QR読み取りと手入力は、利用者がアプリ内で始めるのでこの対象外。
+public struct PairingAttempt: Codable, Equatable, Sendable {
+    /// ログインにかかる時間と、コードの有効期間 (10分) を足した余裕。
+    public static let lifetime: TimeInterval = 30 * 60
+
+    public let state: String
+    public let endpoint: RelayEndpoint
+    public let expires: Date
+
+    public init(state: String, endpoint: RelayEndpoint, expires: Date) {
+        self.state = state
+        self.endpoint = endpoint
+        self.expires = expires
+    }
+
+    /// 新しい控えを作る。`state` は推測できない256ビットの乱数 (base64url、43文字)。
+    public static func begin(endpoint: RelayEndpoint, now: Date = Date()) -> PairingAttempt {
+        var generator = SystemRandomNumberGenerator()
+        let bytes = (0..<32).map { _ in UInt8.random(in: .min ... .max, using: &generator) }
+        let state = Data(bytes).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        return PairingAttempt(state: state, endpoint: endpoint, expires: now.addingTimeInterval(lifetime))
+    }
+
+    /// ブラウザで開くペアリングページ。ページは `state` を「アプリを開く」のリンクにそのまま載せる。
+    public var pageURL: URL {
+        endpoint.url(segments: ["pair"], query: [
+            URLQueryItem(name: "from", value: "app"),
+            URLQueryItem(name: "state", value: state),
+        ])
+    }
+
+    /// 届いたリンクが、この控えのペアリングへの戻りであれば、その内容を返す。
+    public func accept(uri: String, now: Date = Date()) throws -> PairingInfo {
+        let info = try PairingInfo.parse(uri: uri)
+        let returned = URLComponents(string: uri.trimmingCharacters(in: .whitespacesAndNewlines))?
+            .queryItems?.first { $0.name == "state" }?.value
+        guard now < expires, let returned, !returned.isEmpty, returned == state, info.endpoint == endpoint else {
+            throw PairingParseError.notStartedInApp
+        }
+        return info
     }
 }
