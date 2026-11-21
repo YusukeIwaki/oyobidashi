@@ -32,7 +32,7 @@ export interface ToolResult {
 
 export const NO_DEVICE_WARNING =
   "No device is paired with the oyobidashi relay, so nobody's phone was notified. " +
-  "Tell the user (in your normal reply) to pair their phone with the relay (show the pairing QR code with the relay CLI and scan it with the oyobidashi app). " +
+  "Tell the user (in your normal reply) to pair their phone with the relay (show the pairing QR code with the relay CLI, then in the oyobidashi app tap 「自分で用意したサーバーに接続」 and scan it). " +
   "A device paired later will still see this request while it is pending.";
 
 /**

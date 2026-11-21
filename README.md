@@ -40,7 +40,7 @@ bun install --cwd integration
 ./scripts/dev.sh
 ```
 
-別ターミナルで`./scripts/pair.sh`を実行し、アプリでQRを読み取るかURLとコードを入力します。コードは10分・1回限りです。`scripts/`は中継とMCPで同じ`.oyobidashi/`を使います。`OYOBIDASHI_HOME`で変更できます。
+別ターミナルで`./scripts/pair.sh`を実行し、アプリの「自分で用意したサーバーに接続」でQRを読み取るかURLとコードを入力します。コードは10分・1回限りです。`scripts/`は中継とMCPで同じ`.oyobidashi/`を使います。`OYOBIDASHI_HOME`で変更できます。
 
 Claude Code / CodexなどのMCP設定:
 

@@ -41,6 +41,20 @@ export function pairingUrl(origin: string, code: string): string {
   return url.href;
 }
 
+/**
+ * Whether this page is open on the phone that is being paired: the app opened
+ * it (`?from=app`), or a phone browser did. Such a phone cannot scan its own
+ * screen, so the page leads with the link back into the app, not the QR code.
+ */
+export function isPhoneToPair(search: string, userAgent: string): boolean {
+  return new URLSearchParams(search).get("from") === "app" || /Android|iPhone|iPad|iPod/i.test(userAgent);
+}
+
+/** The hosted service: the only origin the app's own "connect" button opens. */
+export function isHostedService(origin: string): boolean {
+  return origin === "https://api.oyobidashi.me";
+}
+
 /** A QR code as one SVG path on a square grid, including the four-module quiet zone. */
 export function qrPath(text: string): { size: number; path: string } {
   const qr = qrcode(0, "M");

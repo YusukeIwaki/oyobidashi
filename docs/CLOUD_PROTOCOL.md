@@ -99,8 +99,11 @@ is refused with 409 `input_consent_required` until then. The page displays a
 separate, explicit approval button after sign-in;
 the registered client name is marked as unverified. An account
 without an external identity could not be recovered once the client lost its
-tokens. If the account has no paired phone, the page obtains a pairing code,
-shows it as a QR code and waits for the device before returning to the client.
+tokens. If the account has no paired phone, the page obtains a pairing code
+and waits for the device before returning to the client. On a computer it shows
+the code as a QR code; on the phone being paired (a phone user agent, or
+`?from=app`, which the app's "Oyobidashiクラウドに接続" button adds to `/pair`)
+it leads with a link that opens the app with the same `oyobidashi://pair` URL.
 Signing in with an identity already linked through the stdio flow yields the same
 UID and therefore the same paired devices.
 

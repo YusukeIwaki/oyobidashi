@@ -14,7 +14,7 @@ import {
 } from "firebase/auth";
 import type {AccountProvider} from "../../relay/src/auth-handoff.ts";
 import {browserAuthFailure, parsePublicAuthConfig} from "./auth-browser-flow.ts";
-import {authorizationParams, canPostponeInputConsent, pairedDevices, pairingUrl, qrPath, stepAfterSignIn} from "./oauth-browser-flow.ts";
+import {authorizationParams, canPostponeInputConsent, isHostedService, isPhoneToPair, pairedDevices, pairingUrl, qrPath, stepAfterSignIn} from "./oauth-browser-flow.ts";
 import {INPUT_RESTRICTION_TERMS, UNRESTRICTED_INPUT, parseInputRestriction, type InputRestriction} from "./input-restriction.ts";
 
 // Consent page for a hosted MCP client (/oauth/authorize) and the standalone
@@ -29,6 +29,7 @@ const pairingHint = element("pairing-hint"), actions = element("actions"), statu
 const mode = main?.dataset.mode === "pair" ? "pair" : main?.dataset.mode === "connections" ? "connections" : "authorize";
 const clientName = main?.dataset.client || "名前のないアプリ";
 const request = authorizationParams(location.search);
+const thisPhone = isPhoneToPair(location.search, navigator.userAgent);
 const labels: Record<AccountProvider,string> = {google:"Google", apple:"Apple", github:"GitHub"};
 const UNREACHABLE = "通信できませんでした。接続を確認して、もう一度お試しください。";
 let user: User | undefined;
@@ -112,6 +113,7 @@ function drawQr(text: string) {
   shape.setAttribute("fill", "#000");
   svg.append(shape);
   qr.replaceChildren(svg);
+  qr.hidden = false;
 }
 
 function describe(entries: readonly (readonly [string, string])[]) {
@@ -217,7 +219,7 @@ async function showPairing(alreadyPaired: number) {
   clearTimeout(pollTimer);
   providers.replaceChildren();
   actions.replaceChildren();
-  message("QRコードを準備しています…");
+  message("ペアリングを準備しています…");
   let issued: {code?: unknown; expires_at?: unknown};
   try {
     issued = await call("/v1/pairing-codes", {method:"POST", body:{}}) as typeof issued;
@@ -230,15 +232,31 @@ async function showPairing(alreadyPaired: number) {
   }
   const link = pairingUrl(location.origin, issued.code);
   const expires = Date.parse(issued.expires_at);
-  drawQr(link);
   pairing.hidden = false;
   heading.textContent = "スマホをペアリング";
   explanation.textContent = mode === "authorize"
     ? "質問や通知を受け取るスマホを登録します。"
-    : alreadyPaired > 0 ? `登録済みのスマホが${alreadyPaired}台あります。追加するスマホで読み取ってください。` : "質問や通知を受け取るスマホを登録します。";
+    : alreadyPaired > 0 ? `登録済みのスマホが${alreadyPaired}台あります。追加するスマホを登録します。` : "質問や通知を受け取るスマホを登録します。";
   details.hidden = true;
-  pairingHint.textContent = "スマホの「お呼び出し」アプリを開き、このQRコードを読み取ってください。QRコードは10分間、1回だけ使えます。";
-  actions.replaceChildren(button("このスマホでアプリを開く", () => {location.href = link;}, true));
+  const qrHint = "お呼び出しアプリの「QRコードを読み取る」でも登録できます。コードは10分間、1回だけ使えます。";
+  if (thisPhone) {
+    // The phone in hand cannot scan its own screen: lead with the way back into the app.
+    qr.replaceChildren();
+    qr.hidden = true;
+    pairingHint.textContent = "下のボタンでお呼び出しアプリに戻り、ペアリングを確認してください。ボタンは10分間、1回だけ使えます。";
+    actions.replaceChildren(button("アプリを開く", () => {location.href = link;}), button("別のスマホで読み取るQRコードを表示", self => {
+      drawQr(link);
+      pairingHint.textContent = "登録するスマホのお呼び出しアプリで、このQRコードを読み取ってください。コードは10分間、1回だけ使えます。";
+      self.remove();
+    }, true));
+  } else {
+    drawQr(link);
+    pairingHint.textContent = isHostedService(location.origin)
+      ? `スマホのお呼び出しアプリで「Oyobidashiクラウドに接続」を押し、このアカウントでログインしてください。${qrHint}`
+      : "スマホのお呼び出しアプリで「自分で用意したサーバーに接続」を押し、「QRコードを読み取る」でこのQRコードを読み取ってください。コードは10分間、1回だけ使えます。";
+    // A computer cannot open the phone's app: the link back is offered on the phone only.
+    actions.replaceChildren();
+  }
   if (mode === "authorize") actions.append(button("あとでペアリングする", () => showApproval(), true));
   message("スマホの登録を待っています…");
 
@@ -247,8 +265,8 @@ async function showPairing(alreadyPaired: number) {
     if (Date.now() >= expires) {
       pairing.hidden = true;
       qr.replaceChildren();
-      message("QRコードの有効期限が切れました。");
-      actions.replaceChildren(button("QRコードを更新", () => void showPairing(alreadyPaired)));
+      message("ペアリングコードの有効期限が切れました。");
+      actions.replaceChildren(button("コードを更新", () => void showPairing(alreadyPaired)));
       if (mode === "authorize") actions.append(button("あとでペアリングする", () => showApproval(), true));
       return;
     }
@@ -337,7 +355,9 @@ if (mode === "authorize") {
   describe(clientDetails);
 } else if (mode === "pair") {
   heading.textContent = "スマホをペアリング";
-  explanation.textContent = "MCPの接続に使ったアカウントでログインすると、お呼び出しアプリで読み取るQRコードを表示します。";
+  explanation.textContent = thisPhone
+    ? "エージェント（MCP）の接続に使ったアカウントでログインすると、このスマホを登録できます。"
+    : "エージェント（MCP）の接続に使ったアカウントでログインすると、スマホを登録する手順を表示します。";
 } else {
   heading.textContent = "接続済みアプリ";
   explanation.textContent = "接続に使ったアカウントでログインすると、許可したアプリを確認・取り消しできます。";

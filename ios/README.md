@@ -79,13 +79,18 @@ xcodebuild -project Oyobidashi.xcodeproj -scheme Oyobidashi \
   TestFlight / App Store 配布のビルドは production の APNs を使うので Release ビルドのままでよい。
 - 質問の通知は「即時通知 (Time Sensitive)」として届く。通知を長押しして **「返信」からそのまま回答** できる。
 
-## ペアリング (既定はLAN内)
+## ペアリング
+
+ペアリング画面には接続先が2つ並びます。
+
+- **Oyobidashiクラウドに接続**: ブラウザで `https://api.oyobidashi.me/pair?from=app` を開く。エージェント (MCP) の接続に使ったアカウントでログインし、「アプリを開く」を押すと、アプリに戻って接続先の確認ダイアログが出る。QRコードは使わない。
+- **自分で用意したサーバーに接続**: LAN内の relay や自分で配備したクラウド。QRコードと手入力はこの中にある。以下はこちらの手順。
 
 既定の中継サーバーはLAN内で動きます。**iPhone と Mac を同じ Wi‑Fi (同じ LAN) に接続** して使います。
 
 1. Mac で relay を起動し、ペアリング用の QR コードを表示する (relay の README を参照)。
    QR の中身は `oyobidashi://pair?url=http%3A%2F%2F192.168.1.10%3A8787&code=…` の形式。
-2. アプリで次のいずれかを行う。
+2. アプリの「自分で用意したサーバーに接続」で次のいずれかを行う。
    - 「QRコードを読み取る」でカメラから読み取る
    - iPhone 上で `oyobidashi://pair?...` のリンクを開く (接続先を確認するダイアログが出る)
    - URL (`http://192.168.1.10:8787` など) とコードを手入力する

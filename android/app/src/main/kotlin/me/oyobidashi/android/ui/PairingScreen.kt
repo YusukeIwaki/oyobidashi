@@ -1,7 +1,10 @@
 package me.oyobidashi.android.ui
 
 import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -32,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -66,6 +70,7 @@ import java.util.concurrent.Executors
 fun PairingScreen(vm: MainViewModel, onClose: (() -> Unit)? = null) {
     val context = LocalContext.current
     var scanning by rememberSaveable { mutableStateOf(false) }
+    var selfHosted by rememberSaveable { mutableStateOf(false) }
     var url by rememberSaveable { mutableStateOf("") }
     var code by rememberSaveable { mutableStateOf("") }
     var cameraDenied by remember { mutableStateOf(false) }
@@ -89,12 +94,15 @@ fun PairingScreen(vm: MainViewModel, onClose: (() -> Unit)? = null) {
         return
     }
 
+    BackHandler(enabled = selfHosted) { selfHosted = false }
+    val back: (() -> Unit)? = if (selfHosted) ({ selfHosted = false }) else onClose
+
     Scaffold(topBar = {
         TopAppBar(
-            title = { Text("ペアリング") },
+            title = { Text(if (selfHosted) "自分で用意したサーバー" else "ペアリング") },
             navigationIcon = {
-                if (onClose != null) {
-                    IconButton(onClick = onClose) {
+                if (back != null) {
+                    IconButton(onClick = back) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "戻る")
                     }
                 }
@@ -111,21 +119,58 @@ fun PairingScreen(vm: MainViewModel, onClose: (() -> Unit)? = null) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("中継サーバーとペアリング", style = MaterialTheme.typography.headlineSmall)
-            Text(
-                "Mac で relay のペアリング用QRコードを表示し、この端末で読み取ってください。" +
-                    "Mac と同じWi‑Fi (同一LAN) に接続している必要があります。",
-                style = MaterialTheme.typography.bodyMedium,
-            )
             if (signedOutByServer) {
                 Text(
-                    "ペアリングが無効になりました (中継サーバー側で解除された可能性があります)。もう一度ペアリングしてください。",
+                    "ペアリングが無効になりました (サーバー側で解除された可能性があります)。もう一度ペアリングしてください。",
                     color = MaterialTheme.colorScheme.error,
                 )
             }
             if (vm.pairingBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
             vm.pairingError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
+            if (!selfHosted) {
+                Text("接続先を選ぶ", style = MaterialTheme.typography.headlineSmall)
+                Button(
+                    onClick = {
+                        vm.pairingError = null
+                        try {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(OFFICIAL_CLOUD_PAIRING_PAGE)))
+                        } catch (e: ActivityNotFoundException) {
+                            vm.pairingError = "ブラウザを開けませんでした。ブラウザで api.oyobidashi.me/pair を開いてください。"
+                        }
+                    },
+                    enabled = !vm.pairingBusy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Oyobidashiクラウドに接続") }
+                Text(
+                    "ブラウザが開きます。エージェント (MCP) の接続に使ったアカウントでログインし、" +
+                        "「アプリを開く」を押すとペアリングできます。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                OutlinedButton(
+                    onClick = {
+                        vm.pairingError = null
+                        selfHosted = true
+                    },
+                    enabled = !vm.pairingBusy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("自分で用意したサーバーに接続") }
+                Text(
+                    "LAN内の中継サーバーや、自分で配備したクラウドに、QRコードか手入力で接続します。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                return@Column
+            }
+
+            Text(
+                "サーバーが表示するペアリング用QRコードを読み取ってください。" +
+                    "LAN内の中継サーバーに接続するときは、この端末を同じWi‑Fi (同一LAN) に接続します。",
+                style = MaterialTheme.typography.bodyMedium,
+            )
             Button(
                 onClick = {
                     vm.pairingError = null
@@ -151,7 +196,7 @@ fun PairingScreen(vm: MainViewModel, onClose: (() -> Unit)? = null) {
             OutlinedTextField(
                 value = url,
                 onValueChange = { url = it },
-                label = { Text("中継サーバーのURL") },
+                label = { Text("サーバーのURL") },
                 placeholder = { Text("http://192.168.1.10:8787") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
@@ -173,6 +218,9 @@ fun PairingScreen(vm: MainViewModel, onClose: (() -> Unit)? = null) {
         }
     }
 }
+
+/** 公式クラウドのペアリングページ。`from=app` で、ページは「アプリを開く」を先頭に出す。 */
+private const val OFFICIAL_CLOUD_PAIRING_PAGE = "https://api.oyobidashi.me/pair?from=app"
 
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable

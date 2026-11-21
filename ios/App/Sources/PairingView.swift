@@ -5,6 +5,9 @@ struct PairingView: View {
     var onClose: (() -> Void)? = nil
     var onPaired: (() -> Void)? = nil
     @Environment(AppModel.self) private var model
+    @Environment(Router.self) private var router
+    @Environment(\.openURL) private var openURL
+    @State private var showingSelfHosted = false
     @State private var urlText = ""
     @State private var codeText = ""
     @State private var inputError: String?
@@ -43,53 +46,40 @@ struct PairingView: View {
 
                 Section {
                     Button {
-                        showingScanner = true
+                        openURL(RelayEndpoint.officialCloudPairingPage)
                     } label: {
-                        Label("QRコードを読み取る", systemImage: "qrcode.viewfinder")
+                        Label("Oyobidashiクラウドに接続", systemImage: "cloud")
+                            .font(.body.weight(.semibold))
                     }
                 } footer: {
-                    Text("Macで中継サーバーのペアリング用QRコードを表示し、読み取ってください。iPhoneとMacは同じWi‑Fiに接続している必要があります。")
+                    Text("ブラウザが開きます。エージェント（MCP）の接続に使ったアカウントでログインし、「アプリを開く」を押すとペアリングできます。")
                 }
 
-                Section("手入力") {
-                    TextField("http://192.168.1.10:8787", text: $urlText)
-                        .keyboardType(.URL)
-                        .textContentType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    TextField("ペアリングコード", text: $codeText)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .font(.body.monospaced())
-                    Button("ペアリング") { pairManually() }
-                        .disabled(model.pairingState == .pairing)
+                Section {
+                    Button {
+                        showingSelfHosted = true
+                    } label: {
+                        HStack {
+                            Label("自分で用意したサーバーに接続", systemImage: "server.rack")
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                } footer: {
+                    Text("LAN内の中継サーバーや、自分で配備したクラウドに、QRコードか手入力で接続します。")
                 }
 
                 Section {
                     NavigationLink("プライバシーポリシー") { PrivacyPolicyView() }
                 }
 
-                if model.pairingState == .pairing {
-                    Section {
-                        HStack {
-                            ProgressView()
-                            Text("ペアリング中…")
-                        }
-                    }
-                }
-
-                if let message = errorMessage {
-                    Section {
-                        Label(message, systemImage: "exclamationmark.circle")
-                            .foregroundStyle(.red)
-                    } footer: {
-                        if isUnreachable {
-                            Text("「ローカルネットワーク」へのアクセスを許可しているか、設定アプリでも確認してください。")
-                        }
-                    }
-                }
+                pairingStatus
             }
             .navigationTitle("ペアリング")
+            .navigationDestination(isPresented: $showingSelfHosted) { selfHosted }
             .toolbar {
                 if let onClose {
                     ToolbarItem(placement: .cancellationAction) {
@@ -106,6 +96,22 @@ struct PairingView: View {
                     pair(info)
                 }
             }
+            // 設定から開いたシートの上では、RootViewの確認が出せない。ブラウザから戻ったリンクをここで確認する。
+            .alert(
+                "ペアリングしますか?",
+                isPresented: Binding(
+                    get: { onClose != nil && router.pendingPairing != nil },
+                    set: { if !$0 { router.pendingPairing = nil } }
+                ),
+                presenting: router.pendingPairing
+            ) { info in
+                Button("ペアリング") { pair(info) }
+                Button("キャンセル", role: .cancel) {}
+            } message: { info in
+                Text(model.isPaired
+                    ? "\(info.endpoint.description) に接続します。現在のペアリングは解除されます。"
+                    : "\(info.endpoint.description) に接続します。")
+            }
             .sheet(item: $awaitingConsent) { pending in
                 VoiceAIConsentView(
                     endpoint: pending.info.endpoint,
@@ -119,6 +125,63 @@ struct PairingView: View {
                     onDecline: { awaitingConsent = nil }
                 )
                 .environment(model)
+            }
+        }
+    }
+
+    /// LAN内の中継サーバーや自分で配備したクラウド。QRコードと手入力はここだけで使う。
+    private var selfHosted: some View {
+        Form {
+            Section {
+                Button {
+                    showingScanner = true
+                } label: {
+                    Label("QRコードを読み取る", systemImage: "qrcode.viewfinder")
+                }
+            } footer: {
+                Text("サーバーが表示するペアリング用QRコードを読み取ってください。LAN内の中継サーバーに接続するときは、iPhoneを同じWi‑Fiに接続します。")
+            }
+
+            Section("手入力") {
+                TextField("http://192.168.1.10:8787", text: $urlText)
+                    .keyboardType(.URL)
+                    .textContentType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                TextField("ペアリングコード", text: $codeText)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .font(.body.monospaced())
+                Button("ペアリング") { pairManually() }
+                    .disabled(model.pairingState == .pairing)
+            }
+
+            pairingStatus
+        }
+        .navigationTitle("自分で用意したサーバー")
+        .navigationBarTitleDisplayMode(.inline)
+        .scrollContentBackground(.hidden)
+        .background(PagerTheme.cream.ignoresSafeArea())
+    }
+
+    @ViewBuilder private var pairingStatus: some View {
+        if model.pairingState == .pairing {
+            Section {
+                HStack {
+                    ProgressView()
+                    Text("ペアリング中…")
+                }
+            }
+        }
+
+        if let message = errorMessage {
+            Section {
+                Label(message, systemImage: "exclamationmark.circle")
+                    .foregroundStyle(.red)
+            } footer: {
+                if isUnreachable {
+                    Text("「ローカルネットワーク」へのアクセスを許可しているか、設定アプリでも確認してください。")
+                }
             }
         }
     }
