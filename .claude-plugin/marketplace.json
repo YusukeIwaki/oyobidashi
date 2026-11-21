@@ -1,0 +1,14 @@
+{
+  "name": "oyobidashi",
+  "description": "The Oyobidashi plugin for phone notifications and replies.",
+  "owner": {
+    "name": "Yusuke Iwaki"
+  },
+  "plugins": [
+    {
+      "name": "oyobidashi",
+      "source": "./plugins/oyobidashi",
+      "description": "Send a question or notification to your paired phone and receive your reply."
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "oyobidashi",
+  "displayName": "Oyobidashi",
+  "version": "1.0.0",
+  "description": "Send a question or notification to your paired phone and receive your reply.",
+  "author": {
+    "name": "Yusuke Iwaki"
+  },
+  "homepage": "https://ai.oyobidashi.me/",
+  "repository": "https://github.com/YusukeIwaki/oyobidashi",
+  "license": "MIT",
+  "icon": "./assets/icon.png",
+  "documentationUrl": "https://github.com/YusukeIwaki/oyobidashi/tree/main/plugins/oyobidashi",
+  "supportUrl": "https://github.com/YusukeIwaki/oyobidashi/issues",
+  "privacyPolicyUrl": "https://ai.oyobidashi.me/privacy/"
+}

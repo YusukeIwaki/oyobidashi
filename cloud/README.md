@@ -40,6 +40,7 @@ bun run --cwd cloud worker
 | `FIREBASE_AUTH_PROVIDERS` | APIが表示する復旧プロバイダー。カンマ区切りの`google,apple,github`、既定`google`。Firebase側で有効化済みのものだけ指定 |
 | `FIREBASE_AUTH_SERVICE_ACCOUNT_JSON` | API専用のアカウントリンク署名器。自分のFirebaseプロジェクトのサービスアカウントJSONを保護された秘密変数へ保存 |
 | `PUBLIC_URL` | APIとworker共通の正規HTTPS origin。公式環境は`https://api.oyobidashi.me`、セルフホストでは自身のURLを設定。Pushを使うworkerには必須 |
+| `OPENAI_APPS_CHALLENGE` | OpenAIのプラグイン審査で発行されたドメイン検証値。設定すると公式APIの `/.well-known/openai-apps-challenge` が値をそのまま返す |
 | `PORT` | 待受ポート。既定8787、Railwayは自動設定 |
 | `DB_POOL_SIZE` | 1プロセスのDB接続上限。既定10 |
 | `TURN_CONCURRENCY` | 1ワーカーの同時LLM処理上限。既定8 |
@@ -122,6 +123,8 @@ APIだけに公開ドメインを割り当て、HTTPSで利用します。ワー
 `/healthz`はプロセスの生存と機能を返し、`/readyz`はDB接続まで確認します。Redis停止はreadinessを落としません。SIGTERM時は新規処理を止め、端末を再接続させ、進行中ジョブを返却します。SIGKILLなら15秒のリース切れで別ワーカーが引き継ぎます。
 
 ## URLだけで接続するMCP
+
+公式クラウドを Claude Code・Codex で使う場合は、[配布プラグイン](../plugins/oyobidashi/README.md)からも接続できます。
 
 MCPクライアントに`https://<APIのホスト>/v1/mcp`を登録します。公開環境では次のとおりです。
 

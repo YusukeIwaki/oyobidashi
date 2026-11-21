@@ -109,6 +109,9 @@ export async function main(
             script: () =>
               Bun.file(new URL("../public/oauth.js", import.meta.url)).text(),
             ...(config.publicUrl ? { publicUrl: config.publicUrl } : {}),
+            ...(official && process.env.OPENAI_APPS_CHALLENGE
+              ? { openAiAppsChallenge: process.env.OPENAI_APPS_CHALLENGE }
+              : {}),
           },
           official ? new Billing(service, loadBillingConfig(process.env)) : undefined,
           service.voiceProofRequired

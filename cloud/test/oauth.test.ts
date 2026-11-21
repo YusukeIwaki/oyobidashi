@@ -98,6 +98,25 @@ function remote() {
 }
 
 describe("OAuth discovery and client registration", () => {
+  test("the OpenAI domain challenge serves only the configured value on the official host", async () => {
+    const h = harness();
+    const path = "/.well-known/openai-apps-challenge";
+    const official = `http://api.oyobidashi.me${path}`;
+    const app = new CloudApp(h.service, h.app.verifier, 10_000, accountAuth, undefined, {
+      store: new MemoryOAuthStore(),
+      openAiAppsChallenge: "synthetic-challenge",
+    });
+    const challenge = (await app.fetch(new Request(official)))!;
+    expect(challenge.status).toBe(200);
+    expect(challenge.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(challenge.headers.get("cache-control")).toBe("no-store");
+    expect(await challenge.text()).toBe("synthetic-challenge");
+    expect((await app.fetch(new Request(official, { method: "HEAD" })))!.status).toBe(200);
+    expect((await app.fetch(new Request(official, { method: "POST" })))!.status).toBe(404);
+    expect((await app.fetch(new Request(`${ORIGIN}${path}`)))!.status).toBe(404);
+    expect((await h.app.fetch(new Request(official)))!.status).toBe(404);
+  });
+
   test("an unauthenticated MCP request is told where to authorize", async () => {
     const r = remote();
     const response = await r.rpc(undefined, { jsonrpc: "2.0", id: 1, method: "tools/list" });
@@ -372,6 +391,12 @@ describe("hosted MCP endpoint", () => {
     expect(init.message.result.capabilities.resources.subscribe).toBeUndefined();
     const tools = await r.rpc(tokens.access_token, { jsonrpc: "2.0", id: 2, method: "tools/list" });
     expect(tools.message.result.tools.map((t: { name: string }) => t.name).sort()).toEqual(["ask_human", "cancel_request", "get_human_status", "notify_human", "update_request", "wait_for_answer"]);
+    for (const tool of tools.message.result.tools) {
+      const readOnly = ["get_human_status", "wait_for_answer"].includes(tool.name);
+      expect(tool.annotations).toMatchObject({
+        readOnlyHint: readOnly, destructiveHint: !readOnly, openWorldHint: false,
+      });
+    }
 
     const unpaired = await r.tool(tokens.access_token, "notify_human", { message: "ビルドが終わりました" });
     expect(unpaired.structuredContent.status).toBe("notified");

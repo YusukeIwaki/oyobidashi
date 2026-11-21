@@ -4,6 +4,12 @@ AIエージェントがMCPで人間に質問し、スマートフォンの選択
 
 アプリID: iOS **`me.oyobidashi.ios`** / Android **`me.oyobidashi.android`**。
 
+## Claude Code・Codex で使う
+
+公開クラウドに接続するプラグインを、Claude Code と Codex に GitHub からインストールできます。スマホに Oyobidashi を入れ、プラグインと同じアカウントで接続してください。[プラグインの導入手順](plugins/oyobidashi/README.md) · [iOS・Android アプリ](https://ai.oyobidashi.me/)
+
+## 自分でサーバーを動かす
+
 複数人向けの[クラウド構成](cloud/README.md)も利用できます。RailwayのAPI／共有ワーカー、PostgreSQL、Redis、Firebase Authenticationで構成し、無言の間は会話ワーカーを使いません。以下はLAN版の説明です。クラウド版の音声判断には明示的に設定したLLM APIを使います。
 
 ## clone後のセットアップをAIに任せる

@@ -31,6 +31,7 @@ export interface RemoteMcpOptions {
   store: OAuthStore;
   script?: () => Promise<string>;
   publicUrl?: string;
+  openAiAppsChallenge?: string;
 }
 
 export const MAX_WS_BUFFER_BYTES = 256 * 1024;
@@ -76,7 +77,7 @@ export class CloudApp {
     readonly maxSockets = 10_000,
     readonly accountAuth?: AccountAuth,
     readonly authScript?: () => Promise<string>,
-    remote?: RemoteMcpOptions,
+    private readonly remote?: RemoteMcpOptions,
     readonly billing?: Billing,
     readonly voice?: VoiceSecurity,
     readonly reviewPortal?: ReviewPortal,
@@ -120,6 +121,14 @@ export class CloudApp {
         return json(200, this.accountAuth.publicConfig);
       }
       if (!internal) {
+        if (path === "/.well-known/openai-apps-challenge") {
+          const challenge = this.remote?.openAiAppsChallenge;
+          if (!challenge || requestOrigin(req) !== OFFICIAL_CLOUD_ORIGIN || (method !== "GET" && method !== "HEAD"))
+            throw missing();
+          return new Response(method === "GET" ? challenge : null, {
+            headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+          });
+        }
         if (path.startsWith("/review/android/")) {
           if (!this.androidReviewPortal) throw missing();
           return await this.androidReviewPortal.fetch(req);

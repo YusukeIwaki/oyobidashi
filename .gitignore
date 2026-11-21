@@ -81,6 +81,6 @@ docs/evidence/
 
 # クローン先ごとの署名チーム・MCPの絶対パス
 ios/project.local.yml
-.mcp.json
+/.mcp.json
 .codex/config.toml
 DerivedData/

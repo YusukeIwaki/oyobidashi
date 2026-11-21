@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "oyobidashi": {
+      "type": "http",
+      "url": "https://api.oyobidashi.me/v1/mcp"
+    }
+  }
+}

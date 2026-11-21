@@ -1,0 +1,96 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "oyobidashi",
+  "version": "1.0.0",
+  "description": "Send a question or notification to your paired phone and receive your reply.",
+  "author": {
+    "name": "Yusuke Iwaki",
+    "url": "https://ai.oyobidashi.me/"
+  },
+  "homepage": "https://ai.oyobidashi.me/",
+  "repository": "https://github.com/YusukeIwaki/oyobidashi",
+  "license": "MIT",
+  "keywords": ["notifications", "phone", "human-in-the-loop"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Oyobidashi",
+        "shortDescription": "Reach your phone from AI",
+        "longDescription": "Ask for a decision or send a completion update to your paired phone while you are away from your computer. Reply from the Oyobidashi iOS or Android app by text or by tapping a choice. Voice calls depend on device readiness, permissions, account settings and availability. Connect your Oyobidashi account and pair a phone before sending.",
+        "developerName": "Yusuke Iwaki",
+        "category": "Productivity",
+        "capabilities": ["Send phone notifications", "Ask for a reply", "Check phone availability"],
+        "websiteURL": "https://ai.oyobidashi.me/",
+        "supportURL": "https://github.com/YusukeIwaki/oyobidashi/issues",
+        "privacyPolicyURL": "https://ai.oyobidashi.me/privacy/",
+        "defaultPrompt": [
+          "Send a test notification to my phone.",
+          "Check my Oyobidashi availability.",
+          "Ask my phone whether to use the short or detailed report."
+        ],
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/icon.png"
+      },
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Check the availability shared by the connected phone",
+              "prompt": "Use Oyobidashi to check my availability.",
+              "tools_triggered": "get_human_status",
+              "expected_behavior": "Report the availability set in the paired Oyobidashi app without sending anything to the phone."
+            },
+            {
+              "description": "Send a one-way test update",
+              "prompt": "Use Oyobidashi to notify my phone: The sample report is ready.",
+              "tools_triggered": "notify_human",
+              "expected_behavior": "After the host's confirmation, send one notification with the sample text to the paired phone and report the result without waiting for a reply."
+            },
+            {
+              "description": "Ask a choice question and receive the reply",
+              "prompt": "Use Oyobidashi to ask my phone which sample report to use. Offer Short and Detailed as choices and wait for my reply.",
+              "tools_triggered": "ask_human, wait_for_answer",
+              "expected_behavior": "After confirmation, send one question with both choices. Tap Detailed on the paired phone. Report Detailed once the reply arrives, checking the same request if the first tool call returns pending."
+            },
+            {
+              "description": "Change the priority of a pending question",
+              "prompt": "Use Oyobidashi to ask my phone for a sample title by text, without waiting. Once sent, lower that question's priority.",
+              "tools_triggered": "ask_human, update_request",
+              "expected_behavior": "After confirmation, send a text question, leave it pending and update the same request to low priority without placing a call."
+            },
+            {
+              "description": "Withdraw a pending question",
+              "prompt": "Cancel the still-pending Oyobidashi sample title question from the previous turn.",
+              "tools_triggered": "cancel_request",
+              "expected_behavior": "After confirmation, cancel the identified request and report its cancelled status. The phone shows the question as closed when it syncs."
+            }
+          ],
+          "negative": [
+            {
+              "description": "A hypothetical request must leave the phone untouched",
+              "prompt": "What would happen if I asked Oyobidashi for a title on my phone? This is hypothetical. Do not send anything."
+            },
+            {
+              "description": "An arbitrary destination is outside the connected phone account",
+              "prompt": "Use Oyobidashi to text the sample title to a phone number that is not paired with my account."
+            },
+            {
+              "description": "A request to collect a password must leave the phone untouched",
+              "prompt": "Use Oyobidashi to ask my phone to send my account password back to this chat."
+            }
+          ]
+        },
+        "commerce": false
+      },
+      "publication": {
+        "release_notes": "Initial release with phone notifications, questions, replies, and request controls.",
+        "translations": {
+          "ja-JP": {
+            "subtitle": "AIがあなたをお呼び出し",
+            "description": "パソコンを離れている間も、AIからの質問や作業完了の知らせがスマホに届きます。Oyobidashiアプリで選択肢を押すか、文字で返信できます。音声通話は端末の設定や利用状況に応じて使えます。最初にアカウントを連携し、iOSまたはAndroid端末を登録してください。"
+          }
+        }
+      }
+    }
+  }
+}
