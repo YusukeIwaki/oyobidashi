@@ -33,15 +33,17 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<key>NSFaceIDUsageDescription</key>
-	<string>クラウドアカウントの削除時に本人確認を行います。</string>
 	<key>NSCameraUsageDescription</key>
 	<string>ペアリング用のQRコードを読み取るためにカメラを使用します。</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>クラウドアカウントの削除時に本人確認を行います。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>同じWi‑Fi上のMacで動いている中継サーバーに接続して、質問の受信と回答の送信を行います。</string>
 	<key>NSMicrophoneUsageDescription</key>
