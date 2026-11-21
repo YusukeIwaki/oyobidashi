@@ -1,0 +1,37 @@
+---
+// 頼みかた: 長い依頼の最後にひとこと添えて席を立つ、というやり取りを会話の形で見せる。
+const says = [
+  { when: "出かける前に", text: "出かけてくる。確認が要るなら通知か電話で聞いて" },
+  { when: "台所に立つ前に", text: "夕飯を作るから、急ぎは電話して" },
+];
+---
+<section class="sec sec--tint" id="ask">
+  <div class="wrap ask">
+    <div class="ask__copy">
+      <div class="sec__head">
+        <span class="chip" aria-hidden="true">ﾀﾉﾐｶﾀ</span>
+        <h2>依頼の最後に、<br>ひとこと。</h2>
+        <p>いつもの依頼に「何かあったら電話して」と書き足して、席を立ちます。エージェントは進められるところを進め、あなたの判断が要るところでスマホを鳴らします。</p>
+      </div>
+      <dl class="says">
+        {says.map((s) => (
+          <div><dt>{s.when}</dt><dd>「{s.text}」</dd></div>
+        ))}
+      </dl>
+    </div>
+
+    <div class="chat">
+      <p class="chat__bar" aria-hidden="true"><i></i>エージェントとの会話</p>
+      <div class="chat__body">
+        <div class="chat__me">
+          <p>決済まわりを整理してください。旧APIの呼び出しは新しいクライアントに置き換えて、テストが通るところまで。エラーの文言は、いまの言い回しに合わせて。</p>
+          <p class="chat__last"><mark>これから出かけるので、あとは何かあったら電話して!</mark></p>
+        </div>
+        <div class="chat__ai">
+          <p>承知しました。進められるところから進めます。判断が要る項目は、まとめて電話でお聞きします。</p>
+          <p class="chat__work" aria-hidden="true"><i></i>作業中… 14ファイルを変更</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

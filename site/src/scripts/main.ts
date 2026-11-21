@@ -23,14 +23,15 @@ if (stage) {
   };
   // [表示する行数, 電話の状態, 次までのミリ秒]
   const seq: [number, string, number][] = [
-    [1, "idle", 2200],
-    [2, "idle", 2000],
-    [4, "idle", 1500],
-    [5, "ring", 3400],
-    [5, "ask", 3800],
-    [5, "answer", 2800],
-    [6, "thanks", 2600],
-    [7, "idle", 3600],
+    [1, "idle", 2600],
+    [2, "idle", 1800],
+    [3, "idle", 2000],
+    [5, "idle", 1500],
+    [6, "ring", 3400],
+    [6, "ask", 3800],
+    [6, "answer", 2800],
+    [7, "thanks", 2600],
+    [8, "idle", 3600],
   ];
 
   // 表示確認用: ?demo=ring のように状態を固定できる (idle / ring / ask / answer / thanks)
@@ -39,7 +40,7 @@ if (stage) {
   if (pinnedStep) {
     show(pinnedStep[0], pinnedStep[1]);
   } else if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    show(7, "answer");
+    show(8, "answer");
   } else {
     let i = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;

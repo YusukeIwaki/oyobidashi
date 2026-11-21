@@ -2,7 +2,7 @@
 // 机から台所へ移る1枚の絵。場面は .story の data-step (1〜4) で切り替える。
 // 吹き出しは文字が縮まないよう、SVGの外にHTMLで重ねている (位置は絵に対する%)。
 const steps = [
-  { title: "「困ったら電話して」", text: "そう言って、席を立つ。" },
+  { title: "「何かあったら電話して」", text: "そう言って、席を立つ。" },
   { title: "料理に集中", text: "画面は見ない。" },
   { title: "電話が鳴る", text: "炒めながら、声で答える。" },
   { title: "いただきます", text: "パソコンには一度も戻らなかった。" },
@@ -105,7 +105,7 @@ const initial = 3;
             </g>
           </svg>
 
-          <p class="bub bub--go">困ったら電話して</p>
+          <p class="bub bub--go">何かあったら電話して</p>
           <p class="bub bub--pc bub--work">作業中…</p>
           <p class="bub bub--pc bub--done">完了</p>
           <p class="bub bub--tel bub--ask">旧APIを消しますか、<br>残しますか?</p>

@@ -155,7 +155,8 @@ h1, h2 {
 .tl--sub { padding-left: 18px; color: #B9B09A; }
 .tl--ring { color: var(--orange); }
 .tl--ok { color: var(--lcd); }
-.stage[data-step="5"] .tl--ring { animation: blink 1s steps(2) infinite; }
+.tl mark { background: none; color: #FFC79E; font-weight: 700; border-bottom: 2px solid var(--orange); padding-bottom: 1px; }
+.stage[data-step="6"] .tl--ring { animation: blink 1s steps(2) infinite; }
 
 .phone {
   position: relative; z-index: 1;
@@ -221,6 +222,24 @@ h1, h2 {
 .sec--ink { background: var(--ink); color: var(--paper); }
 .sec--ink .sec__head p { color: #C9C0AA; }
 .sec--ink .chip { box-shadow: inset 0 0 0 1px rgba(124, 252, 154, .25); }
+
+/* ── 頼みかた ── */
+.ask { display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr); gap: clamp(32px, 5vw, 72px); align-items: center; }
+.ask .sec__head { margin-bottom: 0; }
+.says { margin-top: 32px; border-top: 2px solid var(--ink); }
+.says > div { padding: 14px 0 16px; border-bottom: 1px dashed var(--line); }
+.says dt { font-size: 0.82rem; color: var(--ink-2); line-height: 1.6; }
+.says dd { font-family: var(--mincho); font-weight: 800; font-size: 1.12rem; line-height: 1.6; text-indent: -0.5em; padding-left: 0.5em; }
+.chat { background: var(--surface); border: 2px solid var(--ink); border-radius: 10px; }
+.chat__bar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 0.76rem; color: var(--ink-2); line-height: 1.5; }
+.chat__bar i { width: 8px; height: 8px; border-radius: 50%; background: var(--orange); }
+.chat__body { padding: clamp(18px, 2.6vw, 30px); }
+.chat__me { margin-left: auto; max-width: 30em; width: 92%; background: var(--container); border-radius: 16px 16px 4px 16px; padding: 16px 18px 18px; color: var(--ink-2); font-size: 0.92rem; line-height: 1.8; }
+.chat__last { margin-top: 10px; font-size: 1.14rem; font-weight: 700; line-height: 1.7; }
+.chat__last mark { color: var(--ink); background: linear-gradient(transparent 58%, var(--orange-soft) 58%); }
+.chat__ai { margin-top: 24px; padding-left: 16px; border-left: 3px solid var(--orange); font-weight: 500; }
+.chat__work { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-family: var(--mono); font-size: 0.78rem; font-weight: 400; color: var(--ink-2); }
+.chat__work i { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-2); animation: blink 1.2s infinite; }
 
 /* ── 場面のアニメーション ── */
 .story { --skin: #EDBE9B; }
@@ -430,6 +449,7 @@ h1, h2 {
 @media (max-width: 1000px) {
   .nav { display: none; }
   .hero__grid { grid-template-columns: minmax(0, 1fr); }
+  .ask { grid-template-columns: minmax(0, 1fr); }
   .hero__copy { text-align: center; }
   .stores { justify-content: center; }
   .pc { display: none; }

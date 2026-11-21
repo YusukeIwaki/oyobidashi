@@ -28,7 +28,7 @@ until curl -sf -o /dev/null "http://localhost:$port/"; do
 done
 
 # 幅:タイル数 (ページが伸びたら数を増やす)
-for spec in 1440:6 820:6 390:6; do
+for spec in 1440:7 820:7 390:8; do
   width=${spec%%:*}
   count=${spec##*:}
   window=$width

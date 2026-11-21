@@ -7,25 +7,27 @@ import StoreButtons from "./StoreButtons.astro";
       <p class="lcd-strip" aria-hidden="true"><span class="lcd-strip__dot"></span>ﾖﾋﾞﾀﾞｼ 1ｹﾝ ― ﾊﾝﾀﾞﾝ ｦ ｵﾈｶﾞｲｼﾏｽ</p>
       <h1>AIが電話で<br>お呼び出し</h1>
       <p class="hero__lead">
-        迷ったAIが、あなたのスマホを鳴らします。<br>
-        出て、ひとこと答える。<strong>それで作業は進みます。</strong>
+        「あとは何かあったら電話して」<br>
+        そう頼んで、<strong>席を立てます。</strong><br>
+        判断が要るときは、AIがスマホを鳴らします。
       </p>
       <StoreButtons badges />
       <p class="hero__note">無料。Claude Code、Codexなどで使えます</p>
     </div>
 
     <!-- デモ: ターミナルと電話 -->
-    <div class="stage" id="stage" data-phone="idle" aria-label="デモ: エージェントが質問し、スマホに着信し、声で回答すると作業が再開する様子">
+    <div class="stage" id="stage" data-phone="idle" aria-label="デモ: 依頼の最後に「何かあったら電話して」と添えて席を立つと、エージェントが質問し、スマホに着信し、声で回答すると作業が再開する様子">
       <div class="term" aria-hidden="true">
         <div class="term__bar"><i></i><i></i><i></i><span>~/shop — claude</span></div>
         <div class="term__body">
-          <p class="tl" data-line="1"><b class="p">&gt;</b> 決済まわりの整理、お願い。<br>&nbsp;&nbsp;困ったら電話して。料理してくる</p>
-          <p class="tl" data-line="2"><b class="d">●</b> 作業中… 14ファイルを変更</p>
-          <p class="tl" data-line="3"><b class="o">●</b> 判断が必要です</p>
-          <p class="tl tl--sub" data-line="4">oyobidashi.ask_human(<br>&nbsp;&nbsp;priority: "high",<br>&nbsp;&nbsp;delivery_mode: "call")</p>
-          <p class="tl tl--sub tl--ring" data-line="5">☎ 呼び出し中…</p>
-          <p class="tl tl--sub tl--ok" data-line="6">✓ 「残して、警告だけ出して」</p>
-          <p class="tl" data-line="7"><b class="g">●</b> 作業を再開しました</p>
+          <p class="tl" data-line="1"><b class="p">&gt;</b> 決済まわりを整理して。<br>&nbsp;&nbsp;テストも通しておいて。<br>&nbsp;&nbsp;<mark>あとは何かあったら電話して!</mark></p>
+          <p class="tl" data-line="2"><b class="d">●</b> 承知しました。迷ったら電話します</p>
+          <p class="tl" data-line="3"><b class="d">●</b> 作業中… 14ファイルを変更</p>
+          <p class="tl" data-line="4"><b class="o">●</b> 判断が必要です</p>
+          <p class="tl tl--sub" data-line="5">oyobidashi.ask_human(<br>&nbsp;&nbsp;delivery_mode: "call")</p>
+          <p class="tl tl--sub tl--ring" data-line="6">☎ 呼び出し中…</p>
+          <p class="tl tl--sub tl--ok" data-line="7">✓ 「残して、警告だけ出して」</p>
+          <p class="tl" data-line="8"><b class="g">●</b> 作業を再開しました</p>
         </div>
       </div>
 
