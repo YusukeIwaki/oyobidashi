@@ -6,6 +6,7 @@ import {
   redis,
   service,
   volume,
+  type BuildConfig,
 } from "railway/iac";
 
 export default defineRailway(() => {
@@ -33,12 +34,27 @@ export default defineRailway(() => {
     region: "asia-southeast1-eqsg3a",
     sizeMB: 5000,
   });
+  const cloudSource = github("YusukeIwaki/oyobidashi", { branch: "main" });
+  // APIとworkerは同じイメージを使い、Dockerfileが取り込む変更で再ビルドする。
+  const cloudBuild: BuildConfig = {
+    buildEnvironment: "V3",
+    builder: "DOCKERFILE",
+    dockerfilePath: "Dockerfile.cloud",
+    watchPatterns: [
+      "cloud/src/**",
+      "cloud/package.json",
+      "cloud/bun.lock",
+      "mcp/src/**",
+      "mcp/package.json",
+      "mcp/bun.lock",
+      "relay/src/**",
+      "Dockerfile.cloud",
+      ".dockerignore",
+    ],
+  };
   const api = service("api", {
-    build: {
-      buildEnvironment: "V3",
-      builder: "DOCKERFILE",
-      dockerfilePath: "Dockerfile.cloud",
-    },
+    source: cloudSource,
+    build: cloudBuild,
     start: "bun run cloud/src/main.ts api",
     healthcheck: "/readyz",
     healthcheckTimeout: 120,
@@ -53,11 +69,8 @@ export default defineRailway(() => {
     },
   });
   const worker = service("worker", {
-    build: {
-      buildEnvironment: "V3",
-      builder: "DOCKERFILE",
-      dockerfilePath: "Dockerfile.cloud",
-    },
+    source: cloudSource,
+    build: cloudBuild,
     start: "bun run cloud/src/main.ts worker",
     healthcheck: "/readyz",
     healthcheckTimeout: 120,

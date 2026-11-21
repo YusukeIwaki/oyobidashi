@@ -106,7 +106,11 @@ railway config plan
 railway config apply
 ```
 
-Railway CLIは5.74.0で検証しています。今回の実環境で5.74.0のplanが差分なしとなることを確認しています。設定はSingaporeのAPI 1台・米国西部のworker 1台を初期値とし、DB/RedisはSingaporeです。会話APIとの実接続を確認した配置を使用しています。リージョンをまたぐDB/Redis接続には通信時間が加わるため、負荷を計測して配置を調整してください。コードのアップロードはリポジトリルートから各サービスへ`railway up --service api`、`railway up --service worker`を実行します。アカウントの既存プロジェクトを確認し、重複作成しないでください。
+Railway CLIは5.74.0で検証しています。本番へ設定を適用する前に、`railway config plan` で対象のサービスと変更項目を確認します。設定はSingaporeのAPI 1台・米国西部のworker 1台を初期値とし、DB/RedisはSingaporeです。会話APIとの実接続を確認した配置を使用しています。リージョンをまたぐDB/Redis接続には通信時間が加わるため、負荷を計測して配置を調整してください。アカウントの既存プロジェクトを確認し、重複作成しないでください。
+
+公式環境の `api` と `worker` は GitHub の `YusukeIwaki/oyobidashi` の `main` から自動デプロイします。`Dockerfile.cloud` が取り込むクラウド・MCP・relay のソース、依存関係やDockerのビルド設定を更新すると、両サービスが再ビルドされます。反映は、リンク済みの `cloud/` で `railway deployment list --service api` と `railway deployment list --service worker` を実行して確認します。
+
+セルフホストでフォークから自動デプロイする場合は、定義のGitHubリポジトリを変更してください。手元からデプロイする場合は、リンク済みプロジェクトを確認し、リポジトリルートから `railway up --service api` と `railway up --service worker` を実行します。
 
 APIだけに公開ドメインを割り当て、HTTPSで利用します。ワーカー・PostgreSQL・Redisはプライベートネットワークで接続します。どちらのアプリサービスにもVolumeは不要です。イメージは`Dockerfile.cloud`で作成し、`.dockerignore`の許可リストで資格情報・端末ログ・ネイティブソースを除外します。
 
