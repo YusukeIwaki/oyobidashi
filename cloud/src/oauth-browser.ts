@@ -247,6 +247,7 @@ async function showPairing(alreadyPaired: number) {
     actions.replaceChildren(button("アプリを開く", () => {location.href = link;}), button("別のスマホで読み取るQRコードを表示", self => {
       drawQr(link);
       pairingHint.textContent = "登録するスマホのお呼び出しアプリで、このQRコードを読み取ってください。コードは10分間、1回だけ使えます。";
+      message("スマホの登録を待っています…");
       self.remove();
     }, true));
   } else {
@@ -258,7 +259,8 @@ async function showPairing(alreadyPaired: number) {
     actions.replaceChildren();
   }
   if (mode === "authorize") actions.append(button("あとでペアリングする", () => showApproval(), true));
-  message("スマホの登録を待っています…");
+  // On the phone itself the next step is the button above; "waiting" would read as a delay.
+  message(thisPhone ? "" : "スマホの登録を待っています…");
 
   const poll = async () => {
     if (finished) return;
