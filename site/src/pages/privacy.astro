@@ -1,6 +1,9 @@
 ---
 import Base from "../layouts/Base.astro";
 import policy from "../content/privacy-policy.json";
+
+const deletionSubject = encodeURIComponent("Oyobidashi アカウント削除");
+const deletionMail = `mailto:q7w8e9w8q7w8e9@yahoo.co.jp?subject=${deletionSubject}`;
 ---
 <Base title="プライバシーポリシー | お呼び出し" description="お呼び出しのアプリとクラウドサービスにおけるデータの取り扱い、第三者AIへの送信、アカウント削除について。">
   <main id="main" class="wrap policy">
@@ -13,6 +16,12 @@ import policy from "../content/privacy-policy.json";
         {link && <p><a href={link}>問い合わせ窓口を開く</a></p>}
       </section>
     ))}
+    <section id="account-deletion">
+      <h2>アカウント削除の申請</h2>
+      <p>Oyobidashiのクラウドアカウントの削除は、下のメール窓口から申請できます。使用しているログイン方法をお知らせください。本人確認の手順を返信します。</p>
+      <p>本人確認後、クラウドアカウント、質問と回答の履歴、登録端末、MCPの連携情報を削除します。購入の照合や不正利用の防止に必要な情報の保持については、「保存と削除」をご覧ください。定期購入は購入したストアで解約できます。</p>
+      <p><a href={deletionMail}>メールで削除を申請する</a></p>
+    </section>
   </main>
 </Base>
 
