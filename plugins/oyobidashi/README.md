@@ -9,7 +9,7 @@ Oyobidashi sends an AI agent's question or completion update to your paired phon
 ### Claude Code
 
 ```sh
-claude plugin marketplace add YusukeIwaki/oyobidashi
+claude plugin marketplace add https://github.com/YusukeIwaki/oyobidashi.git
 claude plugin install oyobidashi@oyobidashi
 ```
 
