@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "oyobidashi",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Send a question or notification to your paired phone and receive your reply.",
   "author": {
     "name": "Yusuke Iwaki",
@@ -23,6 +23,7 @@
         "websiteURL": "https://ai.oyobidashi.me/",
         "supportURL": "https://github.com/YusukeIwaki/oyobidashi/issues",
         "privacyPolicyURL": "https://ai.oyobidashi.me/privacy/",
+        "termsOfServiceURL": "https://ai.oyobidashi.me/terms/",
         "defaultPrompt": [
           "Send a test notification to my phone.",
           "Check my Oyobidashi availability.",

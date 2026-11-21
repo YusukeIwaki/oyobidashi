@@ -10,6 +10,7 @@ GitHub 配布版の [インストール手順](../plugins/oyobidashi/README.md) 
 | Streamable HTTP MCP | https://api.oyobidashi.me/v1/mcp |
 | 認証 | OAuth、動的クライアント登録 (DCR)、PKCE S256 |
 | プライバシーポリシー | https://ai.oyobidashi.me/privacy/ |
+| 利用規約 | https://ai.oyobidashi.me/terms/ |
 | サポート | https://github.com/YusukeIwaki/oyobidashi/issues |
 
 ## Claude
@@ -31,9 +32,8 @@ bash scripts/package-openai-plugin.sh
 生成先は `.oyobidashi/plugin-submission/oyobidashi.zip` です。検証済みの開発者 ID を使い、[OpenAI Plugins](https://platform.openai.com/plugins) にアップロードします。
 
 1. ポータルが発行したドメイン検証値を、Railway の本番 API の `OPENAI_APPS_CHALLENGE` にそのまま設定します。ポータルが表示するホストを確認してから、API の `/.well-known/openai-apps-challenge` が値のみを返す状態で **Connect** を実行します。
-2. 承認された利用規約を公開し、URL を `plugin.json` の `extensions.com.openai.interface.termsOfServiceURL` に追加します。
-3. 審査担当者がログインと端末ペアリングを試せる専用アカウントを用意します。個人のアカウントは使わず、追加の認証コードや承認が不要な手順を、審査ポータルの非公開欄に記載します。
-4. OpenAI のクライアント上で同梱の正常系 5 件と異常系 3 件を実行します。サンプルデータで接続、端末への配信、回答の受け取りを録画し、審査担当者が開ける動画 URL を登録します。
-5. 自動検査と登録内容を確認して審査へ提出します。承認後、ポータルから **Publish** を実行します。
+2. 審査担当者がログインと端末ペアリングを試せる専用アカウントを用意します。個人のアカウントは使わず、追加の認証コードや承認が不要な手順を、審査ポータルの非公開欄に記載します。
+3. OpenAI のクライアント上で同梱の正常系 5 件と異常系 3 件を実行します。サンプルデータで接続、端末への配信、回答の受け取りを録画し、審査担当者が開ける動画 URL を登録します。
+4. 自動検査と登録内容を確認して審査へ提出します。承認後、ポータルから **Publish** を実行します。
 
 [プラグインのアップロードと審査](https://developers.openai.com/plugins/deploy/submission)
