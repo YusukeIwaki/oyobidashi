@@ -80,6 +80,7 @@ export class CloudApp {
     readonly billing?: Billing,
     readonly voice?: VoiceSecurity,
     readonly reviewPortal?: ReviewPortal,
+    readonly androidReviewPortal?: ReviewPortal,
   ) {
     this.accountDeletion = new AccountDeletion(service, verifier, accountAuth);
     // The consent page signs the human in with Firebase, so it needs the web configuration.
@@ -119,6 +120,10 @@ export class CloudApp {
         return json(200, this.accountAuth.publicConfig);
       }
       if (!internal) {
+        if (path.startsWith("/review/android/")) {
+          if (!this.androidReviewPortal) throw missing();
+          return await this.androidReviewPortal.fetch(req);
+        }
         if (path.startsWith("/review/") && this.reviewPortal)
           return await this.reviewPortal.fetch(req);
         if (path === "/v1/account/deletion" && method === "POST")

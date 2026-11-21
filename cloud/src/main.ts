@@ -12,7 +12,7 @@ import { loadPushConfig } from "./push-config.ts";
 import { createAccountAuth } from "./account-auth.ts";
 import { PostgresOAuthStore } from "./oauth-postgres.ts";
 import { Billing, loadAppleSandboxReviewUids, loadBillingConfig } from "./billing/service.ts";
-import { ReviewPortal, loadReviewPortal } from "./app-review.ts";
+import { ReviewPortal, loadAndroidReviewPortal, loadReviewPortal } from "./app-review.ts";
 import { VoiceSecurity, loadVoiceConfig } from "./voice.ts";
 import { createFcmProvider } from "../../relay/src/push/fcm.ts";
 import {
@@ -52,6 +52,11 @@ export async function main(
   const reviewPortal = role === "api" && appleSandboxReviewUids
     ? loadReviewPortal(process.env.APPLE_REVIEW_PORTAL, appleSandboxReviewUids)
     : undefined;
+  const androidReviewPortal = role === "api" && official
+    ? loadAndroidReviewPortal(process.env.ANDROID_REVIEW_PORTAL)
+    : undefined;
+  if (androidReviewPortal && appleSandboxReviewUids?.has(androidReviewPortal.uid))
+    throw new Error("Android review must use its own dedicated UID");
   const voiceProofRequired = requiresVoiceProof(process.env, config.publicUrl);
   if (
     role === "worker" &&
@@ -108,6 +113,7 @@ export async function main(
             ? new VoiceSecurity(service, loadVoiceConfig(process.env))
             : undefined,
           reviewPortal ? new ReviewPortal(service, reviewPortal) : undefined,
+          androidReviewPortal ? new ReviewPortal(service, androidReviewPortal, "android") : undefined,
         )
       : null;
   const conversations =

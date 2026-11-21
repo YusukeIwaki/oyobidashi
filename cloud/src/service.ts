@@ -775,13 +775,13 @@ export class CloudService {
     if (!t || t.requestId !== id || t.deviceId !== deviceId) throw missing();
     return this.envelope(r, t);
   }
-  async issuePairing(tx: Transaction) {
+  async issuePairing(tx: Transaction, platform?: "android") {
     await this.quota(tx, "pairing", 20);
     // Capacity is checked when consuming the code: a reinstall may replace a
     // registered phone even when all device slots are occupied.
     const code = secret(),
       expires = this.now() + 600_000;
-    await tx.put("pairing", hash(code), { expires, used: false }, expires);
+    await tx.put("pairing", hash(code), { expires, used: false, ...(platform ? { platform } : {}) }, expires);
     return { code, expires_at: iso(expires) };
   }
   async pair(b: Record<string, unknown>) {
@@ -816,9 +816,10 @@ export class CloudService {
       if (await tx.get("ban", "current"))
         throw new CloudError(403, "account_banned", "このアカウントは利用を停止しました。");
       const pairing = await tx.get("pairing", key);
-      if (!pairing || pairing.used || pairing.expires <= this.now())
+      if (!pairing || pairing.used || pairing.expires <= this.now() || (pairing.platform && pairing.platform !== platform))
         throw bad();
-      if ((await tx.list("device", {}, 33)).filter(d => !(clientId && d.platform === platform && d.push_client_id === clientId)).length >= 32)
+      const capacity = pairing.platform ? 1 : 32;
+      if ((await tx.list("device", {}, 33)).filter(d => !(clientId && d.platform === platform && d.push_client_id === clientId)).length >= capacity)
         throw new CloudError(
           429,
           "device_limit",

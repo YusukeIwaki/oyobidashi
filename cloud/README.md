@@ -57,6 +57,7 @@ bun run --cwd cloud worker
 | `APPLE_IAP_ENVIRONMENTS` | API。App Storeの取引環境。公式クラウドでは `Production` を設定し、Sandbox は下記の審査用 UID に限る |
 | `APPLE_IAP_SANDBOX_REVIEW_UIDS` | 公式クラウドのAPIとworkerに同じ値を設定。Sandbox購入を許可する審査用Firebase UIDのカンマ区切り。空ならSandboxによるPLUSは付与されない |
 | `APPLE_REVIEW_PORTAL` | 公式クラウドAPIに設定する任意のJSON。 `uid` はSandbox許可リストにある審査専用UID、`username` は審査用ログイン名、`passwordHash` はランダムに生成した十分長いパスワードのSHA-256（16進表記）。設定時に `/review/` を有効化 |
+| `ANDROID_REVIEW_PORTAL` | 公式クラウドAPIの任意のJSON。 `uid` は `review-android-` に32桁のランダムな16進文字列を続けた審査専用ID、`username` は審査用ログイン名、`passwordHash` は長いランダムパスワードのSHA-256。設定時に `/review/android/` を有効化 |
 | `APPLE_APP_ATTEST_ENVIRONMENTS` | API。受け付けるApp Attestの環境。公式クラウドでは `production` を設定。TestFlightとApp Storeでは本番の端末証明を使う |
 | `GOOGLE_PLAY_PRODUCT_IDS`, `GOOGLE_PLAY_PACKAGE_NAME`, `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | API。Google Playの購読を受け付ける商品ID、アプリのパッケージ名、Play Developer APIとPlay Integrity APIを呼べるサービスアカウントJSON |
 | `GOOGLE_PLAY_PUBSUB_AUDIENCE`, `GOOGLE_PLAY_PUBSUB_SERVICE_ACCOUNT` | API。リアルタイム デベロッパー通知のPub/Sub pushを認証するaudienceと、pushに使うサービスアカウントのメール。未設定ならGoogleのWebhookは拒否 |
@@ -243,6 +244,8 @@ bun test --cwd cloud
 公式クラウドは、審査用UIDの購入時に設定された `appAccountToken` が一致するSandbox取引だけを受け付けます。審査用端末は専用アカウントから発行したペアリングコードで接続します。審査が終わったらAPIとworkerの許可リストからそのUIDを外すと、審査用購読によるPLUSの利用も終了します。TestFlightのStoreKit購入はSandboxで、音声と課金のApp Attestには `production` を使います。
 
 App Review の審査メモに公式APIの `/review/` へのリンクを記載し、ログイン名とパスワードは App Review のサインイン情報欄に入力します。審査担当者はここで発行したQRコードかアプリを開くリンクで1台のiPhoneをペアリングし、テスト着信を送れます。普段のアカウントとは別の審査専用UIDで運用します。審査後は `APPLE_REVIEW_PORTAL` を外します。
+
+Google Playの審査担当者には「ログインの詳細」で公式APIの `/review/android/` とAndroid専用のログイン情報を案内します。担当者はここでAndroid端末1台をペアリングし、テスト質問と音声着信を試せます。通常のアカウントやiOS審査のアカウントから独立し、定期購入の権限は付与しません。審査環境が不要になったら `ANDROID_REVIEW_PORTAL` を外します。
 
 審査用UIDがFREEの入力制限の対象なら、ポータルで審査担当者本人が制限に同意してからテスト着信を送れます。アプリではペアリング時に、会話データの第三者AIへの送信について別に同意します。
 

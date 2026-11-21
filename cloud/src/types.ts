@@ -39,6 +39,7 @@ export interface Turn extends TurnView {
   deadline: number;
 }
 export interface Pairing {
+  platform?: "android";
   expires: number;
   used: boolean;
 }

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { CloudApp } from "../src/app.ts";
-import { ReviewPortal } from "../src/app-review.ts";
+import { loadAndroidReviewPortal, ReviewPortal } from "../src/app-review.ts";
 import { OFFICIAL_CLOUD_ORIGIN } from "../src/config.ts";
 import { unauthorized } from "../src/errors.ts";
 import { INPUT_RESTRICTION_VERSION } from "../src/input-restriction.ts";
@@ -61,4 +61,46 @@ test.each([false, true])("reviewers get their own pairing, call and reset contro
   expect(await h.db.transaction("reviewer", tx => tx.list("device"))).toEqual([]);
   expect((await h.db.transaction("reviewer", tx => tx.list("request")))[0]?.status).toBe("cancelled");
   expect((await h.devicePrincipal(ordinaryPhone.device_token)).uid).toBe("customer");
+});
+
+test("Google Play review is isolated and pairs one Android device", async () => {
+  const h = harness();
+  const password = "android-review-test-password";
+  const uid = "review-android-1234567890abcdef1234567890abcdef";
+  const config = loadAndroidReviewPortal(JSON.stringify({
+    uid, username: "play-review", passwordHash: hash(password),
+  }))!;
+  expect(() => loadAndroidReviewPortal(JSON.stringify({ ...config, uid: "existing-customer" }))).toThrow();
+  const demo = new ReviewPortal(h.service, config, "android");
+  const iosDemo = new ReviewPortal(h.service, {
+    uid: "ios-review", username: "app-review", passwordHash: hash("ios-review-test-password"),
+  });
+  const app = new CloudApp(h.service, { async verify() { throw unauthorized(); } },
+    undefined, undefined, undefined, undefined, undefined, undefined, iosDemo, demo);
+  const auth = "Basic " + Buffer.from("play-review:" + password).toString("base64");
+  const visit = (action: string, root = demo.root, authorization = auth) =>
+    app.fetch(new Request(OFFICIAL_CLOUD_ORIGIN + root + action, {
+      method: action ? "POST" : "GET",
+      headers: { authorization, origin: OFFICIAL_CLOUD_ORIGIN },
+    }));
+  expect((await visit("", iosDemo.root))?.status).toBe(401);
+  expect((await visit("", demo.root, ""))?.status).toBe(401);
+  expect((await visit(""))?.status).toBe(200);
+  const issue = async () => /&amp;code=([A-Za-z0-9_-]+)/.exec(await (await visit("pair"))!.text())![1];
+  const code = await issue();
+  const secondCode = await issue();
+  await expect(h.service.pair({ code, device_name: "iPhone", platform: "ios" })).rejects.toMatchObject({ code: "pairing_code_invalid" });
+  const paired = await h.service.pair({ code, device_name: "Pixel", platform: "android" });
+  expect((await h.devicePrincipal(paired.device_token)).uid).toBe(uid);
+  await expect(h.service.pair({ code: secondCode, device_name: "another Android", platform: "android" })).rejects.toMatchObject({ code: "device_limit" });
+  expect((await visit("call"))?.status).toBe(409);
+  await h.db.transaction(uid, tx => h.service.updateDevice(tx, paired.device.id, { push_token: "review-fcm-test-token" }));
+  expect(await (await visit("call"))?.text()).toContain("Test call requested.");
+  expect(await (await visit("text"))?.text()).toContain("Test message created.");
+  const requests = await h.db.transaction(uid, tx => tx.list("request"));
+  expect(requests.some(request => request.call?.state === "ringing")).toBe(true);
+  expect(requests.some(request => request.delivery_mode === "text")).toBe(true);
+  expect((await visit("reset"))?.status).toBe(303);
+  expect(await h.db.transaction(uid, tx => tx.list("device"))).toEqual([]);
+  expect(await h.db.transaction("ios-review", tx => tx.list("request"))).toEqual([]);
 });
