@@ -14,8 +14,8 @@ import { GITHUB_URL } from "../config";
         <div class="step__n" aria-hidden="true">1</div>
         <div class="step__body">
           <h3>エージェントにURLを登録する</h3>
-          <p>Claude Codeなら次の1行です。ほかのツールでは、MCPサーバーのURLに <code>https://api.oyobidashi.me/v1/mcp</code> を入れます。</p>
-          <div class="code"><button class="copy" type="button">コピー</button><pre><code>claude mcp add --transport http oyobidashi https://api.oyobidashi.me/v1/mcp</code></pre></div>
+          <p>Claude Codeなら次の1行です。一度登録すれば、どのプロジェクトでも使えます。ほかのツールでは、MCPサーバーのURLに <code>https://api.oyobidashi.me/v1/mcp</code> を入れます。</p>
+          <div class="code"><button class="copy" type="button">コピー</button><pre><code>claude mcp add -s user --transport http oyobidashi https://api.oyobidashi.me/v1/mcp</code></pre></div>
         </div>
       </li>
       <li class="step">
