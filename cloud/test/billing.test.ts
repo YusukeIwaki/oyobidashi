@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { SignJWT } from "jose";
 import { CloudApp } from "../src/app.ts";
-import { Billing, loadBillingConfig, type BillingConfig } from "../src/billing/service.ts";
+import { Billing, loadBillingConfig, loadPlusGrantUids, type BillingConfig } from "../src/billing/service.ts";
 import { GooglePlay } from "../src/billing/google.ts";
 import { verifyAppleJws } from "../src/billing/apple.ts";
 import { OFFICIAL_CLOUD_ORIGIN } from "../src/config.ts";
@@ -944,4 +944,21 @@ describe.skipIf(!url)("subscription billing on real PostgreSQL", () => {
       await admin.end();
     }
   });
+});
+
+test("an operator grant gives PLUS without a purchase, only to listed accounts", async () => {
+  expect(() => loadPlusGrantUids({ PLUS_GRANT_UIDS: "alice, not a uid" })).toThrow();
+  expect(loadPlusGrantUids({}).size).toBe(0);
+  const { h, billing } = setup();
+  const status = (uid: string) => h.db.transaction(uid, tx => billing.status(tx));
+  const hasPlus = (uid: string) => h.db.transaction(uid, tx => h.service.hasPlus(tx));
+  expect(await hasPlus("alice")).toBe(false);
+  h.service.plusGrantUids = loadPlusGrantUids({ PLUS_GRANT_UIDS: " alice ,carol" });
+  expect(await hasPlus("alice")).toBe(true);
+  expect(await hasPlus("bob")).toBe(false);
+  expect(await status("alice")).toMatchObject({ active: true, expires_at: null, active_stores: [] });
+  expect(await status("bob")).toMatchObject({ active: false, expires_at: null });
+  h.service.plusGrantUids = new Set();
+  expect(await hasPlus("alice")).toBe(false);
+  expect(await status("alice")).toMatchObject({ active: false });
 });

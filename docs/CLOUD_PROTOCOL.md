@@ -259,6 +259,10 @@ with current access for this owner. Clients use it to show the correct
 subscription management instructions. Devices use `active` only for display;
 the server decides.
 
+An operator can grant PLUS to listed UIDs without a purchase (`PLUS_GRANT_UIDS`).
+Such an owner gets `"active":true` with `"expires_at":null`; `active_stores`
+still lists only real store subscriptions, so it may be empty.
+
 `voice_training` declares the configured training terms of the model used for
 each plan. `true` means conversations may be used for training, `false`
 means no training use, and `null` or a missing value means unknown. Both plans

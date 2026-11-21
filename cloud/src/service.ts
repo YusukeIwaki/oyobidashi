@@ -69,6 +69,8 @@ export class CloudService {
   freeInputRestricted = false;
   /** On the hosted service, only these accounts can use Apple Sandbox access. */
   appleSandboxReviewUids: ReadonlySet<string> | null = null;
+  /** Accounts the operator gives PLUS without a store purchase. */
+  plusGrantUids: ReadonlySet<string> = new Set();
   async ensureAccount(tx: Transaction) {
     if (await tx.accountDeleted()) throw unauthorized();
     if (await tx.get("account_deletion", "current"))
@@ -155,7 +157,8 @@ export class CloudService {
     return expires > now ? expires : 0;
   }
   async hasPlus(tx: Transaction): Promise<boolean> {
-    return !!(await this.reviewPlusExpiration(tx)) || (await this.activeEntitlementSources(tx)).length > 0;
+    return this.plusGrantUids.has(tx.uid) ||
+      !!(await this.reviewPlusExpiration(tx)) || (await this.activeEntitlementSources(tx)).length > 0;
   }
   /**
    * The input restriction applies to FREE owners of a restricted deployment.

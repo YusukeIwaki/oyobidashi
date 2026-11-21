@@ -11,7 +11,7 @@ import { MAX_WS_SNAPSHOT_BYTES } from "./app.ts";
 import { loadPushConfig } from "./push-config.ts";
 import { createAccountAuth } from "./account-auth.ts";
 import { PostgresOAuthStore } from "./oauth-postgres.ts";
-import { Billing, loadAppleSandboxReviewUids, loadBillingConfig } from "./billing/service.ts";
+import { Billing, loadAppleSandboxReviewUids, loadBillingConfig, loadPlusGrantUids } from "./billing/service.ts";
 import { ReviewPortal, loadAndroidReviewPortal, loadReviewPortal } from "./app-review.ts";
 import { VoiceSecurity, loadVoiceConfig } from "./voice.ts";
 import { createFcmProvider } from "../../relay/src/push/fcm.ts";
@@ -49,6 +49,7 @@ export async function main(
   const official = config.publicUrl === OFFICIAL_CLOUD_ORIGIN;
   const models = voiceModels(process.env, official);
   const appleSandboxReviewUids = official ? loadAppleSandboxReviewUids(process.env) : null;
+  const plusGrantUids = loadPlusGrantUids(process.env);
   const reviewPortal = role === "api" && appleSandboxReviewUids
     ? loadReviewPortal(process.env.APPLE_REVIEW_PORTAL, appleSandboxReviewUids)
     : undefined;
@@ -81,6 +82,7 @@ export async function main(
     service = new CloudService(db, bus);
   service.voiceTrainingPolicy = models.training;
   service.appleSandboxReviewUids = appleSandboxReviewUids;
+  service.plusGrantUids = plusGrantUids;
   service.freeInputRestricted = models.freeInputRestricted;
   service.voiceProvider = models.provider;
   service.voiceProofRequired = voiceProofRequired;

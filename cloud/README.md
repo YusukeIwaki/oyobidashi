@@ -56,6 +56,7 @@ bun run --cwd cloud worker
 | `APPLE_IAP_PRODUCT_IDS`, `APPLE_IAP_BUNDLE_ID`, `APPLE_TEAM_ID` | API。App Storeの購読を受け付ける商品ID（カンマ区切り）、アプリのBundle ID、Team ID。商品IDが未設定ならAppleの課金は無効 |
 | `APPLE_IAP_ENVIRONMENTS` | API。App Storeの取引環境。公式クラウドでは `Production` を設定し、Sandbox は下記の審査用 UID に限る |
 | `APPLE_IAP_SANDBOX_REVIEW_UIDS` | 公式クラウドのAPIとworkerに同じ値を設定。Sandbox購入を許可する審査用Firebase UIDのカンマ区切り。空ならSandboxによるPLUSは付与されない |
+| `PLUS_GRANT_UIDS` | APIとworkerに同じ値を設定。ストアでの購入なしにPLUSを付与するFirebase UIDのカンマ区切り（最大256件）。一覧にある間だけ有効で、外すとFREEに戻る。ストアの購読には影響しない |
 | `APPLE_REVIEW_PORTAL` | 公式クラウドAPIに設定する任意のJSON。 `uid` はSandbox許可リストにある審査専用UID、`username` は審査用ログイン名、`passwordHash` はランダムに生成した十分長いパスワードのSHA-256（16進表記）。設定時に `/review/` を有効化 |
 | `ANDROID_REVIEW_PORTAL` | 公式クラウドAPIの任意のJSON。 `uid` は `review-android-` に32桁のランダムな16進文字列を続けた審査専用ID、`username` は審査用ログイン名、`passwordHash` は長いランダムパスワードのSHA-256。設定時に `/review/android/` を有効化 |
 | `APPLE_APP_ATTEST_ENVIRONMENTS` | API。受け付けるApp Attestの環境。公式クラウドでは `production` を設定。TestFlightとApp Storeでは本番の端末証明を使う |

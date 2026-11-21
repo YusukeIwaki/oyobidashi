@@ -41,6 +41,14 @@ export function loadAppleSandboxReviewUids(env: Record<string, string | undefine
   return uids;
 }
 
+/** Firebase UIDs that get PLUS without a store purchase, for as long as they are listed. */
+export function loadPlusGrantUids(env: Record<string, string | undefined>): ReadonlySet<string> {
+  const uids = new Set(list(env.PLUS_GRANT_UIDS));
+  if (uids.size > 256 || [...uids].some(uid => !/^[A-Za-z0-9_-]{1,128}$/.test(uid)))
+    throw new Error("PLUS_GRANT_UIDS is invalid");
+  return uids;
+}
+
 const list = (value: string | undefined) =>
   (value ?? "")
     .split(",")
@@ -136,12 +144,14 @@ export class Billing {
     const activeSources = await this.service.activeEntitlementSources(tx, now);
     const reviewPlusExpires = await this.service.reviewPlusExpiration(tx, now);
     const expires = Math.max(reviewPlusExpires, ...activeSources.map((source) => source.expires));
+    const granted = this.service.plusGrantUids.has(tx.uid);
     return {
       enabled: true,
       voice_training: this.service.voiceTrainingPolicy,
       purchase_account_id: purchaseAccountId(tx.uid),
-      active: expires > now,
-      expires_at: expires > now ? iso(expires) : null,
+      active: granted || expires > now,
+      // A grant has no end date, and outlasts any store period.
+      expires_at: !granted && expires > now ? iso(expires) : null,
       active_stores: [...new Set(activeSources.map((source) => source.store))].sort(),
       ...(this.config.apple
         ? { apple: { product_ids: this.config.apple.productIds } }
