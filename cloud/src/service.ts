@@ -149,13 +149,21 @@ export class CloudService {
       .filter(([key, source]) => source.expires > now && (allowAppleSandbox || !key.startsWith("apple:Sandbox:")))
       .map(([, source]) => source);
   }
+  async reviewPlusExpiration(tx: Transaction, now = this.now()): Promise<number> {
+    if (!tx.uid.startsWith("review-android-")) return 0;
+    const expires = (await tx.get("review_plus", "current"))?.expires ?? 0;
+    return expires > now ? expires : 0;
+  }
+  async hasPlus(tx: Transaction): Promise<boolean> {
+    return !!(await this.reviewPlusExpiration(tx)) || (await this.activeEntitlementSources(tx)).length > 0;
+  }
   /**
    * The input restriction applies to FREE owners of a restricted deployment.
    * `accepted` is the owner's own acknowledgement, given while linking an agent.
    */
   async inputRestriction(tx: Transaction): Promise<InputRestriction> {
     const restricted = this.freeInputRestricted &&
-      (await this.activeEntitlementSources(tx)).length === 0;
+      !(await this.hasPlus(tx));
     const consent = restricted ? await tx.get("input_consent", "current") : null;
     return {
       restricted,

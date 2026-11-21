@@ -232,7 +232,7 @@ export class JobWorker {
         // Decided per turn: a subscription that starts or lapses mid-call takes effect at once.
         conversation:
           this.options.freeConversation &&
-          (await this.service.activeEntitlementSources(tx)).length === 0
+          !(await this.service.hasPlus(tx))
             ? this.options.freeConversation
             : this.options.conversation,
         call: {

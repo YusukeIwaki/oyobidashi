@@ -89,6 +89,7 @@ export interface Entitlement {
 }
 export interface Records {
   entitlement: Entitlement;
+  review_plus: { expires: number };
   account_deletion: { started: number };
   /** The owner's acceptance of the FREE plan input restriction. */
   input_consent: { version: number; at: number };

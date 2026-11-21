@@ -33,6 +33,7 @@ export function loadReviewPortal(raw: string | undefined, reviewUids: ReadonlySe
 export function loadAndroidReviewPortal(raw: string | undefined) {
   return parseReviewPortal(raw, "ANDROID_REVIEW_PORTAL", uid => /^review-android-[0-9a-f]{32}$/.test(uid));
 }
+const reviewPlusDuration = 2 * 60 * 60_000;
 const consentAction = `input-consent/${INPUT_RESTRICTION_VERSION}`;
 const headers = {
   "content-type": "text/html; charset=utf-8",
@@ -93,8 +94,9 @@ export class ReviewPortal {
     const { root, phoneName, platform } = this;
     const path = new URL(request.url).pathname;
     const action = path.slice(root.length);
+    const planAction = platform === "android" && (action === "plus" || action === "free");
     if ((request.method !== "GET" || path !== root) &&
-        (request.method !== "POST" || !["pair", "call", "text", "reset", consentAction].includes(action))) throw missing();
+        (request.method !== "POST" || (!planAction && !["pair", "call", "text", "reset", consentAction].includes(action)))) throw missing();
     const basic = /^Basic ([A-Za-z0-9+/=]{1,256})$/i.exec(request.headers.get("authorization") ?? "");
     const value = basic ? Buffer.from(basic[1]!, "base64").toString("utf8") : "";
     const separator = value.indexOf(":");
@@ -113,6 +115,15 @@ export class ReviewPortal {
       throw new CloudError(403, "forbidden", "Open the review page to perform this action.");
     const principal = { uid: this.config.uid, role: "agent" } as const;
     const response = await this.service.run(principal, async tx => {
+      if (planAction) {
+        if (action === "plus") {
+          const expires = this.service.now() + reviewPlusDuration;
+          await tx.put("review_plus", "current", { expires }, expires);
+        } else {
+          await tx.remove("review_plus", "current");
+        }
+        return new Response(null, { status: 303, headers: { ...headers, location: root } });
+      }
       const consentRequired = await this.service.inputConsentMissing(tx);
       if (action === consentAction) {
         if (consentRequired) await this.service.acceptInputRestriction(tx, INPUT_RESTRICTION_VERSION);
@@ -125,6 +136,7 @@ export class ReviewPortal {
         return pairingPage(code, root, phoneName);
       }
       if (action === "reset") {
+        if (platform === "android") await tx.remove("review_plus", "current");
         for (const device of devices) {
           await tx.releasePush(device.id);
           for (const kind of ["voice_key", "voice_access", "attest", "presence", "device"] as const)
@@ -159,8 +171,14 @@ export class ReviewPortal {
       const consent = consentRequired
         ? `<h2>FREE plan input restriction</h2><p>The FREE voice model may use questions and conversation content for AI training. Questions, context and answer choices sent by an agent must contain no personal or confidential information. Do not speak personal or confidential information during calls.</p>${form(root, consentAction, "I agree not to send personal or confidential information")}`
         : "";
+      const plan = platform === "android"
+        ? await this.service.reviewPlusExpiration(tx)
+          ? `<h2>Demo plan: PLUS</h2><p>Reopen Settings in Oyobidashi to refresh the plan. Preview access ends after two hours.</p>${form(root, "free", "Return to FREE")}`
+          : `<h2>Demo plan: FREE</h2><p>Preview PLUS voice without a purchase. You can return to FREE to see the Google Play subscription screen.</p>${form(root, "plus", "Preview PLUS for two hours")}`
+        : "";
       return page(`<p>Pair the ${phoneName} running the build under review, then trigger a test call or text question.</p>
 <p role="status">${ready && !consentRequired ? `The review ${phoneName} is ready for calls.` : ready ? `The review ${phoneName} is paired. Accept the FREE plan input restriction below to enable test calls.` : phone ? `The ${phoneName} is paired. Open Oyobidashi to finish enabling calls, then refresh this page.` : devices.length ? "Disconnect the previous demo pairing to continue." : `No review ${phoneName} is paired.`}</p>
+${plan}
 ${consent}
 ${devices.length ? "" : form(root, "pair", `Pair the ${phoneName}`)}
 ${phone ? form(root, "text", "Send a test message") : ""}

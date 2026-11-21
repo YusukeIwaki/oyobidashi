@@ -134,12 +134,13 @@ export class Billing {
     if (!this.enabled) return { enabled: false };
     const now = this.now();
     const activeSources = await this.service.activeEntitlementSources(tx, now);
-    const expires = Math.max(0, ...activeSources.map((source) => source.expires));
+    const reviewPlusExpires = await this.service.reviewPlusExpiration(tx, now);
+    const expires = Math.max(reviewPlusExpires, ...activeSources.map((source) => source.expires));
     return {
       enabled: true,
       voice_training: this.service.voiceTrainingPolicy,
       purchase_account_id: purchaseAccountId(tx.uid),
-      active: activeSources.length !== 0,
+      active: expires > now,
       expires_at: expires > now ? iso(expires) : null,
       active_stores: [...new Set(activeSources.map((source) => source.store))].sort(),
       ...(this.config.apple
