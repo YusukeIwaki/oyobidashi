@@ -66,9 +66,15 @@ function pairingPage(code: string, root: string, phoneName: string) {
   const qr = qrcode(0, "M");
   qr.addData(link.replace("&amp;", "&"));
   qr.make();
-  const instructions = phoneName === "iPhone"
-    ? "On the iPhone under review, open Oyobidashi and scan this QR code. You can also tap the link in Safari on that iPhone."
-    : 'On the Android device under review, open this page in Chrome and tap the app link. If this page is on a computer, open Oyobidashi on the Android device, select <strong lang="ja">自分で用意したサーバーに接続</strong> (Connect to your own server), then <strong lang="ja">QRコードを読み取る</strong> (Scan QR code).';
+  if (phoneName === "iPhone") {
+    return page(`<p>If this page is open in Safari on the iPhone under review, use this link:</p>
+  <p><a href="${link}">Open Oyobidashi and pair this iPhone</a></p>
+  <p>If this page is open on another device, open the pairing screen in Oyobidashi on the review iPhone. Tap <strong lang="ja">自分で用意したサーバーに接続</strong> (Connect to your own server), then <strong lang="ja">QRコードを読み取る</strong> (Scan QR code) and scan the code below.</p>
+  <img src="${qr.createDataURL(5)}" width="220" height="220" alt="Pairing QR code for the review iPhone">
+  <p>Follow the prompts in Oyobidashi to finish pairing. The code works for 10 minutes and can be used once.</p>
+  <p><a href="${root}">Return to the review page</a></p>`);
+  }
+  const instructions = 'On the Android device under review, open this page in Chrome and tap the app link. If this page is on a computer, open Oyobidashi on the Android device, select <strong lang="ja">自分で用意したサーバーに接続</strong> (Connect to your own server), then <strong lang="ja">QRコードを読み取る</strong> (Scan QR code).';
   return page(`<p>${instructions}</p>
 <img src="${qr.createDataURL(5)}" width="220" height="220" alt="Pair the review ${phoneName}">
 <p><a href="${link}">Open Oyobidashi and pair this ${phoneName}</a></p>
