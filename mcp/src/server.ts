@@ -92,9 +92,12 @@ RESPECT THEIR ATTENTION: the human uses this tool because they are busy with som
 - After they answer, use the answer to get as far as you can before interrupting again.
 
 HOW TO ASK: the human reads this on a small phone screen without your conversation in front of them. Make the question self-contained, short and specific, in the language the human uses with you. Put supporting detail in "context". Whenever the answer is one of a few options, pass "choices" so they can answer with one tap (free-form text/voice answers remain possible).
-Several items in one request: number them. In "question", say how many items there are and state the first one (e.g. "I have 3 things to confirm. First: deploy to production now?"). Put the remaining items in "context" as a numbered list, each with the background needed to answer it. On a call only "question" is read aloud; the voice intermediary then goes through the items in "context" one at a time and returns one answer per item number. Do not pass "choices" with several items, because one tap can answer only one of them.
 
-PRIORITY AND DELIVERY: "priority" is low/normal/high/urgent (default normal). Prefer low with short choice-only questions (3 or fewer choices) when the human can answer at leisure. Use "delivery_mode" auto (default) unless you have a reason: auto uses one-tap action buttons for short choice-only questions and a text view otherwise. Use text when the question needs context or a long free-form answer. Use call ONLY when priority is high/urgent AND you are actually blocked; check get_human_status before escalating to a call. If a call was declined, hung up, missed, or failed, do NOT redial: continue over text. "urgency" (normal/high) is a legacy alias of priority and is only sent for compatibility; prefer "priority".
+On a call, assume the human is listening without a screen. Before calling, look up referenced Jira issues or other material if you have access. In "question", briefly say what the issue is and give the verified facts that affect the decision, then ask for the specific decision you need. Aim for one or two short spoken sentences. When offering options, name them and state the trade-off if it affects the decision. Keep issue keys, URLs, and extra detail in "context" for later reference. If you cannot verify essential facts or the human needs to read the source to decide, use text.
+
+Several items in one request: number them. In "question", say how many items there are and state the first one with the facts needed to answer it (e.g. "I have two decisions to confirm. First, the fix for failed payments passed staging and customers still can't check out. Should I deploy it now?"). Put the remaining items in "context" as a numbered list, each with the background needed to answer it. At the start of a call only "question" is read aloud. The voice intermediary then goes through the items in "context" one at a time and returns one answer per item number. Do not pass "choices" with several items, because one tap can answer only one of them.
+
+PRIORITY AND DELIVERY: "priority" is low/normal/high/urgent (default normal). Prefer low with short choice-only questions (3 or fewer choices) when the human can answer at leisure. Use "delivery_mode" auto (default) unless you have a reason: auto uses one-tap action buttons for short choice-only questions and a text view otherwise. Use text when the human needs to read supporting details or give a long free-form answer. Use call ONLY when priority is high/urgent AND you are actually blocked; check get_human_status before escalating to a call. If a call was declined, hung up, missed, or failed, do NOT redial: continue over text. "urgency" (normal/high) is a legacy alias of priority and is only sent for compatibility; prefer "priority".
 
 RESULT (structuredContent.status):
 - "answered": "answer" holds the reply. "input_method" is "text", "voice" or "choice"; for "choice", "choice_index" is the zero-based index into your choices. A "voice" answer is a speech-to-text transcription and may contain recognition errors (wrong homophones, garbled names/identifiers): interpret it in context and re-ask if it is ambiguous and the decision matters.
@@ -125,7 +128,9 @@ Returns device availability (available/busy/away with an optional note), recent 
 
 const UPDATE_REQUEST_DESCRIPTION = `Change the priority or delivery mode of a pending question sent with ask_human.
 
-Pass "priority" (low/normal/high/urgent) and/or "delivery_mode" (auto/actions/text/call). At least one is required. The relay recalculates the effective delivery and the result reports the current request including the effective "delivery_mode" and "call" state plus any human "feedback". Use it to escalate when truly blocked (check get_human_status first) or to quieten a question that can wait. A call needs high/urgent priority and explicit "call" mode; if the call was declined, hung up, missed, or failed, do NOT switch back to call. If the question is no longer useful, call cancel_request instead.`;
+Pass "priority" (low/normal/high/urgent) and/or "delivery_mode" (auto/actions/text/call). At least one is required. The relay recalculates the effective delivery and the result reports the current request including the effective "delivery_mode" and "call" state plus any human "feedback". Use it to escalate when truly blocked (check get_human_status first) or to quieten a question that can wait. A call needs high/urgent priority and explicit "call" mode; if the call was declined, hung up, missed, or failed, do NOT switch back to call. If the question is no longer useful, call cancel_request instead.
+
+Switch to call only if the existing "question" already gives the human enough background to answer by listening. If the human needs to open a Jira issue, follow a link, or read "context" to answer the opening question, keep the request in text.`;
 
 const outputSchema = {
   status: z
@@ -193,6 +198,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
         "oyobidashi lets you try to reach your human on their phone while they are away from the keyboard. Delivery is never guaranteed. " +
         "Your human is busy, which is why they use this: their focus comes first. Many small interruptions and one long interruption both cost them, so collect what you need, keep working on what is not blocked, and ask everything in one short request (numbered items) instead of calling again and again. " +
         "Use ask_human when you are blocked on a decision only they can make; if it returns status \"pending\", keep calling wait_for_answer with the request_id. " +
+        "For phone calls, give the essential facts in plain language before asking for a decision. The opening question must make sense by listening alone. " +
         "Use get_human_status before escalating priority or delivery. Use update_request to change priority or delivery of a pending question. " +
         "Use notify_human for one-way news (e.g. a long task finished); withdraw it with cancel_request when it is no longer useful. " +
         "Voice answers are speech-to-text and may contain recognition errors. Never redial after declined/hangup. " +
@@ -361,7 +367,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
         question: z
           .string()
           .max(4000)
-          .describe("The question, self-contained and concise (1-4000 characters). It is the body of the phone notification and the first thing read aloud on a call, so lead with the decision you need. With several items, give the count and the first item here and the rest in context."),
+          .describe("The question, self-contained and concise (1-4000 characters). It is the body of the phone notification and the first thing read aloud on a call. For calls, give the essential facts in plain language before asking for the decision. With several items, give the count and the first item here and the rest in context."),
         subject: z
           .string()
           .refine((value) => Array.from(value).length <= 40, "subject must be at most 40 characters")
@@ -371,7 +377,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
           .string()
           .max(8000)
           .optional()
-          .describe("Optional background shown under the question when the human opens it: what you are doing, why you ask, consequences of each option (max 8000 characters). With several items, the numbered list of the remaining items goes here. It is not read aloud on a call, but the voice intermediary uses it. Use delivery_mode text when a single question needs context to be read."),
+          .describe("Optional supporting details and references (max 8000 characters). With several items, the numbered list of the remaining items goes here. This field is not read aloud at the start of a call. The voice intermediary uses it during the conversation. Put the facts needed for the opening decision in question."),
         choices: z
           .array(z.string().min(1).max(200))
           .max(8)

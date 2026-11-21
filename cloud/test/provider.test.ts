@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { SPOKEN_QUESTION_GUIDANCE } from "../../relay/src/conversation.ts";
 import type { Call, RequestObject } from "../../relay/src/types.ts";
 import {
   apiConversation,
@@ -95,6 +96,7 @@ describe.each(["anthropic", "meta"] as const)(
           return json(payload());
         }),
       ).turn(request, call, new AbortController().signal);
+      expect(system).toContain(SPOKEN_QUESTION_GUIDANCE);
       expect(system).toMatch(/several numbered items/i);
       expect(system).toMatch(/"context" lists the rest/);
       expect(system).toMatch(/human is busy, so keep the call short/i);

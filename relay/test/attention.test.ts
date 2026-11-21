@@ -67,6 +67,9 @@ describe("call lifecycle",()=>{
   expect(turn.body.request).toMatchObject({status:"answered",answer:{text:"明日10時に実施してください",input_method:"voice"},call:{state:"ended",outcome:"resolved"}});
  });
  test("the voice intermediary is told to walk through numbered items briefly and answer per item",()=>{
+  expect(CONVERSATION_SYSTEM).toMatch(/summarize the issue and facts needed to decide in plain language before asking/);
+  expect(CONVERSATION_SYSTEM).toMatch(/Use only facts from the supplied conversation data/);
+  expect(CONVERSATION_SYSTEM).toMatch(/If an essential fact is missing, say so and offer to continue by text/);
   expect(CONVERSATION_SYSTEM).toMatch(/several numbered items/i);
   expect(CONVERSATION_SYSTEM).toMatch(/"context" lists the rest/);
   expect(CONVERSATION_SYSTEM).toMatch(/human is busy, so keep the call short/i);
@@ -76,7 +79,7 @@ describe("call lifecycle",()=>{
   expect(CONVERSATION_SYSTEM).toMatch(/numbered list with one line per item number/i);
  });
  test("one call carries several items: only the question is read first, the call stays open until all are settled, answers come back per item",async()=>{
-  const question="3点確認があります。1点目、本番に反映してよいですか？";
+  const question="3点確認があります。1点目、決済エラーの修正が検証環境のテストを通りました。本番に反映してよいですか？";
   const context="2. 移行は今夜実行しますか？\n3. リリースノートは公開しますか？";
   const answer="1. 反映してよい\n2. 今夜実行する\n3. deferred";
   const seen:{question:string;context:string|null;said:string[]}[]=[];

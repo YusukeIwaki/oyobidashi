@@ -119,6 +119,21 @@ describe("tool listing", () => {
     expect(instructions).toMatch(/instead of calling again and again/i);
   });
 
+  test("phone questions give the facts needed to decide before asking", async () => {
+    const { h } = await setup();
+    const { tools } = await h.client.listTools();
+    const ask = tools.find((t) => t.name === "ask_human")!;
+    expect(ask.description).toMatch(/look up referenced Jira issues or other material if you have access/);
+    expect(ask.description).toMatch(/verified facts that affect the decision, then ask/);
+    expect(ask.description).toMatch(/issue keys, URLs, and extra detail in "context"/);
+    expect(ask.description).toMatch(/human needs to read the source to decide, use text/);
+    const props = ask.inputSchema.properties as Record<string, { description: string }>;
+    expect(props.question!.description).toMatch(/essential facts in plain language before asking/);
+    const update = tools.find((t) => t.name === "update_request")!;
+    expect(update.description).toMatch(/existing "question" already gives the human enough background to answer by listening/);
+    expect(h.client.getInstructions()).toMatch(/opening question must make sense by listening alone/);
+  });
+
   test("descriptions tell the agent when to call, about voice errors, and how to continue on pending", async () => {
     const { h } = await setup();
     const { tools } = await h.client.listTools();
