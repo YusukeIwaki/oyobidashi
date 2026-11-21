@@ -26,6 +26,7 @@
 | 場所 | 内容 |
 |---|---|
 | `src/pages/index.astro` | ページの組み立て。セクションの順番 |
+| `src/pages/setup.astro` | はじめかた (`/setup/`)。トップの `/#setup` から案内 |
 | `src/components/` | セクションごとの部品 (`Hero`、`Ask`、`Scene`、`Delivery`、`Setup`、`Pricing`、`Faq`、`Download` など) |
 | `src/styles/global.css` | 色・書体・レイアウト。全体で1ファイル |
 | `src/scripts/main.ts` | ヒーローのデモとコピーボタン |

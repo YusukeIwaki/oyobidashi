@@ -70,7 +70,7 @@ h1, h2 {
 .brand__name { font-family: var(--logo); font-weight: 800; font-size: 1.36rem; letter-spacing: 0.01em; line-height: 1; }
 .nav { display: flex; gap: 26px; font-size: 0.9rem; font-weight: 500; }
 .nav a { text-decoration: none; padding: 6px 0; border-bottom: 2px solid transparent; }
-.nav a:hover { border-bottom-color: var(--orange); }
+.nav a:hover, .nav a[aria-current="page"] { border-bottom-color: var(--orange); }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center;
@@ -105,7 +105,7 @@ h1, h2 {
 /* ── ヒーロー ── */
 .hero { padding: clamp(40px, 7vw, 96px) 0 clamp(56px, 8vw, 112px); border-bottom: 1px solid var(--line); }
 .hero__grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.02fr); gap: clamp(32px, 5vw, 72px); align-items: center; }
-.hero h1 { white-space: nowrap; font-size: clamp(3.2rem, 7vw, 5.6rem); line-height: 1.12; margin: 26px 0 28px; letter-spacing: 0.01em; }
+.hero h1 { white-space: nowrap; font-size: min(clamp(3.2rem, 6.4vw, 5rem), 13vw); line-height: 1.12; margin: 26px 0 28px; letter-spacing: 0.01em; }
 .hero__lead { font-size: clamp(1rem, 1.5vw, 1.14rem); color: var(--ink-2); line-height: 2; }
 .hero__lead strong { color: var(--ink); background: linear-gradient(transparent 62%, var(--orange-soft) 62%); font-weight: 700; }
 .hero__note { margin-top: 16px; font-size: 0.84rem; color: var(--ink-2); }
@@ -213,7 +213,7 @@ h1, h2 {
 /* ── セクション共通 ── */
 .sec { padding: clamp(64px, 9vw, 128px) 0; }
 .sec__head { max-width: 720px; margin-bottom: clamp(36px, 5vw, 64px); }
-.sec__head h2 { font-size: clamp(2rem, 4.6vw, 3.4rem); margin: 18px 0 20px; }
+.sec__head :is(h1, h2) { font-size: clamp(2rem, 4.6vw, 3.4rem); margin: 18px 0 20px; }
 .sec__head p { color: var(--ink-2); font-size: 1.02rem; }
 .sec__head a { color: var(--orange-dark); }
 .sec__head--tight { margin-bottom: 0; }
@@ -390,7 +390,7 @@ h1, h2 {
 .step:first-child { border-top: 2px solid var(--ink); }
 .step__n { font-family: var(--mincho); font-weight: 800; font-size: 4.2rem; line-height: 1; color: var(--orange); }
 .step__body { max-width: 760px; }
-.step h3 { font-family: var(--mincho); font-weight: 800; font-size: clamp(1.25rem, 2.4vw, 1.7rem); line-height: 1.5; }
+.step h2 { font-size: clamp(1.25rem, 2.4vw, 1.7rem); line-height: 1.5; }
 .step p { color: var(--ink-2); margin-top: 6px; }
 .step__after { margin-top: 18px !important; color: var(--ink) !important; }
 .step__after q { font-family: var(--mincho); font-weight: 800; font-size: 1.2rem; quotes: "「" "」"; background: linear-gradient(transparent 62%, var(--orange-soft) 62%); }
@@ -403,7 +403,7 @@ h1, h2 {
 .copy:hover { opacity: 1; background: var(--orange-soft); }
 
 .tools { margin-top: clamp(40px, 6vw, 72px); border: 1px solid var(--ink); background: var(--surface); padding: clamp(22px, 3vw, 36px); }
-.tools h3 { font-family: var(--mincho); font-weight: 800; font-size: 1.35rem; margin-bottom: 12px; }
+.tools h2 { font-size: 1.35rem; margin-bottom: 12px; }
 .tools dl > div { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 16px; padding: 12px 0; border-top: 1px dashed var(--line); }
 .tools dt { font-family: var(--mono); font-size: 0.86rem; font-weight: 700; color: var(--orange-dark); padding-top: 2px; }
 .tools dd { color: var(--ink-2); font-size: 0.94rem; }
@@ -426,7 +426,7 @@ h1, h2 {
 .faq details { border-bottom: 1px solid var(--line); }
 .faq summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; gap: 16px; padding: 22px 0; font-family: var(--mincho); font-weight: 800; font-size: clamp(1.05rem, 2vw, 1.25rem); line-height: 1.6; }
 .faq summary::-webkit-details-marker { display: none; }
-.faq summary::after { content: "+"; font-family: var(--gothic); font-weight: 400; font-size: 1.5rem; line-height: 1.2; color: var(--orange-dark); flex: none; transition: transform .2s; }
+.faq summary::after { content: "+"; font-family: var(--gothic); font-weight: 400; font-size: 1.5rem; line-height: 1.2; color: var(--orange-dark); flex: none; align-self: start; transition: transform .2s; }
 .faq details[open] summary::after { transform: rotate(45deg); }
 .faq details p { padding: 0 2.5em 24px 0; color: var(--ink-2); }
 

@@ -5,24 +5,39 @@ import Hero from "../components/Hero.astro";
 import Ask from "../components/Ask.astro";
 import Scene from "../components/Scene.astro";
 import Delivery from "../components/Delivery.astro";
-import Setup from "../components/Setup.astro";
 import Pricing from "../components/Pricing.astro";
 import Faq from "../components/Faq.astro";
 import Download from "../components/Download.astro";
 import Footer from "../components/Footer.astro";
+
+const siteIdentity = {
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  name: "Oyobidashi",
+  alternateName: "お呼び出し",
+  url: new URL("/", Astro.site).href,
+};
 ---
 <Base
-  title="Oyobidashi — AIが電話でお呼び出し"
-  ogTitle="Oyobidashi — AIが電話でお呼び出し"
-  description="「何かあったら電話して」と頼んで、席を立てます。AIエージェントが判断に迷うと、あなたのスマホが鳴ります。声で答えれば作業は進みます。MCPで使える、AIからの電話。無料、iOS / Android対応。"
+  title="Oyobidashi - AIがあなたをお呼び出し"
+  description="Claude CodeやCodexなどのAIエージェントが、人の判断が必要なときに登録したスマホへ電話をかけられるMCP連携アプリです。声で答えるとAIに返事が届き、作業を続けられます。iPhone・Android対応。"
 >
+  <script slot="head" type="application/ld+json" set:html={JSON.stringify(siteIdentity)} />
   <Header />
   <main id="main">
     <Hero />
     <Ask />
     <Scene />
     <Delivery />
-    <Setup />
+    <section class="sec" id="setup">
+      <div class="wrap">
+        <div class="sec__head">
+          <h2>はじめかた</h2>
+          <p>Claude CodeやCodexにOyobidashiをMCPでつなぎ、スマホアプリで同じアカウントにログインします。</p>
+        </div>
+        <a class="btn" href="/setup/">設定手順を見る</a>
+      </div>
+    </section>
     <Pricing />
     <Faq />
     <Download />

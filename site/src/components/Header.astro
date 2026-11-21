@@ -1,6 +1,9 @@
+---
+const home = Astro.url.pathname === "/" ? "" : "/";
+---
 <header class="top">
   <div class="wrap top__in">
-    <a class="brand" href="#" aria-label="Oyobidashi トップ">
+    <a class="brand" href="/" aria-label="Oyobidashi トップ">
       <svg class="brand__mark" viewBox="24 20 60 58" aria-hidden="true">
         <path fill="#23201A" d="M30,42 Q30,36 36,36 H72 Q78,36 78,42 V68 Q78,74 72,74 H36 Q30,74 30,68 Z"/>
         <path fill="#388E3C" d="M36,42 H72 V54 H36 Z"/>
@@ -10,13 +13,13 @@
       </svg>
       <span class="brand__name">Oyobidashi</span>
     </a>
-    <nav class="nav" aria-label="ページ内">
-      <a href="#scene">つかいみち</a>
-      <a href="#delivery">届き方</a>
-      <a href="#setup">はじめかた</a>
-      <a href="#price">料金</a>
-      <a href="#faq">よくある質問</a>
+    <nav class="nav" aria-label="メインメニュー">
+      <a href={`${home}#scene`}>つかいみち</a>
+      <a href={`${home}#delivery`}>届き方</a>
+      <a href="/setup/" aria-current={Astro.url.pathname === "/setup/" ? "page" : undefined}>はじめかた</a>
+      <a href={`${home}#price`}>料金</a>
+      <a href={`${home}#faq`}>よくある質問</a>
     </nav>
-    <a class="btn btn--small" href="#download">アプリを入手</a>
+    <a class="btn btn--small" href={`${home}#download`}>アプリを入手</a>
   </div>
 </header>

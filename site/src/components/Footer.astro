@@ -1,12 +1,14 @@
 ---
 import { GITHUB_URL, STORE_URLS } from "../config";
+
+const home = Astro.url.pathname === "/" ? "" : "/";
 ---
 <footer class="foot">
   <div class="wrap foot__in">
     <p class="foot__brand">Oyobidashi</p>
     <nav aria-label="フッター">
-      <a href="#setup">はじめかた</a>
-      <a href="#price">料金</a>
+      <a href="/setup/">はじめかた</a>
+      <a href={`${home}#price`}>料金</a>
       <a href="/privacy/">プライバシーポリシー</a>
       <a href={GITHUB_URL} rel="noopener">GitHub</a>
     </nav>

@@ -1,35 +1,37 @@
 ---
 import { GITHUB_URL } from "../config";
 ---
-<section class="sec" id="setup">
+<section class="sec" aria-labelledby="setup-title">
   <div class="wrap">
     <div class="sec__head">
       <span class="chip" aria-hidden="true">ｾｯﾄｱｯﾌﾟ</span>
-      <h2>準備は3つ。</h2>
-      <p>要るのはスマホアプリと、Google・Apple・GitHubのどれかのアカウント。パソコンに入れるものはありません。</p>
+      <h1 id="setup-title">Claude Code・Codexとの連携</h1>
+      <p>公式クラウドを使うときは、エージェントにMCPサーバーのURLを登録し、スマホアプリと同じアカウントでログインします。</p>
     </div>
 
     <ol class="steps">
       <li class="step">
         <div class="step__n" aria-hidden="true">1</div>
         <div class="step__body">
-          <h3>エージェントにURLを登録する</h3>
-          <p>Claude Codeなら次の1行です。一度登録すれば、どのプロジェクトでも使えます。ほかのツールでは、MCPサーバーのURLに <code>https://api.oyobidashi.me/v1/mcp</code> を入れます。</p>
+          <h2>エージェントにURLを登録する</h2>
+          <p>Claude Codeでは、次のコマンドで登録すると、どのプロジェクトからでも使えます。</p>
           <div class="code"><button class="copy" type="button">コピー</button><pre><code>claude mcp add -s user --transport http oyobidashi https://api.oyobidashi.me/v1/mcp</code></pre></div>
+          <p>Codexなどでは、MCPサーバーのURLに <code>https://api.oyobidashi.me/v1/mcp</code> を登録します。Claude CodeとCodexは、<a href={`${GITHUB_URL}/tree/main/plugins/oyobidashi`}>Oyobidashiプラグイン</a>からも接続できます。</p>
         </div>
       </li>
       <li class="step">
         <div class="step__n" aria-hidden="true">2</div>
         <div class="step__body">
-          <h3>ブラウザでログインする</h3>
+          <h2>ブラウザでログインする</h2>
           <p>はじめて接続するとブラウザが開きます。Google・Apple・GitHubのどれかでログインすると、そのエージェントに接続を許可したことになります。</p>
         </div>
       </li>
       <li class="step">
         <div class="step__n" aria-hidden="true">3</div>
         <div class="step__body">
-          <h3>スマホアプリとペアリングする</h3>
+          <h2>スマホアプリとペアリングする</h2>
           <p>アプリを開いて「Oyobidashiクラウドに接続」を押し、手順2と同じアカウントでログインします。出てくる「アプリを開く」を押すと登録できます。スマホをあとから足すときも同じです。</p>
+          <p>接続できたら、エージェントに「Oyobidashiで、スマホにテスト通知を送って」と頼んで、通知が届くか確かめます。</p>
           <p class="step__after">あとは頼むときに、ひとこと。<q>何かあったら電話して。</q></p>
         </div>
       </li>
@@ -38,7 +40,7 @@ import { GITHUB_URL } from "../config";
     <p class="steps__note">自分のサーバーやLANの中だけで動かす手順は、<a href={GITHUB_URL} rel="noopener">GitHub</a>にあります。</p>
 
     <div class="tools">
-      <h3>エージェントに増える道具</h3>
+      <h2>エージェントに増える道具</h2>
       <dl>
         <div><dt>ask_human</dt><dd>質問する。選択肢、優先度、届け方(ボタン・文字・通話)を付けられる</dd></div>
         <div><dt>wait_for_answer</dt><dd>答えが来るまで待つ</dd></div>
