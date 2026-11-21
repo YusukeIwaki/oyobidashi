@@ -247,7 +247,7 @@ bun test --cwd cloud
 
 公式クラウドは、審査用UIDの購入時に設定された `appAccountToken` が一致するSandbox取引だけを受け付けます。審査用端末は専用アカウントから発行したペアリングコードで接続します。審査が終わったらAPIとworkerの許可リストからそのUIDを外すと、審査用購読によるPLUSの利用も終了します。TestFlightのStoreKit購入はSandboxで、音声と課金のApp Attestには `production` を使います。
 
-App Review の審査メモに公式APIの `/review/` へのリンクを記載し、ログイン名とパスワードは App Review のサインイン情報欄に入力します。審査担当者はここで発行したQRコードかアプリを開くリンクで1台のiPhoneをペアリングし、テスト着信を送れます。普段のアカウントとは別の審査専用UIDで運用します。審査後は `APPLE_REVIEW_PORTAL` を外します。
+App Review の審査メモに公式APIの `/review/` へのリンクを記載し、ログイン名とパスワードは App Review のサインイン情報欄に入力します。審査担当者はポータルで発行したQRコードをアプリ内で読み取るか、同じ画面のURLとコードをアプリ内で手入力して1台のiPhoneをペアリングし、テスト着信を送れます。普段のアカウントとは別の審査専用UIDで運用します。審査後は `APPLE_REVIEW_PORTAL` を外します。
 
 Google Playの審査担当者には「ログインの詳細」で公式APIの `/review/android/` とAndroid専用のログイン情報を案内します。担当者はここでAndroid端末1台をペアリングし、テスト質問と音声着信を試せます。通常のアカウントやiOS審査のアカウントから独立しています。審査画面のボタンから購入なしで2時間だけPLUS音声を試せます。FREEへの切り替えまたは端末の切断で試用が終了します。審査環境が不要になったら `ANDROID_REVIEW_PORTAL` を外します。
 
