@@ -2,29 +2,39 @@
 import { STORE_URLS } from "../config";
 
 interface Props {
-  appStoreBadge?: boolean;
+  badges?: boolean;
   light?: boolean;
   center?: boolean;
 }
-const { appStoreBadge = false, light = false, center = false } = Astro.props;
-const showBadge = appStoreBadge && Boolean(STORE_URLS.ios);
+const { badges = false, light = false, center = false } = Astro.props;
 
 const stores = [
   {
     device: "iPhone",
     name: "App Store",
     url: STORE_URLS.ios,
-    badge: showBadge ? "/app-store-badge-ja.svg" : undefined,
+    badge: {
+      src: "/app-store-badge-ja.svg", width: 109, height: 40,
+      alt: "App Storeからダウンロード",
+    },
   },
-  { device: "Android", name: "Google Play", url: STORE_URLS.android },
+  {
+    device: "Android",
+    name: "Google Play",
+    url: STORE_URLS.android,
+    badge: {
+      src: "/google-play-badge-ja.png", width: 646, height: 250,
+      alt: "Google Playで手に入れよう", class: "store-badge__play",
+    },
+  },
 ];
 ---
-<div class:list={["stores", { "stores--center": center, "stores--badged": showBadge }]}>
+<div class:list={["stores", { "stores--center": center, "stores--badged": badges }]}>
   {stores.map((s) =>
     s.url ? (
-      <a class:list={[s.badge ? "store-badge" : "store", { "store--light": light && !s.badge }]} href={s.url} rel="noopener">
-        {s.badge ? (
-          <img src={s.badge} width="109" height="40" alt="App Storeからダウンロード" />
+      <a class:list={[badges ? "store-badge" : "store", { "store--light": light && !badges }]} href={s.url} rel="noopener">
+        {badges ? (
+          <img {...s.badge} />
         ) : (
           <>
             <span class="store__sub">{s.device}</span>

@@ -2,7 +2,7 @@
 // 公開後にここへ入れると、ページ内のすべてのボタンがリンクになる。
 export const STORE_URLS = {
   ios: "https://apps.apple.com/jp/app/id6835964144",
-  android: "",
+  android: "https://play.google.com/store/apps/details?id=me.oyobidashi.android",
 } as const;
 
 export const GITHUB_URL = "https://github.com/YusukeIwaki/oyobidashi";

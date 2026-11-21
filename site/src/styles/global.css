@@ -112,9 +112,11 @@ h1, h2 {
 
 .stores { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
 .stores--center { justify-content: center; }
-.stores--badged { gap: 14px; }
+.stores--badged { --store-badge-height: 56px; gap: 14px; }
 .store-badge { align-self: center; flex: none; border-radius: 8px; }
-.store-badge img { width: auto; height: 56px; }
+.store-badge img { display: block; width: auto; height: var(--store-badge-height); }
+/* PNGの上下の透明部分を含め、バッジ本体の高さをApp Storeとそろえる。 */
+.store-badge .store-badge__play { height: calc(var(--store-badge-height) * 250 / 192); }
 .store {
   display: inline-flex; flex-direction: column; justify-content: center;
   min-width: 168px; padding: 10px 22px 11px;
@@ -450,6 +452,7 @@ h1, h2 {
   .lcd-strip { font-size: 0.72rem; letter-spacing: 0.04em; padding: 8px 10px; gap: 8px; }
   .lcd-strip--big { font-size: 0.9rem; }
   .store { min-width: 0; flex: 1 1 140px; padding-inline: 16px; }
+  .stores--badged { --store-badge-height: 48px; }
   .stores--badged .store { flex: 0 1 auto; }
 
   .stage { grid-template-columns: minmax(0, 1fr); justify-items: center; }
