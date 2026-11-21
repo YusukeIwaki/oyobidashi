@@ -196,6 +196,10 @@ fun SettingsScreen(vm: MainViewModel, session: Session) {
                         SettingsItem("バージョン", BuildConfig.VERSION_NAME, icon = { Icon(Icons.Default.Info, null) })
                     }
                 }
+                item { PrivacyPolicyLink(Modifier.padding(horizontal = 16.dp)) }
+                if (isOyobidashiCloud) {
+                    item { AccountDeletionLink(Modifier.padding(horizontal = 16.dp)) }
+                }
             }
         }
     }

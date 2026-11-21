@@ -81,9 +81,11 @@ class BillingManager(
                 val pending = purchases.orEmpty().any { it.purchaseState == Purchase.PurchaseState.PENDING }
                 refresh(notice = if (pending) "Google Playで支払いを確認中です。" else null)
             }
-            BillingClient.BillingResponseCode.USER_CANCELED -> Unit
+            BillingClient.BillingResponseCode.USER_CANCELED -> if (purchaseClient != null && api() === purchaseClient) {
+                _state.value = _state.value.copy(working = false)
+            }
             else -> if (purchaseClient != null && api() === purchaseClient) {
-                _state.value = _state.value.copy(syncError = Texts.BILLING_SYNC_FAILED)
+                _state.value = _state.value.copy(working = false, syncError = Texts.BILLING_SYNC_FAILED)
             }
         }
     }

@@ -163,6 +163,7 @@ fun PairingScreen(vm: MainViewModel, onClose: (() -> Unit)? = null) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                PrivacyPolicyLink()
                 return@Column
             }
 
