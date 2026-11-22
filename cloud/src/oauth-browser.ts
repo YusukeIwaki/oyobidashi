@@ -5,6 +5,7 @@ import {
   setPersistence,
   inMemoryPersistence,
   signOut,
+  signInWithEmailAndPassword,
   signInWithPopup,
   GoogleAuthProvider,
   GithubAuthProvider,
@@ -14,7 +15,7 @@ import {
 } from "firebase/auth";
 import type {AccountProvider} from "../../relay/src/auth-handoff.ts";
 import {browserAuthFailure, parsePublicAuthConfig} from "./auth-browser-flow.ts";
-import {appPairingState, authorizationParams, canPostponeInputConsent, isHostedService, isPhoneToPair, openedByApp, pairedDevices, pairingUrl, qrPath, stepAfterSignIn} from "./oauth-browser-flow.ts";
+import {appPairingState, authorizationParams, canPostponeInputConsent, isHostedService, isPhoneToPair, MCP_REVIEW_HEADER, openedByApp, pairedDevices, pairingUrl, qrPath, stepAfterSignIn} from "./oauth-browser-flow.ts";
 import {INPUT_RESTRICTION_TERMS, UNRESTRICTED_INPUT, parseInputRestriction, type InputRestriction} from "./input-restriction.ts";
 
 // Consent page for a hosted MCP client (/oauth/authorize) and the standalone
@@ -32,9 +33,13 @@ const request = authorizationParams(location.search);
 const thisPhone = isPhoneToPair(location.search, navigator.userAgent);
 const fromApp = openedByApp(location.search);
 const appState = appPairingState(location.search);
+const reviewProject = main?.dataset.reviewProject;
+const reviewApiKey = main?.dataset.reviewApiKey;
+const reviewOnly = main?.dataset.reviewOnly === "1";
 const labels: Record<AccountProvider,string> = {google:"Google", apple:"Apple", github:"GitHub"};
 const UNREACHABLE = "通信できませんでした。接続を確認して、もう一度お試しください。";
 let user: User | undefined;
+let reviewUser = false;
 let pollTimer: ReturnType<typeof setTimeout> | undefined;
 let finished = false;
 
@@ -64,6 +69,7 @@ async function call(path: string, init: {method: string; body?: unknown; signedI
   if (init.signedIn !== false) {
     if (!user) throw new Error("not signed in");
     headers.authorization = `Bearer ${await user.getIdToken()}`;
+    if (reviewUser) headers[MCP_REVIEW_HEADER] = "1";
   }
   if (init.body !== undefined) headers["content-type"] = "application/json";
   const response = await fetch(new URL(path, location.origin), {
@@ -259,13 +265,13 @@ async function showPairing(alreadyPaired: number) {
     // A phone browser on its own: the app accepts a link only for a pairing it started itself.
     qr.replaceChildren();
     qr.hidden = true;
-    pairingHint.textContent = isHostedService(location.origin)
+    pairingHint.textContent = isHostedService(location.origin) && !reviewUser
       ? "このスマホを登録するには、お呼び出しアプリを開いて「Oyobidashiクラウドに接続」を押し、このアカウントでログインしてください。安全のため、アプリから始めたペアリングだけを受け付けます。"
       : "このスマホを登録するには、このページをパソコンなど別の画面で開いてQRコードを表示し、お呼び出しアプリの「自分で用意したサーバーに接続」→「QRコードを読み取る」で読み取ってください。";
     actions.replaceChildren(button("別のスマホで読み取るQRコードを表示", otherPhone, true));
   } else {
     drawQr(link);
-    pairingHint.textContent = isHostedService(location.origin)
+    pairingHint.textContent = isHostedService(location.origin) && !reviewUser
       ? `スマホのお呼び出しアプリで「Oyobidashiクラウドに接続」を押し、このアカウントでログインしてください。${qrHint}`
       : "スマホのお呼び出しアプリで「自分で用意したサーバーに接続」を押し、「QRコードを読み取る」でこのQRコードを読み取ってください。コードは10分間、1回だけ使えます。";
     // A computer cannot open the phone's app: the link back is offered on the phone only.
@@ -310,7 +316,14 @@ async function signedIn() {
   try {
     restriction = parseInputRestriction(await call("/v1/input-restriction", {method:"GET"}));
     count = mode === "connections" ? 0 : pairedDevices(await call("/v1/presence", {method:"GET"}));
-  } catch {
+  } catch (error) {
+    if (reviewUser && [401, 403].includes((error as {status?: number}).status ?? 0)) {
+      user = undefined;
+      reviewUser = false;
+      showReviewLogin();
+      message("Use the dedicated review account.");
+      return;
+    }
     message(UNREACHABLE);
     actions.replaceChildren(button("再試行", () => void signedIn()));
     return;
@@ -328,8 +341,52 @@ function continueSignedIn(restriction: InputRestriction, paired: number) {
   }
 }
 
+function showReviewLogin() {
+  if (!reviewProject || !reviewApiKey || user || finished) return;
+  const form = document.createElement("form");
+  form.method = "post";
+  const email = document.createElement("input"), password = document.createElement("input");
+  const signIn = document.createElement("button");
+  email.type = "email";
+  email.autocomplete = "username";
+  email.required = true;
+  password.type = "password";
+  password.autocomplete = "current-password";
+  password.required = true;
+  signIn.type = "submit";
+  signIn.textContent = "Sign in to the review account";
+  for (const [title, input] of [["Email", email], ["Password", password]] as const) {
+    const label = document.createElement("label");
+    label.append(title, input);
+    form.append(label);
+  }
+  form.append(signIn);
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (signIn.disabled || user || finished) return;
+    setDisabled(true);
+    message("");
+    try {
+      const auth = getAuth(initializeApp({projectId: reviewProject, apiKey: reviewApiKey}, `oyobidashi-review-${crypto.randomUUID()}`));
+      await setPersistence(auth, inMemoryPersistence);
+      user = (await signInWithEmailAndPassword(auth, email.value.trim(), password.value)).user;
+      reviewUser = true;
+      await signedIn();
+    } catch {
+      message("Could not sign in. Check the review email and password, then try again.");
+    } finally {
+      password.value = "";
+      setDisabled(false);
+    }
+  });
+  message("");
+  providers.replaceChildren(form);
+  if (!reviewOnly) providers.append(button("通常のログイン方法に戻る", () => void start(), true));
+}
+
 async function start() {
   providers.replaceChildren();
+  if (reviewOnly) return showReviewLogin();
   message("準備しています…");
   try {
     const response = await fetch(new URL("/v1/auth/config", location.origin), {credentials:"omit", cache:"no-store", redirect:"error", signal:AbortSignal.timeout(15000)});
@@ -356,6 +413,8 @@ async function start() {
           setDisabled(false);
         });
       }));
+    if (reviewProject && reviewApiKey)
+      providers.append(button("Review account sign-in", showReviewLogin, true));
     if (mode === "authorize") actions.replaceChildren(button("許可しない", () => void decide("deny"), true));
     message(config.providers.length ? "" : "ログイン方法が設定されていません。");
   } catch {

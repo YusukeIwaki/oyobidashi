@@ -36,4 +36,12 @@ bash scripts/package-openai-plugin.sh
 3. OpenAI のクライアント上で同梱の正常系 5 件と異常系 3 件を実行します。サンプルデータで接続、端末への配信、回答の受け取りを録画し、審査担当者が開ける動画 URL を登録します。
 4. 自動検査と登録内容を確認して審査へ提出します。承認後、ポータルから **Publish** を実行します。
 
+### 審査専用アカウント
+
+専用の Firebase プロジェクトでメール・パスワード認証を有効にし、管理者がユーザーを1つ作成します。プロジェクトの自己登録は無効にし、公式 API の `MCP_REVIEW_FIREBASE` にそのプロジェクトの `projectId` と Web の `apiKey`、専用ユーザーの `uid` を設定します。認証情報は審査ポータルの非公開欄から渡します。
+
+- MCP の接続画面では **Review account sign-in** を選びます。通常と同じように接続の許可を確認します。
+- ペアリングだけを先に行うときは [審査用ペアリングページ](https://api.oyobidashi.me/oauth/review) でログインし、テスト端末から QR コードを読み取ります。
+- 審査接続を終了するときは [接続済みアプリ](https://api.oyobidashi.me/oauth/connections) から許可を取り消し、テスト端末を解除します。設定を外すと、審査用アカウントによる OAuth 接続と既発行の審査用 MCP トークンの利用も止まります。
+
 [プラグインのアップロードと審査](https://developers.openai.com/plugins/deploy/submission)

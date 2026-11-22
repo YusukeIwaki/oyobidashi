@@ -1,5 +1,8 @@
 import { authPageHeaders } from "./account-auth.ts";
-import { CloudError, conflict, invalid, json, readBody, unauthorized } from "./errors.ts";
+import { CloudError, conflict, invalid, json, missing, readBody, unauthorized } from "./errors.ts";
+import { OFFICIAL_CLOUD_ORIGIN } from "./config.ts";
+import { MCP_REVIEW_HEADER } from "./oauth-browser-flow.ts";
+import { MCP_REVIEW_OWNER_PREFIX, type McpReviewAuth } from "./oauth-review.ts";
 import { hash, type CloudService } from "./service.ts";
 import type { IdentityVerifier } from "./types.ts";
 
@@ -56,6 +59,7 @@ export interface OAuthDeps {
   script?: () => Promise<string>;
   /** Canonical HTTPS origin; other hostnames reaching this service keep their own origin. */
   publicUrl?: string;
+  review?: McpReviewAuth;
 }
 export interface AccessGrant {
   uid: string;
@@ -138,7 +142,7 @@ const PAGE_STYLE = `body{font:16px/1.65 system-ui,sans-serif;background:#faf6eb;
 
 function page(title: string, attributes: Record<string, string>, body: string, script: boolean): string {
   const data = Object.entries(attributes).map(([k, v]) => ` data-${k}="${escapeHtml(v)}"`).join("");
-  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>お呼び出し — ${escapeHtml(title)}</title><style>${PAGE_STYLE}</style>${script ? '<script type="module" src="/oauth.js"></script>' : ""}</head><body><main${data}>${body}</main></body></html>`;
+  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>お呼び出し — ${escapeHtml(title)}</title><style>${PAGE_STYLE}#providers label{display:block;margin:12px 0}#providers input{display:block;box-sizing:border-box;width:100%;margin-top:4px;padding:10px;border:1px solid #d6cdbb;border-radius:8px;font:inherit}</style>${script ? '<script type="module" src="/oauth.js"></script>' : ""}</head><body><main${data}>${body}</main></body></html>`;
 }
 const INTERACTIVE_BODY = `<h1 id="heading"></h1><p id="explanation">準備しています…</p><dl id="details" hidden></dl><div id="providers"></div><div id="pairing" hidden><div id="qr"></div><p id="pairing-hint"></p></div><div id="actions"></div><p id="status" role="status" aria-live="polite"></p><footer>ご自身で始めた操作のときだけ進めてください。心当たりがなければ、この画面を閉じてください。<br><a href="/oauth/connections">接続済みアプリを確認・取り消す</a></footer>`;
 
@@ -202,7 +206,8 @@ export class OAuthServer {
     const token = /^Bearer +(kma_[A-Za-z0-9_-]{43})$/i.exec(header)?.[1];
     if (!token) return { rejected: true };
     const row = await this.deps.store.get("access", hash(token));
-    if (!row || !row.uid || row.expires <= this.now || !row.doc.client) return { rejected: true };
+    if (!row || !row.uid || row.expires <= this.now || !row.doc.client || !this.ownerEnabled(req, row.uid))
+      return { rejected: true };
     return { uid: row.uid, client: row.doc.client, name: row.doc.name ?? null };
   }
 
@@ -220,10 +225,16 @@ export class OAuthServer {
         return withCors(json(200, this.serverMetadata(req)));
       if (path === "/oauth/authorize") return this.authorizePage(req, url);
       if (path === "/oauth/connections")
-        return html(200, page("接続済みアプリ", { mode: "connections" }, INTERACTIVE_BODY, true));
+        return html(200, page("接続済みアプリ", { mode: "connections", ...this.reviewAttributes(req) }, INTERACTIVE_BODY, true));
       if (path === "/oauth/grants") return this.grants(req);
       if (path === "/pair")
         return html(200, page("スマホをペアリング", { mode: "pair" }, INTERACTIVE_BODY, true));
+      if (path === "/oauth/review") {
+        if (!this.reviewOnHost(req)) throw missing();
+        return html(200, page("審査用スマホをペアリング", {
+          mode: "pair", "review-only": "1", ...this.reviewAttributes(req),
+        }, INTERACTIVE_BODY, true));
+      }
       if (path === "/oauth.js") {
         if (!this.deps.script) return errorPage(503, "しばらくしてから、もう一度お試しください。");
         return new Response(await this.deps.script(), { headers: oauthPageHeaders("text/javascript; charset=utf-8") });
@@ -247,7 +258,44 @@ export class OAuthServer {
     return undefined;
   }
 
+  private reviewOnHost(req: Request) {
+    return this.origin(req) === OFFICIAL_CLOUD_ORIGIN ? this.deps.review : undefined;
+  }
+
+  private reviewAttributes(req: Request): Record<string, string> {
+    const review = this.reviewOnHost(req);
+    return review ? { "review-project": review.projectId, "review-api-key": review.apiKey } : {};
+  }
+
+  private ownerEnabled(req: Request, uid: string): boolean {
+    return !uid.startsWith(MCP_REVIEW_OWNER_PREFIX) || this.reviewOnHost(req)?.ownerUid === uid;
+  }
+
+  private async reviewUid(req: Request): Promise<string> {
+    const review = this.reviewOnHost(req);
+    const token = /^Bearer +(\S+)$/i.exec((req.headers.get("authorization") ?? "").trim())?.[1];
+    if (!review || !token) throw unauthorized();
+    await review.verify(token);
+    if (await this.deps.service.db.isBanned(review.ownerUid))
+      throw new CloudError(403, "account_banned", "this account is disabled");
+    return review.ownerUid;
+  }
+
+  /** Review Firebase credentials can only prepare pairing and input consent here. */
+  async reviewSetupUid(req: Request, path: string): Promise<string | undefined> {
+    if (req.headers.get(MCP_REVIEW_HEADER) !== "1") return;
+    const method = req.method;
+    if ((path === "/v1/presence" && method === "GET") ||
+        (path === "/v1/pairing-codes" && method === "POST") ||
+        (path === "/v1/input-restriction" && (method === "GET" || method === "POST"))) {
+      if (method === "POST" && req.headers.get("origin") !== this.origin(req))
+        throw new CloudError(403, "forbidden", "this endpoint is only available to the review page");
+      return this.reviewUid(req);
+    }
+  }
+
   private async human(req: Request) {
+    if (req.headers.get(MCP_REVIEW_HEADER) === "1") return this.reviewUid(req);
     const token = /^Bearer +(\S+)$/i.exec((req.headers.get("authorization") ?? "").trim())?.[1];
     if (!token) throw unauthorized();
     const identity = this.deps.verifier.identify
@@ -410,6 +458,7 @@ export class OAuthServer {
       mode: "authorize",
       client: checked.client.doc.name ?? "",
       redirect: redirectLabel(checked.redirect),
+      ...this.reviewAttributes(req),
     }, INTERACTIVE_BODY, true));
   }
 
@@ -517,7 +566,7 @@ export class OAuthServer {
       }
       const challenge = new Bun.CryptoHasher("sha256").update(p.code_verifier!).digest("base64url");
       if (
-        row.expires <= now || !row.uid || !row.grant || row.doc.client !== p.client_id || row.doc.challenge !== challenge ||
+        row.expires <= now || !row.uid || !this.ownerEnabled(req, row.uid) || !row.grant || row.doc.client !== p.client_id || row.doc.challenge !== challenge ||
         (p.redirect_uri !== undefined && p.redirect_uri !== row.doc.redirect_uri)
       )
         return grantError("authorization code does not match this request");
@@ -537,7 +586,7 @@ export class OAuthServer {
         if (used.grant) await store.revokeGrant(used.grant);
         return grantError("refresh token was already used");
       }
-      if (row.expires <= now || !row.uid || !row.grant || row.doc.client !== p.client_id)
+      if (row.expires <= now || !row.uid || !this.ownerEnabled(req, row.uid) || !row.grant || row.doc.client !== p.client_id)
         return grantError("refresh token does not match this request");
       const client = await store.get("client", p.client_id);
       if (!client || client.expires <= now) return oauthError(400, "invalid_client", "client registration expired");

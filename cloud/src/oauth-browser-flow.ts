@@ -1,6 +1,8 @@
 import qrcode from "qrcode-generator";
 import { needsInputConsent, type InputRestriction } from "./input-restriction.ts";
 
+export const MCP_REVIEW_HEADER = "x-oyobidashi-review";
+
 export type PageMode = "authorize" | "pair" | "connections";
 export type PageStep = "input_restriction" | "pairing" | "approval" | "connections";
 

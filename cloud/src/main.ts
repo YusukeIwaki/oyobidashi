@@ -11,6 +11,7 @@ import { MAX_WS_SNAPSHOT_BYTES } from "./app.ts";
 import { loadPushConfig } from "./push-config.ts";
 import { createAccountAuth } from "./account-auth.ts";
 import { PostgresOAuthStore } from "./oauth-postgres.ts";
+import { loadMcpReviewAuth } from "./oauth-review.ts";
 import { Billing, loadAppleSandboxReviewUids, loadBillingConfig, loadPlusGrantUids } from "./billing/service.ts";
 import { ReviewPortal, loadAndroidReviewPortal, loadReviewPortal } from "./app-review.ts";
 import { VoiceSecurity, loadVoiceConfig } from "./voice.ts";
@@ -47,6 +48,9 @@ export async function main(
     throw new Error("role must be api, worker or migrate");
   const config = cloudConfig();
   const official = config.publicUrl === OFFICIAL_CLOUD_ORIGIN;
+  const mcpReview = role === "api" && official
+    ? loadMcpReviewAuth(process.env.MCP_REVIEW_FIREBASE, config.projectId)
+    : undefined;
   const models = voiceModels(process.env, official);
   const appleSandboxReviewUids = official ? loadAppleSandboxReviewUids(process.env) : null;
   const plusGrantUids = loadPlusGrantUids(process.env);
@@ -109,6 +113,7 @@ export async function main(
             script: () =>
               Bun.file(new URL("../public/oauth.js", import.meta.url)).text(),
             ...(config.publicUrl ? { publicUrl: config.publicUrl } : {}),
+            ...(mcpReview ? { review: mcpReview } : {}),
             ...(official && process.env.OPENAI_APPS_CHALLENGE
               ? { openAiAppsChallenge: process.env.OPENAI_APPS_CHALLENGE }
               : {}),

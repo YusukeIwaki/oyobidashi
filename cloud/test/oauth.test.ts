@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { generateKeyPair, SignJWT } from "jose";
 import { CloudApp } from "../src/app.ts";
+import { OFFICIAL_CLOUD_ORIGIN } from "../src/config.ts";
 import { unauthorized } from "../src/errors.ts";
+import { MCP_REVIEW_HEADER } from "../src/oauth-browser-flow.ts";
+import { loadMcpReviewAuth, type McpReviewAuth } from "../src/oauth-review.ts";
 import {
   ACCESS_TTL_MS,
   REFRESH_TTL_MS,
@@ -23,7 +27,7 @@ const accountAuth = {
 const challengeOf = (verifier: string) =>
   new Bun.CryptoHasher("sha256").update(verifier).digest("base64url");
 
-function remote() {
+function remote(origin = ORIGIN, review?: McpReviewAuth) {
   const h = harness(),
     store = new MemoryOAuthStore();
   const verifier = {
@@ -38,10 +42,11 @@ function remote() {
   const app = new CloudApp(h.service, verifier, 10_000, accountAuth, undefined, {
     store,
     script: async () => "/* bundle */",
+    ...(review ? { review } : {}),
   });
   const send = async (method: string, path: string, init: { token?: string; json?: unknown; form?: Record<string, string>; headers?: Record<string, string> } = {}) => {
     const response = (await app.fetch(
-      new Request(`${ORIGIN}${path}`, {
+      new Request(`${origin}${path}`, {
         method,
         redirect: "manual",
         headers: {
@@ -63,10 +68,10 @@ function remote() {
   };
   const register = async (extra: Record<string, unknown> = {}) =>
     (await send("POST", "/oauth/register", { json: { client_name: "Claude Code", redirect_uris: [REDIRECT], ...extra } })).body;
-  const approve = async (clientId: string, verifier = "v".repeat(43), user = "agent-alice", extra: Record<string, unknown> = {}) => {
+  const approve = async (clientId: string, verifier = "v".repeat(43), user = "agent-alice", extra: Record<string, unknown> = {}, headers: Record<string, string> = {}) => {
     const response = await send("POST", "/oauth/authorize", {
       token: user,
-      headers: { origin: ORIGIN },
+      headers: { origin, ...headers },
       json: {
         decision: "approve", client_id: clientId, redirect_uri: REDIRECT, response_type: "code",
         code_challenge: challengeOf(verifier), code_challenge_method: "S256", state: "xyz", ...extra,
@@ -96,6 +101,65 @@ function remote() {
     (await rpc(token, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } })).message.result;
   return { h, store, app, send, register, approve, exchange, connect, rpc, tool };
 }
+
+describe("dedicated MCP review authentication", () => {
+  test("only the exact project, password provider and review UID can use the dedicated flow", async () => {
+    const projectId = "mcp-review-test", prodProject = "synthetic-project", uid = "reviewer";
+    const config = { projectId, uid, apiKey: "synthetic_review_key_1234" };
+    expect(() => loadMcpReviewAuth(JSON.stringify({ ...config, projectId: prodProject }), prodProject)).toThrow();
+    const { publicKey, privateKey } = await generateKeyPair("RS256");
+    const review = loadMcpReviewAuth(JSON.stringify(config), prodProject, async () => publicKey)!;
+    const idToken = (project: string, subject: string, provider: string) =>
+      new SignJWT({ auth_time: Math.floor(Date.now() / 1000) - 1, firebase: { sign_in_provider: provider } })
+        .setProtectedHeader({ alg: "RS256" })
+        .setIssuedAt().setExpirationTime("1h").setSubject(subject)
+        .setIssuer(`https://securetoken.google.com/${project}`).setAudience(project).sign(privateKey);
+    const token = await idToken(projectId, uid, "password");
+    const r = remote(OFFICIAL_CLOUD_ORIGIN, review);
+    const headers = { [MCP_REVIEW_HEADER]: "1", origin: OFFICIAL_CLOUD_ORIGIN };
+    const browser = { token, headers };
+    const client = await r.register();
+
+    expect((await r.send("GET", "/oauth/review")).body).toContain('data-review-only="1"');
+    expect((await r.send("GET", "/pair")).body).not.toContain("data-review-project");
+    for (const [issuer, subject, provider] of [
+      [prodProject, uid, "password"], [projectId, "other", "password"], [projectId, uid, "custom"],
+    ] as const) {
+      const access = await r.send("GET", "/v1/presence", { token: await idToken(issuer, subject, provider), headers });
+      expect([401, 403]).toContain(access.status);
+    }
+    expect((await r.send("GET", "/v1/presence", { token })).status).toBe(401);
+    expect((await r.send("GET", "/v1/presence", browser)).status).toBe(200);
+    expect((await r.send("GET", "/v1/input-restriction", browser)).status).toBe(200);
+    expect((await r.send("POST", "/v1/pairing-codes", { ...browser, json: {} })).status).toBe(201);
+    expect((await r.send("POST", "/v1/pairing-codes", {
+      token, headers: { ...headers, origin: "https://other.example" }, json: {},
+    })).status).toBe(403);
+    expect((await r.send("POST", "/v1/requests", { ...browser, json: { question: "test" } })).status).toBe(401);
+    expect((await r.send("POST", "/v1/auth/link-token", { ...browser, json: {} })).status).toBe(401);
+    const alternate = await r.app.fetch(new Request("https://other.example/oauth/review"));
+    expect(alternate?.status).toBe(404);
+
+    expect((await r.approve(client.client_id, undefined, token)).response.status).toBe(401);
+    const approved = await r.approve(client.client_id, undefined, token, {}, headers);
+    expect(approved.response.status).toBe(200);
+    const { body: tokens } = await r.exchange(client.client_id, approved.code);
+    const listing = await r.rpc(tokens.access_token, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    expect(listing.message.result.tools).toHaveLength(6);
+    const reviewResult = await r.tool(tokens.access_token, "ask_human", { question: "review sample", wait_seconds: 0 });
+    expect(await r.h.service.run(r.h.principal(review.ownerUid), tx => tx.get("request", reviewResult.structuredContent.request_id))).not.toBeNull();
+    expect(await r.h.service.run(r.h.principal(uid), tx => tx.get("request", reviewResult.structuredContent.request_id))).toBeNull();
+
+    const regular = await r.connect();
+    const withoutReview = new CloudApp(r.h.service, r.app.verifier, 10_000, accountAuth, undefined, { store: r.store });
+    const list = (token: string) => withoutReview.fetch(new Request(`${OFFICIAL_CLOUD_ORIGIN}/v1/mcp`, {
+      method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    }));
+    expect((await list(tokens.access_token))?.status).toBe(401);
+    expect((await list(regular.tokens.access_token))?.status).toBe(200);
+  });
+});
 
 describe("OAuth discovery and client registration", () => {
   test("the OpenAI domain challenge serves only the configured value on the official host", async () => {

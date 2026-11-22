@@ -41,6 +41,7 @@ bun run --cwd cloud worker
 | `FIREBASE_AUTH_SERVICE_ACCOUNT_JSON` | API専用のアカウントリンク署名器。自分のFirebaseプロジェクトのサービスアカウントJSONを保護された秘密変数へ保存 |
 | `PUBLIC_URL` | APIとworker共通の正規HTTPS origin。公式環境は`https://api.oyobidashi.me`、セルフホストでは自身のURLを設定。Pushを使うworkerには必須 |
 | `OPENAI_APPS_CHALLENGE` | OpenAIのプラグイン審査で発行されたドメイン検証値。設定すると公式APIの `/.well-known/openai-apps-challenge` が値をそのまま返す |
+| `MCP_REVIEW_FIREBASE` | 公式API専用。通常とは別のFirebaseプロジェクトの `projectId`、Webの `apiKey`、審査用の `uid` を含むJSON。審査アカウントのメールアドレスとパスワードは含めない |
 | `PORT` | 待受ポート。既定8787、Railwayは自動設定 |
 | `DB_POOL_SIZE` | 1プロセスのDB接続上限。既定10 |
 | `TURN_CONCURRENCY` | 1ワーカーの同時LLM処理上限。既定8 |

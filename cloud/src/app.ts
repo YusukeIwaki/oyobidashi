@@ -18,6 +18,7 @@ import {
   type AccountAuth,
 } from "./account-auth.ts";
 import { MCP_PATH, OAuthServer, requestOrigin, type OAuthStore } from "./oauth.ts";
+import type { McpReviewAuth } from "./oauth-review.ts";
 import { serveMcp } from "./mcp-http.ts";
 import { UNRESTRICTED_INPUT } from "./input-restriction.ts";
 import { OFFICIAL_CLOUD_ORIGIN } from "./config.ts";
@@ -32,6 +33,7 @@ export interface RemoteMcpOptions {
   script?: () => Promise<string>;
   publicUrl?: string;
   openAiAppsChallenge?: string;
+  review?: McpReviewAuth;
 }
 
 export const MAX_WS_BUFFER_BYTES = 256 * 1024;
@@ -257,8 +259,10 @@ export class CloudApp {
           path === "/v1/events")
       )
         throw new CloudError(403, "forbidden", "not available to MCP clients");
-      const p =
-        internal ?? (await authenticate(req, this.service.db, this.verifier));
+      const reviewUid = internal ? undefined : await this.oauth?.reviewSetupUid(req, path);
+      const p: Principal = internal ?? (reviewUid
+        ? { uid: reviewUid, role: "agent" }
+        : await authenticate(req, this.service.db, this.verifier));
       if (path === "/v1/auth/link-token" && method === "POST") {
         requireRole(p, "agent");
         if (!this.accountAuth?.publicConfig.canLinkExisting)

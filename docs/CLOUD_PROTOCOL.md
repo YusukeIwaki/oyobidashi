@@ -92,8 +92,15 @@ parameter must name this endpoint. Authorization responses carry `iss`.
 The consent page signs the human in with Google, Apple or GitHub in an in-memory
 Firebase session and posts the decision with that ID token. The server verifies
 the token and the page's `Origin`, and accepts only a direct Google, Apple or
-GitHub sign-in. Anonymous and custom-token sessions cannot approve an MCP
-client. An owner under the FREE plan input restriction first sees that
+GitHub sign-in for ordinary accounts. On the official host, an optional
+`MCP_REVIEW_FIREBASE` configuration accepts a password-authenticated session
+from a separate Firebase project with one allowlisted UID. The reviewer
+session is mapped to a dedicated owner and can only approve or manage MCP
+connections, accept input restrictions, read presence, and prepare device
+pairing. The ordinary API verifier continues to trust the primary Firebase
+project. Removing the review configuration disables exchange and use of its
+MCP grants. Anonymous and custom-token sessions cannot approve an MCP client.
+An owner under the FREE plan input restriction first sees that
 restriction on its own screen and accepts it with a dedicated button; approval
 is refused with 409 `input_consent_required` until then. The page displays a
 separate, explicit approval button after sign-in;
