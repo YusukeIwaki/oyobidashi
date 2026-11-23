@@ -148,6 +148,7 @@ export class Billing {
     return {
       enabled: true,
       voice_training: this.service.voiceTrainingPolicy,
+      ...((await tx.claudeAccess()) ? { voice_provider: "anthropic-linked" } : {}),
       purchase_account_id: purchaseAccountId(tx.uid),
       active: granted || expires > now,
       // A grant has no end date, and outlasts any store period.

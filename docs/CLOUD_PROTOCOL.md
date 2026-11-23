@@ -404,6 +404,37 @@ warned or limited, and no API response changes for them.
 
 Model names stay deployment configuration and are never returned.
 
+### Claude Console の請求先連携（公式ホスト）
+
+`POST /oauth/claude/organization` はログイン済みの Firebase UID を管理者として組織を作ります。
+`POST /oauth/claude/organization/invite` は管理者が指定したメールアドレスへの単回コードを発行します。
+`POST /oauth/claude/organization/accept` はコードと Firebase の確認済みメールアドレスを照合し、
+既存 UID を同じ組織に登録します。`DELETE /oauth/claude/organization/member` は管理者によるメンバー解除、
+`DELETE /oauth/claude/organization/leave` はメンバー本人の退出です。
+
+`GET /oauth/claude/billing` は連携状態を返します。管理者の `POST` は `{"accept":true}` を受け、
+Claude Console の認可 URL を `redirect_to` として返します。
+`GET /oauth/claude/callback` で state、ブラウザー用 cookie と PKCE を照合し、
+Anthropic の連携 ID と Cloud KMS で暗号化した OAuth トークンを組織に保存します。
+管理者の `DELETE` は保存済みトークンの削除と請求先の連携解除を行います。
+これらの操作は MCP から利用できません。
+
+ペアリング先が公式クラウドの場合、端末認証付きの
+`GET /v1/voice/disclosure` は `{"provider":"anthropic-linked"}` など
+そのアカウントに対する送信先を返します。連携した Claude で応答する
+通話には `call.voice_provider: "anthropic-linked"` が付き、通話の応答と
+発話送信には `X-Oyobidashi-Voice-Provider: anthropic-linked` および
+通常の端末証明が必要です。送信先が一致しない場合は文字返信へ移ります。
+
+Claude で処理するリクエストは、作成時または発信時の組織、メンバー登録、請求先連携に紐づきます。
+連携の変更や利用上限で処理できない場合は文字返信へ移り、モデルや請求先への
+自動切り替えは行いません。App Store と Google Play の購入状態とは独立しています。
+
+会話ワーカーは連携単位のトークンで Claude API を呼びます。更新は組織の PostgreSQL ロックで予約し、
+その予約をコミットしてから Anthropic に送信します。応答が不明な場合は予約が残り、管理者の再連携が
+必要になります。更新後のトークンは保存が確認された時点から使います。
+
+
 ## Push routing and previews
 
 Cloud Push includes `recipient_device_id`. Native clients must reject a present

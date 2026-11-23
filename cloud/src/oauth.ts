@@ -142,7 +142,7 @@ const PAGE_STYLE = `body{font:16px/1.65 system-ui,sans-serif;background:#faf6eb;
 
 function page(title: string, attributes: Record<string, string>, body: string, script: boolean): string {
   const data = Object.entries(attributes).map(([k, v]) => ` data-${k}="${escapeHtml(v)}"`).join("");
-  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>お呼び出し — ${escapeHtml(title)}</title><style>${PAGE_STYLE}#providers label{display:block;margin:12px 0}#providers input{display:block;box-sizing:border-box;width:100%;margin-top:4px;padding:10px;border:1px solid #d6cdbb;border-radius:8px;font:inherit}</style>${script ? '<script type="module" src="/oauth.js"></script>' : ""}</head><body><main${data}>${body}</main></body></html>`;
+  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>お呼び出し — ${escapeHtml(title)}</title><style>${PAGE_STYLE}#actions section label{display:block;margin:12px 0}#actions section input:not([type=checkbox]){display:block;box-sizing:border-box;width:100%;margin-top:4px;padding:10px;border:1px solid #d6cdbb;border-radius:8px;font:inherit}#providers label{display:block;margin:12px 0}#providers input{display:block;box-sizing:border-box;width:100%;margin-top:4px;padding:10px;border:1px solid #d6cdbb;border-radius:8px;font:inherit}</style>${script ? '<script type="module" src="/oauth.js"></script>' : ""}</head><body><main${data}>${body}</main></body></html>`;
 }
 const INTERACTIVE_BODY = `<h1 id="heading"></h1><p id="explanation">準備しています…</p><dl id="details" hidden></dl><div id="providers"></div><div id="pairing" hidden><div id="qr"></div><p id="pairing-hint"></p></div><div id="actions"></div><p id="status" role="status" aria-live="polite"></p><footer>ご自身で始めた操作のときだけ進めてください。心当たりがなければ、この画面を閉じてください。<br><a href="/oauth/connections">接続済みアプリを確認・取り消す</a></footer>`;
 
@@ -225,7 +225,11 @@ export class OAuthServer {
         return withCors(json(200, this.serverMetadata(req)));
       if (path === "/oauth/authorize") return this.authorizePage(req, url);
       if (path === "/oauth/connections")
-        return html(200, page("接続済みアプリ", { mode: "connections", ...this.reviewAttributes(req) }, INTERACTIVE_BODY, true));
+        return html(200, page("接続済みアプリ", {
+          mode: "connections", ...this.reviewAttributes(req),
+          ...(this.deps.service.claudeBillingEnabled && this.origin(req) === OFFICIAL_CLOUD_ORIGIN
+            ? { "claude-billing": "1" } : {}),
+        }, INTERACTIVE_BODY, true));
       if (path === "/oauth/grants") return this.grants(req);
       if (path === "/pair")
         return html(200, page("スマホをペアリング", { mode: "pair" }, INTERACTIVE_BODY, true));

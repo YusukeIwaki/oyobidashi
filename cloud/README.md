@@ -149,6 +149,46 @@ APIがOAuth 2.1の認可サーバーを兼ねます。追加の環境変数は�
 
 ローカル実行時は`bun run --cwd cloud build:auth`で同意画面のbundle（`public/oauth.js`）も生成します。エンドポイントと検証内容の詳細は[docs/CLOUD_PROTOCOL.md](../docs/CLOUD_PROTOCOL.md#hosted-mcp-endpoint)を参照してください。
 
+## Claude の請求先連携（公式クラウド）
+
+1. 管理者は `api.oyobidashi.me/oauth/connections` で既存の Oyobidashi アカウントにログインし、組織を作ります。Claude 側で Admin または Billing 権限を持つ管理者が、その Oyobidashi 組織に Claude Console の組織を連携します。
+2. 管理者は招待する人のメールアドレスを指定し、発行された招待コードを本人に渡します。コードは単回使用で、3日間有効です。招待された人は既存の Oyobidashi アカウントで同じページにログインし、コードを入力します。Firebase の確認済みメールアドレスが招待と一致していれば、端末をペアリングし直さずに利用できます。
+3. Claude API の利用分は Anthropic が連携先の組織に直接請求します。Oyobidashi の PLUS 購入は不要です。Claude Pro / Max などの契約枠は対象外です。
+
+Oyobidashi の組織ごとに Claude の請求用プロファイルを1件持ち、利用者の Firebase UID から所属を確認します。アカウントが参加できる請求先組織は同時に1つです。管理者はメンバーを外せます。メンバーは自分で退出できます。管理者の Oyobidashi アカウントを削除すると、管理していた組織の連携とメンバー登録も解除します。
+
+連携が有効な間は、通話の文字起こしと質問・補足・選択肢・会話履歴を Anthropic へ送ります。Claude の連携切れ、利用上限、所属変更で処理できない場合は、同じ質問に文字で返信できます。過去の Claude 用の質問を、別の組織や標準の音声モデルで再利用することはありません。
+
+組織の連携ごとに発行された OAuth トークンで Claude を呼び出します。アクセストークンとリフレッシュトークンは、署名鍵とは別の Cloud KMS 鍵で暗号化し、PostgreSQL の `cloud_claude_tokens` に保存します。暗号文は Oyobidashi の組織 ID と Anthropic の連携 ID に結びつきます。
+
+同じ組織の更新は PostgreSQL で直列化します。更新結果が不明なときは旧トークンを再送せず、管理者による再連携まで通話を文字返信に切り替えます。以前の共通トークン方式で連携した組織も再連携が必要です。DB を過去のバックアップから復元する場合は、連携機能を停止した状態で復元し、再連携してください。復元した古いリフレッシュトークンを使うと Anthropic が連携を失効させる場合があります。
+
+### Claude Console の設定
+
+1. Google Cloud KMS に署名用の鍵を作ります。アルゴリズムは `RSA_SIGN_PKCS1_2048_SHA256`、`RSA_SIGN_PKCS1_3072_SHA256`、`RSA_SIGN_PKCS1_4096_SHA256` のいずれかです。HSM 保護レベルも選べます。公式 API と worker は Google Cloud のサービス ID で実行し、その鍵にだけ `cloudkms.cryptoKeyVersions.useToSign` と `cloudkms.cryptoKeyVersions.viewPublicKey` を許可します。`CLAUDE_BILLING_KMS_KEY_VERSION` に鍵バージョンのリソース名を設定します。アプリには公開鍵のみが渡ります。
+2. Claude Console の Workload identity で Custom OIDC を登録します。issuer は `https://api.oyobidashi.me/claude-identity`、JWKS は `https://api.oyobidashi.me/claude-identity/jwks` です。
+3. OAuth apps で **Bill and link to organizations** を有効にした OAuth アプリを作り、`billing:attribution` と `offline_access` を許可します。戻り先は `https://api.oyobidashi.me/oauth/claude/callback` です。Client authentication のサブジェクトは `oyobidashi:claude:client` に絞ります。
+4. オペレーター用のサービスアカウントと Workload Identity Federation ルールを作ります。ルールのサブジェクトは `oyobidashi:claude:operator` に絞り、Client authentication とは別の audience を使います。OAuth アプリでオペレーターとデフォルトのワークスペースを指定し、**Disable operator-only tokenless authentication** を有効にします。共通トークンはユーザープロファイルの管理に使います。
+5. API と worker に同じ `CLAUDE_BILLING_CONFIG`（JSON）を設定します。KMS に別の対称鍵（`ENCRYPT_DECRYPT`）を作成し、その CryptoKey のリソース名を両方の `CLAUDE_BILLING_KMS_TOKEN_KEY` に設定します。API のサービス ID にはこの鍵の暗号化だけを、worker のサービス ID には暗号化と復号を許可します。API と worker の両方で対応版を配備してから有効にします。現在の Railway 環境には Google Cloud のメタデータ認証がないため、Cloud Run などサービス ID が使える実行環境を用意してください。
+
+```json
+{
+  "clientId": "<OAuth app client ID>",
+  "clientAudience": "<OAuth client audience>",
+  "operatorAudience": "<WIF audience>",
+  "organizationId": "<operator organization ID>",
+  "federationRuleId": "<WIF rule ID>",
+  "serviceAccountId": "<operator service account ID>",
+  "workspaceId": "<workspace ID>",
+  "model": "<Claude API model ID>"
+}
+```
+
+6. アプリの Test users に、別の API 課金組織の Admin または Billing 担当者を追加します。管理者が連携した組織にテスト利用者を招待します。テスト利用者が更新済みのモバイルアプリで通話に応答し、Claude Console で組織ごとの請求先を確認します。一般公開には [Anthropic の公開手続き](https://platform.claude.com/docs/en/manage-claude/oauth-apps/app-review) が必要です。
+
+Anthropic の設定とテスト条件は [Linked billing の公式手順](https://platform.claude.com/docs/en/manage-claude/oauth-apps/organization-billing-connections) に従います。
+
+
 ## ログインとペアリング
 
 以下はstdioブリッジを使う場合の手順です。

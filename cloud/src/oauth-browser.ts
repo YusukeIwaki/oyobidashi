@@ -36,6 +36,7 @@ const appState = appPairingState(location.search);
 const reviewProject = main?.dataset.reviewProject;
 const reviewApiKey = main?.dataset.reviewApiKey;
 const reviewOnly = main?.dataset.reviewOnly === "1";
+const claudeBillingEnabled = main?.dataset.claudeBilling === "1";
 const labels: Record<AccountProvider,string> = {google:"Google", apple:"Apple", github:"GitHub"};
 const UNREACHABLE = "通信できませんでした。接続を確認して、もう一度お試しください。";
 let user: User | undefined;
@@ -184,6 +185,140 @@ function showApproval() {
   message("接続先を確認してから選んでください。");
 }
 
+async function showClaudeBilling() {
+  if (!claudeBillingEnabled || reviewUser || location.origin !== "https://api.oyobidashi.me") return;
+  const billingPath = "/oauth/claude/billing", orgPath = "/oauth/claude/organization";
+  let result: {
+    status: string;
+    organization: {name: string; role: "admin" | "member"} | null;
+    members: {uid: string; email?: string}[];
+  };
+  try {
+    result = await call(billingPath, {method:"GET"}) as typeof result;
+    if (!result.status) return;
+  } catch { return; }
+
+  const section = document.createElement("section");
+  const title = document.createElement("h2");
+  title.textContent = "Claude で通話に応答";
+  const description = document.createElement("p");
+  description.textContent = "管理者が Claude Console の組織を連携すると、招待されたメンバーが音声通話を使えます。Claude API の利用分は Anthropic が連携先の組織に直接請求します。Oyobidashi の有料プランは不要です。";
+  section.append(title, description);
+
+  function field(label: string, type = "text") {
+    const node = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = type;
+    node.append(label, input);
+    section.append(node);
+    return input;
+  }
+  function action(label: string, run: () => Promise<void>) {
+    const control = button(label, async () => {
+      control.disabled = true;
+      try { await run(); }
+      catch { message("操作を完了できませんでした。入力内容とアカウントを確認して、もう一度お試しください。"); }
+      finally { control.disabled = false; }
+    });
+    section.append(control);
+    return control;
+  }
+  function consent() {
+    const label = document.createElement("label");
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    label.append(check, " 通話の文字起こし、質問、選択肢、補足、会話履歴が Anthropic に送られ、Claude API の利用分が連携した組織に請求されることに同意します。");
+    section.append(label);
+    return check;
+  }
+
+  const org = result.organization;
+  const account = document.createElement("p");
+  account.textContent = `ログイン中の Oyobidashi アカウント ${user?.email ?? user?.displayName ?? "現在のアカウント"}`;
+  section.append(account);
+  if (!org) {
+    const name = field("新しい組織の名前");
+    name.maxLength = 80;
+    action("組織を作成", async () => {
+      await call(orgPath, {method:"POST", body:{name:name.value.trim()}});
+      await showConnections();
+    });
+    const invitation = field("管理者から受け取った招待コード");
+    invitation.maxLength = 43;
+    invitation.autocomplete = "off";
+    const accepted = consent();
+    action("招待を受けて組織に参加", async () => {
+      if (!accepted.checked) return message("送信先と請求先を確認してください。");
+      await call(`${orgPath}/accept`, {method:"POST", body:{invitation:invitation.value.trim(), accept:true}});
+      await showConnections();
+    });
+  } else {
+    const state = document.createElement("p");
+    const billingStatus: Record<string, string> = {
+      linked: "Claude の請求先を連携済み",
+      unlink_pending: "解除の処理中です。質問は文字で返信できます。",
+      relink_required: "Claude の認証を更新するため、請求先を解除してもう一度連携してください。",
+      unlinked: "Claude の請求先を連携していません。",
+    };
+    state.textContent = `${org.name} · ${billingStatus[result.status] ?? "連携状況を確認できませんでした。"}`;
+    section.append(state);
+    if (org.role === "member") {
+      action("組織から退出", async () => {
+        if (!confirm(`${org.name} から退出しますか？`)) return;
+        await call(`${orgPath}/leave`, {method:"DELETE"});
+        await showConnections();
+      });
+    } else {
+      if (result.status === "unlinked") {
+        const hint = document.createElement("p");
+        hint.textContent = `Claude の承認画面で、${org.name} の請求に使う Claude アカウントと組織を確認してください。`;
+        section.append(hint);
+        const accepted = consent();
+        action("Claude の請求先を連携", async () => {
+          if (!accepted.checked) return message("送信先と請求先を確認してください。");
+          const response = await call(billingPath, {method:"POST", body:{accept:true}}) as {redirect_to?: string};
+          const destination = new URL(response.redirect_to ?? "");
+          if (destination.origin !== "https://auth.claude.com" || destination.pathname !== "/oauth/authorize") throw new Error();
+          location.assign(destination.href);
+        });
+      } else {
+        action("Claude の請求先を解除", async () => {
+          if (!confirm(`${org.name} の Claude 連携を解除しますか？ メンバーからの音声通話は文字での返信に切り替わります。`)) return;
+          await call(billingPath, {method:"DELETE"});
+          await showConnections();
+        });
+        if (result.status === "linked") {
+          const email = field("招待するメンバーのメールアドレス", "email");
+          const invitation = field("発行した招待コード");
+          invitation.readOnly = true;
+          invitation.hidden = true;
+          invitation.parentElement!.hidden = true;
+          action("招待コードを発行", async () => {
+            const issued = await call(`${orgPath}/invite`, {method:"POST", body:{email:email.value}}) as {invitation?: string};
+            if (!issued.invitation) throw new Error();
+            invitation.value = issued.invitation;
+            invitation.hidden = false;
+            invitation.parentElement!.hidden = false;
+            invitation.select();
+            message("招待コードを対象の利用者に渡してください。有効期限は3日間です。");
+          });
+        }
+      }
+      for (const member of result.members) {
+        const row = document.createElement("p");
+        row.textContent = member.email ?? "メンバー";
+        section.append(row);
+        action("メンバーを外す", async () => {
+          if (!confirm(`${member.email ?? "このメンバー"} を ${org.name} から外しますか？`)) return;
+          await call(`${orgPath}/member`, {method:"DELETE", body:{uid:member.uid}});
+          await showConnections();
+        });
+      }
+    }
+  }
+  actions.prepend(section);
+}
+
 async function showConnections() {
   if (mode !== "connections") return;
   providers.replaceChildren();
@@ -216,6 +351,7 @@ async function showConnections() {
       actions.append(section);
     }
     message(result.grants.length ? "アプリ名は接続元の自己申告です。" : "接続済みアプリはありません。");
+    await showClaudeBilling();
   } catch {
     message(UNREACHABLE);
     actions.replaceChildren(button("再試行", () => void showConnections()));
@@ -312,6 +448,7 @@ async function signedIn() {
   providers.replaceChildren();
   actions.replaceChildren();
   message("アカウントを確認しています…");
+  if (mode === "connections" && claudeBillingEnabled && !reviewUser) return void showConnections();
   let count: number, restriction: InputRestriction;
   try {
     restriction = parseInputRestriction(await call("/v1/input-restriction", {method:"GET"}));
@@ -434,6 +571,11 @@ if (mode === "authorize") {
     : "エージェント（MCP）の接続に使ったアカウントでログインすると、スマホを登録する手順を表示します。";
 } else {
   heading.textContent = "接続済みアプリ";
-  explanation.textContent = "接続に使ったアカウントでログインすると、許可したアプリを確認・取り消しできます。";
+  const result = new URLSearchParams(location.search).get("claude");
+  explanation.textContent = result === "linked"
+    ? "ログインすると Claude の連携状態を確認できます。"
+    : result === "failed"
+      ? "Claude の連携は完了しませんでした。ログインしてやり直せます。"
+      : "接続に使ったアカウントでログインすると、許可したアプリを確認・取り消しできます。";
 }
 void start();

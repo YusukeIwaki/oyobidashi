@@ -13,6 +13,7 @@ import {
   type Job,
   type Transaction,
   type Turn,
+  type ClaudeCredentialRef,
   type CloudRequest,
 } from "./types.ts";
 
@@ -47,6 +48,7 @@ export interface WorkerOptions {
   conversation?: ConversationProvider;
   /** Used instead of `conversation` for owners without an active subscription. */
   freeConversation?: ConversationProvider;
+  linkedConversation?: (ref: ClaudeCredentialRef) => ConversationProvider;
   push?: PushProviders;
   leaseMs?: number;
   heartbeatMs?: number;
@@ -101,12 +103,13 @@ export class JobWorker {
     j.leaseToken = null;
     await tx.saveJob(j);
   }
-  private async failTurn(tx: Transaction, r: CloudRequest, t: Turn) {
+  private async failTurn(tx: Transaction, r: CloudRequest, t: Turn, linked = false) {
     t.state = "failed";
     t.error = {
       code: "conversation_failed",
-      message:
-        "音声の応答を取得できませんでした。再試行するか、テキストで返信してください。",
+      message: linked
+        ? "Claude の応答を取得できませんでした。連携と利用上限を確認するか、文字で返信してください。"
+        : "音声の応答を取得できませんでした。再試行するか、テキストで返信してください。",
     };
     await tx.put("turn", t.id, t, this.service.now() + 30 * 86400_000);
     if (r.call?.id === t.callId && r.call.turn?.id === t.id) {
@@ -216,7 +219,9 @@ export class JobWorker {
       }
       // Checked per turn, like the plan: a subscription that lapses mid-call must not
       // send an owner's words to the restricted model before they accepted its terms.
-      if (await this.service.inputConsentMissing(tx)) {
+      const linked = await this.service.linkedVoice(tx, r);
+      if (linked === false || (linked && (!this.options.linkedConversation || current.attempts > 1)) ||
+          (await this.service.inputConsentMissing(tx))) {
         await this.service.endCall(tx, r, "failed", true);
         await this.service.save(tx, r, "fallback");
         await this.done(tx, current);
@@ -230,7 +235,8 @@ export class JobWorker {
         r,
         t,
         // Decided per turn: a subscription that starts or lapses mid-call takes effect at once.
-        conversation:
+        linked: !!linked,
+        conversation: linked ? this.options.linkedConversation?.(linked) :
           this.options.freeConversation &&
           !(await this.service.hasPlus(tx))
             ? this.options.freeConversation
@@ -276,7 +282,7 @@ export class JobWorker {
         return;
       }
       const now = this.service.now();
-      if (signal.aborted && signal.reason === "shutdown" && t.deadline > now) {
+      if (!input.linked && signal.aborted && signal.reason === "shutdown" && t.deadline > now) {
         current.state = "ready";
         current.available = now;
         current.leaseToken = null;
@@ -311,7 +317,11 @@ export class JobWorker {
           await this.service.save(tx, r, "none");
           await tx.saveJob(current);
         } else {
-          await this.failTurn(tx, r, t);
+          await this.failTurn(tx, r, t, input.linked);
+          if (input.linked) {
+            await this.service.endCall(tx, r, "failed", true);
+            await this.service.save(tx, r, "fallback");
+          }
           await this.done(tx, current);
         }
         return;

@@ -16,6 +16,7 @@ export interface TurnView {
 export interface CloudCall extends Call {
   turn?: TurnView;
   turn_count?: number;
+  voice_provider?: "anthropic-linked";
 }
 export interface CloudRequest extends RequestObject {
   version: number;
@@ -87,12 +88,52 @@ export function newerAppleProof(previous: AppleBillingProof | null, next: AppleB
 export interface Entitlement {
   sources: Record<string, EntitlementSource>;
 }
+export type ClaudeMembership = {
+  uid: string;
+  role: "admin" | "member";
+  grantId: string;
+  email?: string;
+};
+export type ClaudeOrganization = { name: string };
+export type ClaudeAccess = {
+  organizationId: string;
+  name: string;
+  member: ClaudeMembership;
+  billing: Records["claude_billing"] | null;
+  tokens: Pick<ClaudeTokenRecord, "connectionId" | "refreshExpires" | "refreshStarted" | "retryAfter"> | null;
+};
+
+export interface ClaudeCredentialRef {
+  organizationId: string;
+  connectionId: string;
+  profileId: string;
+  grantId: string;
+  uid: string;
+}
+
+export interface ClaudeTokenRecord {
+  connectionId: string;
+  ciphertext: string;
+  accessExpires: number;
+  refreshExpires: number;
+  refreshId: string | null;
+  refreshStarted: number | null;
+  retryAfter: number | null;
+}
+
 export interface Records {
   entitlement: Entitlement;
   review_plus: { expires: number };
   account_deletion: { started: number };
   /** The owner's acceptance of the FREE plan input restriction. */
   input_consent: { version: number; at: number };
+  claude_organization: ClaudeOrganization;
+  claude_member: ClaudeMembership;
+  claude_invite: { emailHash: string; expires: number };
+  claude_profile: { id: string };
+  claude_billing: { profileId: string; connectionId: string; disabled?: boolean; busyUntil?: number };
+  claude_billing_pending: { actor: string; state: string; browser: string; verifier: string; profileId: string; expires: number; busyUntil: number };
+  claude_request: { organizationId: string; grantId: string; connectionId: string | null };
   account_delete_ticket: { deviceId: string; expires: number };
 
   /** App Attest key of one iOS device, keyed by device ID. */
@@ -147,6 +188,11 @@ export type NewJob = Pick<
 > & { id?: string; available?: number };
 export interface Transaction {
   readonly uid: string;
+  getClaudeTokens(): Promise<ClaudeTokenRecord | null>;
+  putClaudeTokens(record: ClaudeTokenRecord): Promise<void>;
+  removeClaudeTokens(): Promise<void>;
+  claudeJoinAllowed(uid: string): Promise<boolean>;
+  claudeAccess(uid?: string): Promise<ClaudeAccess | null>;
   accountDeleted(): Promise<boolean>;
   eraseAccount(): Promise<void>;
   get<K extends Kind>(kind: K, id: string): Promise<Records[K] | null>;
@@ -182,6 +228,8 @@ export interface Database {
   findDevice(hash: string): Promise<{ uid: string; device: Device } | null>;
   findPairing(hash: string): Promise<string | null>;
   findPreview(hash: string): Promise<string | null>;
+  findClaudeInvite(hash: string): Promise<string | null>;
+  findClaudeBillingState(hash: string): Promise<string | null>;
   findAccountDeletion(hash: string): Promise<string | null>;
   isBanned(uid: string): Promise<boolean>;
   claim(kind: Job["kind"], now: number, leaseMs: number): Promise<Job | null>;
@@ -204,7 +252,7 @@ export interface WakeBus {
 export interface IdentityVerifier {
   verify(token: string): Promise<string>;
   /** Also reports how the user signed in ("anonymous", "google.com", ...) when known. */
-  identify?(token: string): Promise<{ uid: string; provider: string | null; authenticatedAt?: number }>;
+  identify?(token: string): Promise<{ uid: string; provider: string | null; authenticatedAt?: number; verifiedEmail?: string }>;
 }
 export const turnView = (t: Turn): TurnView => ({
   id: t.id,

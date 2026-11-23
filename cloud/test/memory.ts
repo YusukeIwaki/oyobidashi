@@ -5,6 +5,7 @@ import {
   pushClientKey,
   scopedJobId,
   type Database,
+  type ClaudeTokenRecord,
   type AppleBillingProof,
   type EntitlementSource,
   type GoogleBillingProof,
@@ -28,6 +29,7 @@ export class MemoryDatabase implements Database {
     }
   >();
   jobs = new Map<string, Job>();
+  private claudeTokens = new Map<string, ClaudeTokenRecord>();
   locks = new Map<string, Promise<void>>();
   fail = false;
   now = Date.now();
@@ -61,6 +63,7 @@ export class MemoryDatabase implements Database {
         .filter(([, j]) => j.uid === uid)
         .map(([k, v]) => [k, structuredClone(v)]),
     );
+    let tokens = structuredClone(this.claudeTokens.get(uid)) ?? null;
     const claims = new Map<string, { uid: string; deviceId: string } | null>();
     let bumps = 0;
     let erased = false;
@@ -68,9 +71,31 @@ export class MemoryDatabase implements Database {
     const key = (kind: Kind, id: string) => `${uid}:${kind}:${id}`;
     const tx: Transaction = {
       uid,
+      getClaudeTokens: async () => structuredClone(tokens),
+      putClaudeTokens: async record => { tokens = structuredClone(record); },
+      removeClaudeTokens: async () => { tokens = null; },
+      claudeJoinAllowed: async memberUid => !this.deleted.has(memberUid) &&
+        !this.records.has(`${memberUid}:account_deletion:current`) &&
+        !this.records.has(`${memberUid}:ban:current`),
+      claudeAccess: async (memberUid = uid) => {
+        const memberRow = [...rows.values(), ...[...this.records.values()].filter(r => r.uid !== uid)]
+          .find(r => r.kind === "claude_member" && r.id === memberUid);
+        if (!memberRow) return null;
+        const source = memberRow.uid === uid ? rows : this.records;
+        const org = source.get(`${memberRow.uid}:claude_organization:current`)?.doc as Records["claude_organization"] | undefined;
+        const billing = source.get(`${memberRow.uid}:claude_billing:current`)?.doc as Records["claude_billing"] | undefined;
+        const row = memberRow.uid === uid ? tokens : this.claudeTokens.get(memberRow.uid);
+        return org ? structuredClone({
+          organizationId: memberRow.uid, name: org.name,
+          member: memberRow.doc as Records["claude_member"], billing: billing ?? null,
+          tokens: row ? { connectionId: row.connectionId, refreshExpires: row.refreshExpires,
+            refreshStarted: row.refreshStarted, retryAfter: row.retryAfter } : null,
+        }) : null;
+      },
       accountDeleted: async () => erased || this.deleted.has(uid),
       eraseAccount: async () => {
         rows.clear();
+        tokens = null;
         jobs.clear();
         for (const [key, owner] of this.pushOwners) if (owner.uid === uid) claims.set(key, null);
         erased = true;
@@ -186,11 +211,18 @@ export class MemoryDatabase implements Database {
     };
     try {
       const result = await fn(tx);
+      for (const member of rows.values()) {
+        if (member.kind === "claude_member" && [...this.records.values()].some(other =>
+          other.kind === "claude_member" && other.uid !== uid && other.id === member.id))
+          throw Object.assign(new Error("duplicate Claude membership"), {code: "23505", constraint: "cloud_claude_one_membership"});
+      }
       this.check();
       for (const [k, r] of this.records)
         if (r.uid === uid) this.records.delete(k);
       for (const [k, j] of this.jobs) if (j.uid === uid) this.jobs.delete(k);
       for (const [k, r] of rows) this.records.set(k, r);
+      if (tokens) this.claudeTokens.set(uid, tokens);
+      else this.claudeTokens.delete(uid);
       for (const [k, j] of jobs) this.jobs.set(k, j);
       for (const [k, v] of claims)
         if (v) this.pushOwners.set(k, v);
@@ -239,6 +271,13 @@ export class MemoryDatabase implements Database {
         (r) => r.kind === "preview" && r.id === hash,
       )?.uid ?? null
     );
+  }
+  async findClaudeInvite(hash: string) {
+    return [...this.records.values()].find(row => row.kind === "claude_invite" && row.id === hash)?.uid ?? null;
+  }
+  async findClaudeBillingState(hash: string) {
+    return [...this.records.values()].find(row => row.kind === "claude_billing_pending" &&
+      (row.doc as Records["claude_billing_pending"]).state === hash)?.uid ?? null;
   }
   async findAccountDeletion(hash: string) {
     return [...this.records.values()].find(row => row.kind === "account_delete_ticket" && row.id === hash)?.uid ?? null;

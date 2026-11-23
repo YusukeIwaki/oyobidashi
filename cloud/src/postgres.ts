@@ -7,6 +7,8 @@ import {
   pushClientKey,
   scopedJobId,
   type Database,
+  type ClaudeAccess,
+  type ClaudeTokenRecord,
   type Device,
   type AppleBillingProof,
   type GoogleBillingProof,
@@ -61,6 +63,20 @@ CREATE INDEX IF NOT EXISTS cloud_push_owner_device ON cloud_push_owners(uid,devi
 CREATE TABLE IF NOT EXISTS cloud_billing_claims(source text NOT NULL,uid text NOT NULL,PRIMARY KEY(source,uid));
 CREATE INDEX IF NOT EXISTS cloud_billing_claims_owner ON cloud_billing_claims(uid);
 CREATE UNIQUE INDEX IF NOT EXISTS cloud_account_delete_ticket ON cloud_records(id) WHERE kind='account_delete_ticket';
+CREATE TABLE IF NOT EXISTS cloud_claude_tokens (
+  organization_id text PRIMARY KEY,
+  connection_id text NOT NULL,
+  ciphertext text NOT NULL,
+  access_expires bigint NOT NULL,
+  refresh_expires bigint NOT NULL,
+  refresh_id uuid,
+  refresh_started bigint,
+  retry_after bigint,
+  CHECK ((refresh_id IS NULL) = (refresh_started IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS cloud_claude_one_membership ON cloud_records(id) WHERE kind='claude_member';
+CREATE UNIQUE INDEX IF NOT EXISTS cloud_claude_invite ON cloud_records(id) WHERE kind='claude_invite';
+CREATE UNIQUE INDEX IF NOT EXISTS cloud_claude_billing_state ON cloud_records((doc->>'state')) WHERE kind='claude_billing_pending';
 CREATE TABLE IF NOT EXISTS cloud_billing_superseded(source text PRIMARY KEY,successor text NOT NULL);
 CREATE TABLE IF NOT EXISTS cloud_apple_billing_state(source text PRIMARY KEY,doc jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS cloud_owner_versions(uid text PRIMARY KEY,revision bigint NOT NULL);
@@ -95,6 +111,7 @@ class PgTransaction implements Transaction {
   async eraseAccount() {
     const marker = new Bun.CryptoHasher("sha256").update(this.uid).digest("hex");
     await this.sql.unsafe("INSERT INTO cloud_deleted_accounts(uid_hash) VALUES($1) ON CONFLICT DO NOTHING", [marker]);
+    await this.removeClaudeTokens();
     // Keep the previously claimed purchase unavailable for a new UID.
     await this.sql.unsafe(
       "UPDATE cloud_billing_claims SET uid=$2 WHERE uid=$1",
@@ -110,6 +127,58 @@ class PgTransaction implements Transaction {
     readonly uid: string,
     private sql: Query,
   ) {}
+  async getClaudeTokens(): Promise<ClaudeTokenRecord | null> {
+    const [row] = await this.sql.unsafe("SELECT * FROM cloud_claude_tokens WHERE organization_id=$1", [this.uid]);
+    if (!row) return null;
+    return {
+      connectionId: row.connection_id as string,
+      ciphertext: row.ciphertext as string,
+      accessExpires: Number(row.access_expires),
+      refreshExpires: Number(row.refresh_expires),
+      refreshId: row.refresh_id as string | null,
+      refreshStarted: row.refresh_started === null ? null : Number(row.refresh_started),
+      retryAfter: row.retry_after === null ? null : Number(row.retry_after),
+    };
+  }
+  async putClaudeTokens(record: ClaudeTokenRecord) {
+    await this.sql.unsafe(`
+      INSERT INTO cloud_claude_tokens
+        (organization_id,connection_id,ciphertext,access_expires,refresh_expires,refresh_id,refresh_started,retry_after)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+      ON CONFLICT(organization_id) DO UPDATE SET
+        connection_id=EXCLUDED.connection_id,ciphertext=EXCLUDED.ciphertext,
+        access_expires=EXCLUDED.access_expires,refresh_expires=EXCLUDED.refresh_expires,
+        refresh_id=EXCLUDED.refresh_id,refresh_started=EXCLUDED.refresh_started,retry_after=EXCLUDED.retry_after`,
+      [this.uid, record.connectionId, record.ciphertext, record.accessExpires, record.refreshExpires,
+        record.refreshId, record.refreshStarted, record.retryAfter]);
+  }
+  async removeClaudeTokens() {
+    await this.sql.unsafe("DELETE FROM cloud_claude_tokens WHERE organization_id=$1", [this.uid]);
+  }
+  async claudeJoinAllowed(uid: string) {
+    // Membership changes lock the organization first, then the account. Account
+    // deletion commits its marker before it takes the organization lock.
+    await this.sql.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [uid]);
+    const marker = new Bun.CryptoHasher("sha256").update(uid).digest("hex");
+    const [row] = await this.sql.unsafe(`
+      SELECT NOT EXISTS(SELECT 1 FROM cloud_deleted_accounts WHERE uid_hash=$1)
+        AND NOT EXISTS(SELECT 1 FROM cloud_records WHERE uid=$2
+          AND kind IN ('account_deletion','ban') AND id='current') AS allowed`, [marker, uid]);
+    return row?.allowed === true;
+  }
+  async claudeAccess(uid = this.uid) {
+    const rows = await this.sql.unsafe(`
+      SELECT m.uid AS "organizationId", o.doc->>'name' AS name, m.doc AS member, b.doc AS billing,
+        CASE WHEN t.connection_id IS NOT NULL THEN jsonb_build_object(
+          'connectionId', t.connection_id, 'refreshExpires', t.refresh_expires,
+          'refreshStarted', t.refresh_started, 'retryAfter', t.retry_after) END AS tokens
+      FROM cloud_records m
+      JOIN cloud_records o ON o.uid=m.uid AND o.kind='claude_organization' AND o.id='current'
+      LEFT JOIN cloud_records b ON b.uid=m.uid AND b.kind='claude_billing' AND b.id='current'
+      LEFT JOIN cloud_claude_tokens t ON t.organization_id=m.uid
+      WHERE m.id=$1 AND m.kind='claude_member'`, [uid]);
+    return (rows[0] as ClaudeAccess | undefined) ?? null;
+  }
   async get<K extends Kind>(kind: K, id: string): Promise<Records[K] | null> {
     const rows = await this.sql.unsafe(
       `SELECT doc FROM cloud_records r WHERE uid=$1 AND kind=$2 AND id=$3 ${kind === "device" ? "AND NOT EXISTS(SELECT 1 FROM cloud_displaced_devices x WHERE x.uid=r.uid AND x.device_id=r.id)" : ""}`,
@@ -335,6 +404,14 @@ export class PostgresDatabase implements Database {
       "SELECT uid FROM cloud_records WHERE kind='pairing' AND id=$1",
       [hash],
     );
+    return (rows[0]?.uid as string) ?? null;
+  }
+  async findClaudeInvite(hash: string) {
+    const rows = await this.sql.unsafe("SELECT uid FROM cloud_records WHERE kind='claude_invite' AND id=$1", [hash]);
+    return (rows[0]?.uid as string) ?? null;
+  }
+  async findClaudeBillingState(hash: string) {
+    const rows = await this.sql.unsafe("SELECT uid FROM cloud_records WHERE kind='claude_billing_pending' AND doc->>'state'=$1", [hash]);
     return (rows[0]?.uid as string) ?? null;
   }
   async findAccountDeletion(hash: string) {

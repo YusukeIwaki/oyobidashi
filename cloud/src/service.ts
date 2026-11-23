@@ -1,3 +1,4 @@
+import { claudeTokensNeedRelink } from "./claude-tokens.ts";
 import { deliveryMode } from "../../relay/src/policy.ts";
 import { INPUT_CONSENT_MISSING_MESSAGE, INPUT_RESTRICTION_VERSION, type InputRestriction } from "./input-restriction.ts";
 import { PUSH_FIELDS, registrationField, freshPushRegistration, validPushClientId } from "../../relay/src/push/lifecycle.ts";
@@ -17,6 +18,7 @@ import {
   liveTurn,
   turnView,
   type CloudRequest,
+  type ClaudeCredentialRef,
   type Database,
   type Device,
   type Transaction,
@@ -57,6 +59,7 @@ export class CloudService {
     plus: null,
   };
   voiceProofRequired = false;
+  claudeBillingEnabled = false;
   /**
    * Where voice conversations are sent. Phones show it when pairing, which is
    * where the human permits sending their words to that third party.
@@ -138,6 +141,33 @@ export class CloudService {
   async accountLinkAttempt(tx: Transaction) {
     await this.quota(tx, "account_link", 10);
   }
+  async claudeBillingAttempt(tx: Transaction) {
+    await this.quota(tx, "claude_billing", 5);
+  }
+  async closeVoiceCalls(tx: Transaction) {
+    for (const request of await tx.list("request", { status: "pending" }, 201)) {
+      if (!request.call || request.call.state === "ended") continue;
+      await this.endCall(tx, request, "failed", true);
+      await this.save(tx, request, "fallback");
+    }
+  }
+  async voiceDisclosure(tx: Transaction) {
+    return await tx.claudeAccess() ? "anthropic-linked" : this.voiceProvider;
+  }
+  /** Compare the request's original model choice with the owner's current selection. */
+  async linkedVoice(tx: Transaction, request: CloudRequest): Promise<ClaudeCredentialRef | false | null> {
+    const access = await tx.claudeAccess();
+    const billing = access?.billing;
+    const choice = await tx.get("claude_request", request.id);
+    if (!access && !choice && !request.call?.voice_provider) return null;
+    if (!this.claudeBillingEnabled || !access || !billing || billing.disabled ||
+        claudeTokensNeedRelink(access, this.now()) || (access.tokens?.retryAfter ?? 0) > this.now() ||
+        choice?.organizationId !== access.organizationId || choice.grantId !== access.member.grantId ||
+        choice.connectionId !== billing.connectionId || request.call?.voice_provider !== "anthropic-linked")
+      return false;
+    return { organizationId: access.organizationId, connectionId: billing.connectionId,
+      profileId: billing.profileId, grantId: access.member.grantId, uid: tx.uid };
+  }
   async billingAttempt(tx: Transaction) {
     await this.quota(tx, "billing", 30);
   }
@@ -166,7 +196,7 @@ export class CloudService {
    */
   async inputRestriction(tx: Transaction): Promise<InputRestriction> {
     const restricted = this.freeInputRestricted &&
-      !(await this.hasPlus(tx));
+      !(await this.hasPlus(tx)) && !(await tx.claudeAccess());
     const consent = restricted ? await tx.get("input_consent", "current") : null;
     return {
       restricted,
@@ -349,8 +379,15 @@ export class CloudService {
     if (requested === "call" && !r.call &&
         (await this.recentVoiceTurns(tx, now)).length >= VOICE_TURNS_PER_HOUR)
       return "text";
-    // No call is placed until the owner accepted the FREE plan input restriction.
-    if (requested === "call" && (await this.inputConsentMissing(tx))) return "text";
+    if (requested === "call") {
+      const access = await tx.claudeAccess();
+      const choice = await tx.get("claude_request", r.id);
+      if ((choice && (choice.organizationId !== access?.organizationId || choice.grantId !== access?.member.grantId ||
+          choice.connectionId !== access?.billing?.connectionId)) ||
+          (access && (!this.claudeBillingEnabled || !access.billing || access.billing.disabled ||
+            claudeTokensNeedRelink(access, now) || (access.tokens?.retryAfter ?? 0) > now)) ||
+          (await this.inputConsentMissing(tx))) return "text";
+    }
     const presence = (await tx.list("presence", {}, 33)).map((p) =>
       p.until && Date.parse(p.until) <= now
         ? { ...p, availability: "available" as const }
@@ -472,19 +509,10 @@ export class CloudService {
       call: null,
       version: 0,
     };
+    if (kind === "question") await this.pinLinkedVoice(tx, r);
     if (kind !== "notification")
       r.delivery_mode = await this.routeMode(tx, r, priority, requested);
-    if (r.delivery_mode === "call")
-      r.call = {
-        id: crypto.randomUUID(),
-        request_id: r.id,
-        state: "ringing",
-        outcome: null,
-        device_id: null,
-        started_at: iso(now),
-        updated_at: iso(now),
-        transcript: [],
-      };
+    if (r.delivery_mode === "call") await this.openCall(tx, r);
     await this.save(tx, r, "initial");
     if (key)
       await tx.put(
@@ -594,16 +622,7 @@ export class CloudService {
     let initial = false;
     if (mode === "call" && !r.call) {
       initial = true;
-      r.call = {
-        id: crypto.randomUUID(),
-        request_id: r.id,
-        state: "ringing",
-        outcome: null,
-        device_id: null,
-        started_at: iso(this.now()),
-        updated_at: iso(this.now()),
-        transcript: [],
-      };
+      await this.openCall(tx, r);
     }
     await this.save(
       tx,
@@ -611,6 +630,31 @@ export class CloudService {
       initial ? "initial" : fallback ? "fallback" : "update",
     );
     return { request: r };
+  }
+  private async pinLinkedVoice(tx: Transaction, request: CloudRequest) {
+    if (await tx.get("claude_request", request.id)) return true;
+    const access = await tx.claudeAccess();
+    if (!access) return false;
+    await tx.put("claude_request", request.id, {
+      organizationId: access.organizationId,
+      grantId: access.member.grantId,
+      connectionId: access.billing?.connectionId ?? null,
+    }, Date.parse(request.expires_at) + 30 * 86400_000);
+    return true;
+  }
+  private async openCall(tx: Transaction, r: CloudRequest) {
+    const now = iso(this.now());
+    r.call = {
+      id: crypto.randomUUID(),
+      request_id: r.id,
+      state: "ringing",
+      outcome: null,
+      device_id: null,
+      started_at: now,
+      updated_at: now,
+      transcript: [],
+      ...(await this.pinLinkedVoice(tx, r) ? { voice_provider: "anthropic-linked" } : {}),
+    };
   }
   envelope(r: CloudRequest, t?: Turn) {
     return {
@@ -625,6 +669,7 @@ export class CloudService {
     deviceId: string,
     b: Record<string, unknown>,
     voiceToken?: string | null,
+    disclosedProvider?: string | null,
   ): Promise<{
     status: number;
     body: { error: { code: string; message: string } } | (ReturnType<CloudService["envelope"]> & {
@@ -680,6 +725,16 @@ export class CloudService {
         status: 409,
         body: { error: { code: "call_ended", message: INPUT_CONSENT_MISSING_MESSAGE } },
       };
+    }
+    if (event === "answer" || event === "turn") {
+      const linked = await this.linkedVoice(tx, r);
+      if (linked === false || (!!linked !== (disclosedProvider === "anthropic-linked"))) {
+        await this.endCall(tx, r, "failed", true);
+        await this.save(tx, r, "fallback");
+        return { status: 409, body: { error: {
+          code: "call_ended", message: "音声の送信先を確認できませんでした。文字で返信できます。",
+        } } };
+      }
     }
     if (this.voiceProofRequired && (event === "answer" || event === "turn")) {
       const access = await tx.get("voice_access", deviceId);

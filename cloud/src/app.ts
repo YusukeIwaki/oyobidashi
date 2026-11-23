@@ -26,6 +26,9 @@ import type { Billing } from "./billing/service.ts";
 import { AccountDeletion } from "./account-deletion.ts";
 import { VoiceSecurity } from "./voice.ts";
 import type { ReviewPortal } from "./app-review.ts";
+import type { ClaudeBilling } from "./claude-billing.ts";
+import { CLAUDE_ISSUER } from "./claude-platform.ts";
+import type { ClaudeSigner } from "./claude-kms.ts";
 
 /** Enables the hosted MCP endpoint and its OAuth authorization server. */
 export interface RemoteMcpOptions {
@@ -84,8 +87,10 @@ export class CloudApp {
     readonly voice?: VoiceSecurity,
     readonly reviewPortal?: ReviewPortal,
     readonly androidReviewPortal?: ReviewPortal,
+    readonly claudeBilling?: ClaudeBilling,
+    readonly claudeIdentity?: ClaudeSigner,
   ) {
-    this.accountDeletion = new AccountDeletion(service, verifier, accountAuth);
+    this.accountDeletion = new AccountDeletion(service, verifier, accountAuth, (uid, access) => this.claudeBilling?.revokeForDeletion(uid, access));
     // The consent page signs the human in with Firebase, so it needs the web configuration.
     if (remote && accountAuth)
       this.oauth = new OAuthServer({ ...remote, service, verifier });
@@ -123,6 +128,17 @@ export class CloudApp {
         return json(200, this.accountAuth.publicConfig);
       }
       if (!internal) {
+        if (this.claudeIdentity && method === "GET" && requestOrigin(req) === OFFICIAL_CLOUD_ORIGIN) {
+          if (path === "/claude-identity/jwks") return json(200, await this.claudeIdentity.publicKeys());
+          if (path === "/claude-identity/.well-known/openid-configuration" ||
+              path === "/.well-known/openid-configuration/claude-identity") return json(200, {
+            issuer: CLAUDE_ISSUER,
+            jwks_uri: `${CLAUDE_ISSUER}/jwks`,
+            id_token_signing_alg_values_supported: ["RS256"],
+          });
+        }
+        const claude = await this.claudeBilling?.fetch(req, u);
+        if (claude) return claude;
         if (path === "/.well-known/openai-apps-challenge") {
           const challenge = this.remote?.openAiAppsChallenge;
           if (!challenge || requestOrigin(req) !== OFFICIAL_CLOUD_ORIGIN || (method !== "GET" && method !== "HEAD"))
@@ -291,6 +307,9 @@ export class CloudApp {
       if (path === "/v1/voice" || path.startsWith("/v1/voice/")) {
         requireRole(p, "device");
         const device = p as Extract<Principal, { role: "device" }>;
+        if (path === "/v1/voice/disclosure" && method === "GET" &&
+            requestOrigin(req) === OFFICIAL_CLOUD_ORIGIN)
+          return json(200, await this.service.run(device, async tx => ({ provider: await this.service.voiceDisclosure(tx) })));
         if (!this.voice) throw missing();
         if (path === "/v1/voice" && method === "GET")
           return json(200, await this.voice.status(device));
@@ -448,7 +467,8 @@ export class CloudApp {
           }
           if (match[2] === "call" && method === "POST") {
             requireRole(p, "device");
-            const r = await this.service.call(tx, id, deviceId, body, req.headers.get("x-oyobidashi-voice-token"));
+            const r = await this.service.call(tx, id, deviceId, body,
+              req.headers.get("x-oyobidashi-voice-token"), req.headers.get("x-oyobidashi-voice-provider"));
             return json(r.status, r.body);
           }
           if (match[2] === "turns" && match[3] && method === "GET") {

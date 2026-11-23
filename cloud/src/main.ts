@@ -3,8 +3,11 @@ import { firebaseVerifier } from "./auth.ts";
 import { RedisWakeBus } from "./bus.ts";
 import { cloudConfig, OFFICIAL_CLOUD_ORIGIN, requiresVoiceProof } from "./config.ts";
 import { PostgresDatabase } from "./postgres.ts";
-import { configuredConversations, voiceModels } from "./provider.ts";
-import { CloudService } from "./service.ts";
+import { apiConversation, configuredConversations, voiceModels } from "./provider.ts";
+import { loadClaudePlatform } from "./claude-platform.ts";
+import { ClaudeTokenWorker } from "./claude-tokens.ts";
+import { ClaudeBilling } from "./claude-billing.ts";
+import { CloudService, hash } from "./service.ts";
 import { JobWorker, WorkerPool } from "./worker.ts";
 import { Maintenance } from "./maintenance.ts";
 import { MAX_WS_SNAPSHOT_BYTES } from "./app.ts";
@@ -90,6 +93,12 @@ export async function main(
   service.freeInputRestricted = models.freeInputRestricted;
   service.voiceProvider = models.provider;
   service.voiceProofRequired = voiceProofRequired;
+  const claude = official ? loadClaudePlatform(process.env) : undefined;
+  const claudePlatform = claude?.platform;
+  const claudeCipher = claude?.cipher;
+  const claudeTokenWorker = claudePlatform && claudeCipher && role === "worker"
+    ? new ClaudeTokenWorker(db, claudeCipher, claudePlatform) : undefined;
+  service.claudeBillingEnabled = !!claudePlatform;
   const timers: ReturnType<typeof setInterval>[] = [];
   let draining = false;
   const health = async () => {
@@ -100,11 +109,12 @@ export async function main(
       return Response.json({ ok: false }, { status: 503 });
     }
   };
+  const verifier = firebaseVerifier(config.projectId);
   const app =
     role === "api"
       ? new CloudApp(
           service,
-          firebaseVerifier(config.projectId),
+          verifier,
           config.maxSockets,
           await createAccountAuth(process.env),
           () => Bun.file(new URL("../public/auth.js", import.meta.url)).text(),
@@ -124,6 +134,8 @@ export async function main(
             : undefined,
           reviewPortal ? new ReviewPortal(service, reviewPortal) : undefined,
           androidReviewPortal ? new ReviewPortal(service, androidReviewPortal, "android") : undefined,
+          claudePlatform && claudeCipher ? new ClaudeBilling(service, verifier, claudePlatform, claudeCipher) : undefined,
+          claude?.signer,
         )
       : null;
   const conversations =
@@ -135,6 +147,13 @@ export async function main(
           ...(conversations?.free
             ? { freeConversation: conversations.free }
             : {}),
+          linkedConversation: claudePlatform && claudeTokenWorker ? ref => apiConversation({
+            model: claudePlatform.model,
+            linkedBilling: {
+              profileId: ref.profileId, userId: hash(`oyobidashi:claude:user:${ref.uid}`),
+              accessToken: signal => claudeTokenWorker.access(ref, signal),
+            },
+          }) : undefined,
           push: await providers(),
           publicOrigin: config.publicUrl,
         })

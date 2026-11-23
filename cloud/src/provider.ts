@@ -20,17 +20,22 @@ export function modelTranscript(call: { transcript: { role: string; text: string
     text: Array.from(entry.text).slice(0, 2000).join(""),
   }));
 }
+export const CLAUDE_BILLING_BETA = "user-profiles-billing-2026-10-01";
+
 export function apiConversation(options: {
-  apiKey: string;
   model: string;
-  provider?: "anthropic" | "meta";
   fetch?: typeof fetch;
-}): ConversationProvider {
-  if (!options.apiKey || !options.model)
+} & (
+  | { apiKey: string; provider?: "anthropic" | "meta" }
+  | { linkedBilling: { profileId: string; accessToken: (signal?: AbortSignal) => Promise<string>; userId?: string } }
+)): ConversationProvider {
+  const billing = "linkedBilling" in options ? options.linkedBilling : undefined;
+  const apiKey = "apiKey" in options ? options.apiKey : undefined;
+  if ((!billing && !apiKey) || !options.model)
     throw new Error(
       "API key and model are required for the cloud voice worker",
     );
-  const meta = options.provider === "meta";
+  const meta = "provider" in options && options.provider === "meta";
   const send = options.fetch ?? fetch;
   return {
     async turn(request, call, signal) {
@@ -46,14 +51,20 @@ export function apiConversation(options: {
             signal,
             headers: {
               "content-type": "application/json",
-              ...(meta
-                ? { authorization: `Bearer ${options.apiKey}` }
-                : { "x-api-key": options.apiKey }),
-              "anthropic-version": "2023-06-01",
+              ...(billing ? {
+                authorization: `Bearer ${await billing.accessToken(signal)}`,
+                "anthropic-user-profile-id": billing.profileId,
+                "anthropic-beta": CLAUDE_BILLING_BETA,
+              } : meta ? { authorization: `Bearer ${apiKey}` } : { "x-api-key": apiKey! }),
+              "anthropic-version": billing ? "2026-10-21" : "2023-06-01",
             },
             body: JSON.stringify({
               model: options.model,
               max_tokens: meta ? 4096 : 1024,
+              ...(billing ? {
+                billing_policy: { type: "billing_policy", bill_to: "user_profile" },
+                ...(billing.userId ? { metadata: { user_id: billing.userId } } : {}),
+              } : {}),
               ...(meta
                 ? {
                     output_config: {
@@ -94,7 +105,7 @@ The request may hold several numbered items: "question" announces the count and 
           },
         );
       } catch {
-        throw new ProviderFailure(true);
+        throw new ProviderFailure(!billing);
       }
       if (!response.ok) {
         await response.body?.cancel().catch(() => {});
@@ -103,7 +114,7 @@ The request may hold several numbered items: "question" announces the count and 
           Math.max(0, Number(response.headers.get("retry-after")) || 0) * 1000,
         );
         throw new ProviderFailure(
-          response.status === 429 || response.status >= 500,
+          !billing && (response.status === 429 || response.status >= 500),
           retry,
         );
       }

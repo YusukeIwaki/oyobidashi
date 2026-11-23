@@ -1,3 +1,4 @@
+import { ClaudeOrganizations } from "./claude-organizations.ts";
 import { SignJWT } from "jose";
 import type { AccountAuth } from "./account-auth.ts";
 import { invalid, string, unauthorized, unavailable } from "./errors.ts";
@@ -91,6 +92,7 @@ export class AccountDeletion {
     private readonly service: CloudService,
     private readonly verifier: IdentityVerifier,
     private readonly auth?: AccountAuth,
+    private readonly revokeClaude?: (uid: string, access: import("./types.ts").ClaudeAccess) => Promise<void> | undefined,
   ) {}
   async start(req: Request) {
     const directory = this.auth?.directory;
@@ -152,6 +154,14 @@ export class AccountDeletion {
     return uid;
   }
   private async finish(uid: string, directory: AccountDirectory) {
+    const linked = await this.service.db.transaction(uid, tx => tx.claudeAccess());
+    if (linked?.member.role === "member") {
+      await new ClaudeOrganizations(this.service).leave({ uid, role: "agent" }, linked);
+    } else if (linked) {
+      const revoke = this.revokeClaude?.(uid, linked);
+      if (!revoke) throw unavailable();
+      await revoke;
+    }
     await directory.deleteUser(uid);
     await this.service.db.transaction(uid, async tx => {
       if (!await tx.accountDeleted()) await tx.eraseAccount();

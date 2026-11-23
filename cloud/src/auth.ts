@@ -20,7 +20,7 @@ export function firebaseVerifier(
     );
   const cache = new Map<
     string,
-    { uid: string; provider: string | null; authenticatedAt: number; until: number }
+    { uid: string; provider: string | null; authenticatedAt: number; verifiedEmail?: string; until: number }
   >();
   return {
     async verify(token) {
@@ -31,7 +31,7 @@ export function firebaseVerifier(
       const digest = hash(token),
         cached = cache.get(digest);
       if (cached && cached.until > now())
-        return { uid: cached.uid, provider: cached.provider, authenticatedAt: cached.authenticatedAt };
+        return { uid: cached.uid, provider: cached.provider, authenticatedAt: cached.authenticatedAt, ...(cached.verifiedEmail ? { verifiedEmail: cached.verifiedEmail } : {}) };
       try {
         const { payload } = await jwtVerify(token, jwks, {
           algorithms: ["RS256"],
@@ -54,14 +54,17 @@ export function firebaseVerifier(
         const raw = (payload.firebase as { sign_in_provider?: unknown })
             ?.sign_in_provider,
           provider = typeof raw === "string" && raw.length <= 64 ? raw : null;
+        const verifiedEmail = payload.email_verified === true && typeof payload.email === "string"
+          ? payload.email : undefined;
         if (cache.size >= 5000) cache.delete(cache.keys().next().value!);
         cache.set(digest, {
           uid: payload.sub,
           provider,
           authenticatedAt: payload.auth_time * 1000,
+          ...(verifiedEmail ? { verifiedEmail } : {}),
           until: Math.min(payload.exp! * 1000, now() + 60_000),
         });
-        return { uid: payload.sub, provider, authenticatedAt: payload.auth_time * 1000 };
+        return { uid: payload.sub, provider, authenticatedAt: payload.auth_time * 1000, ...(verifiedEmail ? { verifiedEmail } : {}) };
       } catch (e) {
         if (e instanceof CloudError) throw e;
         const code = (e as { code?: string })?.code;
