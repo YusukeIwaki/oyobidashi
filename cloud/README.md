@@ -165,11 +165,11 @@ Oyobidashi の組織ごとに Claude の請求用プロファイルを1件持ち
 
 ### Claude Console の設定
 
-1. Google Cloud KMS に署名用の鍵を作ります。アルゴリズムは `RSA_SIGN_PKCS1_2048_SHA256`、`RSA_SIGN_PKCS1_3072_SHA256`、`RSA_SIGN_PKCS1_4096_SHA256` のいずれかです。HSM 保護レベルも選べます。公式 API と worker は Google Cloud のサービス ID で実行し、その鍵にだけ `cloudkms.cryptoKeyVersions.useToSign` と `cloudkms.cryptoKeyVersions.viewPublicKey` を許可します。`CLAUDE_BILLING_KMS_KEY_VERSION` に鍵バージョンのリソース名を設定します。アプリには公開鍵のみが渡ります。
+1. Google Cloud KMS に署名用の鍵を作ります。アルゴリズムは `RSA_SIGN_PKCS1_2048_SHA256`、`RSA_SIGN_PKCS1_3072_SHA256`、`RSA_SIGN_PKCS1_4096_SHA256` のいずれかです。HSM 保護レベルも選べます。API と worker に別々の専用 Google サービスアカウントを用意し、その鍵にだけ `cloudkms.cryptoKeyVersions.useToSign` と `cloudkms.cryptoKeyVersions.viewPublicKey` を許可します。`CLAUDE_BILLING_KMS_KEY_VERSION` に鍵バージョンのリソース名を設定します。署名の秘密鍵は KMS に保持されます。アプリの設定前に、API の公開 JWKS を確認できます。
 2. Claude Console の Workload identity で Custom OIDC を登録します。issuer は `https://api.oyobidashi.me/claude-identity`、JWKS は `https://api.oyobidashi.me/claude-identity/jwks` です。
 3. OAuth apps で **Bill and link to organizations** を有効にした OAuth アプリを作り、`billing:attribution` と `offline_access` を許可します。戻り先は `https://api.oyobidashi.me/oauth/claude/callback` です。Client authentication のサブジェクトは `oyobidashi:claude:client` に絞ります。
 4. オペレーター用のサービスアカウントと Workload Identity Federation ルールを作ります。ルールのサブジェクトは `oyobidashi:claude:operator` に絞り、Client authentication とは別の audience を使います。OAuth アプリでオペレーターとデフォルトのワークスペースを指定し、**Disable operator-only tokenless authentication** を有効にします。共通トークンはユーザープロファイルの管理に使います。
-5. API と worker に同じ `CLAUDE_BILLING_CONFIG`（JSON）を設定します。KMS に別の対称鍵（`ENCRYPT_DECRYPT`）を作成し、その CryptoKey のリソース名を両方の `CLAUDE_BILLING_KMS_TOKEN_KEY` に設定します。API のサービス ID にはこの鍵の暗号化だけを、worker のサービス ID には暗号化と復号を許可します。API と worker の両方で対応版を配備してから有効にします。現在の Railway 環境には Google Cloud のメタデータ認証がないため、Cloud Run などサービス ID が使える実行環境を用意してください。
+5. API と worker に同じ `CLAUDE_BILLING_CONFIG`（JSON）を設定します。KMS に別の対称鍵（`ENCRYPT_DECRYPT`）を作成し、その CryptoKey のリソース名を両方の `CLAUDE_BILLING_KMS_TOKEN_KEY` に設定します。API のサービスアカウントにはこの鍵の暗号化だけを、worker のサービスアカウントには暗号化と復号を許可します。Railway では各サービス固有の Google サービスアカウントの JSON 鍵を `CLAUDE_BILLING_GOOGLE_SERVICE_ACCOUNT` に設定してシールします。アプリはこの鍵を使って Cloud KMS スコープの短命トークンを取得します。Google Cloud 上で実行する場合はこの環境変数を省略し、実行環境に割り当てたサービスアカウントを使用します。API と worker の両方で対応版を配備してから有効にします。
 
 ```json
 {

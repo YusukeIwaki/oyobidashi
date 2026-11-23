@@ -1,9 +1,10 @@
-import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
-import type { JWK } from "jose";
+import { createHash, createPrivateKey, createPublicKey, verify, type KeyObject } from "node:crypto";
+import { SignJWT, type JWK } from "jose";
 import { unavailable } from "./errors.ts";
 
 const KMS = "https://cloudkms.googleapis.com/v1/";
 const GOOGLE_IDENTITY = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
+const GOOGLE_OAUTH_TOKEN = "https://oauth2.googleapis.com/token";
 const versionResource = /^projects\/[A-Za-z0-9_-]+\/locations\/[a-z0-9-]+\/keyRings\/[A-Za-z0-9_-]+\/cryptoKeys\/[A-Za-z0-9_-]+\/cryptoKeyVersions\/[1-9]\d*$/;
 
 export interface ClaudeSigner {
@@ -11,7 +12,8 @@ export interface ClaudeSigner {
   sign(subject: string, audience: string): Promise<string>;
 }
 
-function googleKms(send: typeof fetch, now: () => number) {
+function googleKms(send: typeof fetch, now: () => number, serviceAccountJson?: string) {
+  const serviceAccount = serviceAccountJson === undefined ? undefined : parseServiceAccount(serviceAccountJson);
   let token: { value: string; expires: number } | undefined;
   let refreshing: Promise<string> | undefined;
   async function request(url: string, options: RequestInit) {
@@ -23,8 +25,22 @@ function googleKms(send: typeof fetch, now: () => number) {
     return response.json() as Promise<Record<string, unknown>>;
   }
 
-  async function metadataToken() {
-    const response = await request(GOOGLE_IDENTITY, { headers: { "Metadata-Flavor": "Google" } });
+  async function accessToken() {
+    let response: Record<string, unknown>;
+    if (serviceAccount) {
+      const iat = Math.floor(now() / 1000);
+      const assertion = await new SignJWT({ scope: "https://www.googleapis.com/auth/cloudkms" })
+        .setProtectedHeader({ alg: "RS256", typ: "JWT", kid: serviceAccount.keyId })
+        .setIssuer(serviceAccount.email).setAudience(GOOGLE_OAUTH_TOKEN)
+        .setIssuedAt(iat).setExpirationTime(iat + 300).sign(serviceAccount.key);
+      response = await request(GOOGLE_OAUTH_TOKEN, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }),
+      });
+    } else {
+      response = await request(GOOGLE_IDENTITY, { headers: { "Metadata-Flavor": "Google" } });
+    }
     if (typeof response.access_token !== "string" || !response.access_token ||
         typeof response.expires_in !== "number" || response.expires_in <= 0) throw unavailable();
     token = { value: response.access_token, expires: now() + response.expires_in * 1000 };
@@ -33,7 +49,7 @@ function googleKms(send: typeof fetch, now: () => number) {
 
   return async (path: string, body?: object) => {
     const access = token && token.expires > now() + 30_000 ? token.value :
-      await (refreshing ??= metadataToken().finally(() => { refreshing = undefined; }));
+      await (refreshing ??= accessToken().finally(() => { refreshing = undefined; }));
     return request(KMS + path, {
       method: body ? "POST" : "GET",
       headers: { authorization: `Bearer ${access}`, ...(body ? { "content-type": "application/json" } : {}) },
@@ -42,14 +58,29 @@ function googleKms(send: typeof fetch, now: () => number) {
   };
 }
 
-/** Uses the Google runtime's service identity. The RSA private key stays in Cloud KMS. */
+function parseServiceAccount(raw: string) {
+  try {
+    const { type, client_email, private_key, private_key_id } = JSON.parse(raw);
+    if (type !== "service_account" || typeof client_email !== "string" ||
+        !/^[^\s@]+@[^\s@]+\.gserviceaccount\.com$/.test(client_email) ||
+        typeof private_key_id !== "string" || !/^[a-f0-9]{40}$/.test(private_key_id) ||
+        typeof private_key !== "string") throw new Error();
+    const key = createPrivateKey(private_key);
+    if (key.asymmetricKeyType !== "rsa") throw new Error();
+    return { email: client_email, keyId: private_key_id, key };
+  } catch {
+    throw new Error("Invalid CLAUDE_BILLING_GOOGLE_SERVICE_ACCOUNT");
+  }
+}
+
+/** The Claude signing private key stays in Cloud KMS. */
 export function claudeKmsSigner({
-  version, issuer, send = fetch, now = Date.now,
+  version, issuer, send = fetch, now = Date.now, serviceAccountJson,
 }: {
-  version: string; issuer: string; send?: typeof fetch; now?: () => number;
+  version: string; issuer: string; send?: typeof fetch; now?: () => number; serviceAccountJson?: string;
 }): ClaudeSigner {
   if (!versionResource.test(version)) throw new Error("Invalid CLAUDE_BILLING_KMS_KEY_VERSION");
-  const kms = googleKms(send, now);
+  const kms = googleKms(send, now, serviceAccountJson);
   let publicKey: Promise<{ key: KeyObject; jwk: JWK & { kid: string } }> | undefined;
   const encode = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
 
@@ -91,9 +122,9 @@ export interface ClaudeTokenCipher {
 }
 const keyResource = /^projects\/[A-Za-z0-9_-]+\/locations\/[a-z0-9-]+\/keyRings\/[A-Za-z0-9_-]+\/cryptoKeys\/[A-Za-z0-9_-]+$/;
 
-export function claudeKmsTokenCipher(key: string, send: typeof fetch = fetch): ClaudeTokenCipher {
+export function claudeKmsTokenCipher(key: string, send: typeof fetch = fetch, serviceAccountJson?: string): ClaudeTokenCipher {
   if (!keyResource.test(key)) throw new Error("Invalid CLAUDE_BILLING_KMS_TOKEN_KEY");
-  const kms = googleKms(send, Date.now);
+  const kms = googleKms(send, Date.now, serviceAccountJson);
   const base64 = (value: string) => Buffer.from(value).toString("base64");
   return {
     async encrypt(value, binding) {

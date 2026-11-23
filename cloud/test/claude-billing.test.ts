@@ -361,6 +361,38 @@ test("token storage sends authenticated ciphertext operations to a separate Clou
   expect(seen).toEqual([`/v1/${key}:encrypt`, `/v1/${key}:decrypt`]);
 });
 
+test("Railway credentials obtain a KMS-scoped Google token for concurrent KMS calls", async () => {
+  const key = "projects/sample/locations/global/keyRings/oyobidashi/cryptoKeys/claude-tokens";
+  const account = "kms-worker@sample.iam.gserviceaccount.com";
+  const keyId = "a".repeat(40);
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const credentials = JSON.stringify({
+    type: "service_account", client_email: account, private_key_id: keyId,
+    private_key: privateKey.export({ type: "pkcs8", format: "pem" }),
+  });
+  let tokenCalls = 0;
+  const cipher = claudeKmsTokenCipher(key, (async (input, init) => {
+    const url = String(input);
+    if (url === "https://oauth2.googleapis.com/token") {
+      tokenCalls++;
+      const form = new URLSearchParams(String(init?.body));
+      expect(form.get("grant_type")).toBe("urn:ietf:params:oauth:grant-type:jwt-bearer");
+      const { payload, protectedHeader } = await jwtVerify(form.get("assertion")!, publicKey, {
+        issuer: account, audience: url, algorithms: ["RS256"],
+      });
+      expect(protectedHeader.kid).toBe(keyId);
+      expect(payload.scope).toBe("https://www.googleapis.com/auth/cloudkms");
+      expect(payload.exp! - payload.iat!).toBe(300);
+      return Response.json({ access_token: "short-lived-google-token", expires_in: 600 });
+    }
+    expect(url).toBe(`https://cloudkms.googleapis.com/v1/${key}:encrypt`);
+    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer short-lived-google-token");
+    return Response.json({ ciphertext: "opaque", name: key + "/cryptoKeyVersions/1" });
+  }) as typeof fetch, credentials);
+  expect(await Promise.all([cipher.encrypt("a", "org"), cipher.encrypt("b", "org")])).toEqual(["opaque", "opaque"]);
+  expect(tokenCalls).toBe(1);
+});
+
 async function verifyOrganizationBilling(database?: Parameters<typeof harness>[0]) {
   const h = setup(database);
   const a = await h.seedBilling("alice", "A社", {profileId: "uprof_a", connectionId: "ocon_a"});

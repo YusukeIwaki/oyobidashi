@@ -19,13 +19,14 @@ export function loadClaudePlatform(env: Record<string, string | undefined>) {
   const raw = env.CLAUDE_BILLING_CONFIG;
   const version = env.CLAUDE_BILLING_KMS_KEY_VERSION;
   const tokenKey = env.CLAUDE_BILLING_KMS_TOKEN_KEY;
-  const signer = version ? claudeKmsSigner({ version, issuer: CLAUDE_ISSUER }) : undefined;
+  const serviceAccountJson = env.CLAUDE_BILLING_GOOGLE_SERVICE_ACCOUNT;
+  const signer = version ? claudeKmsSigner({ version, issuer: CLAUDE_ISSUER, serviceAccountJson }) : undefined;
   if (!raw) return { signer };
   const config = JSON.parse(raw) as Partial<Settings> | null;
   if (!signer || !tokenKey || !config || fields.some(key => typeof config[key] !== "string" || !config[key]?.trim()) ||
       config.clientAudience === config.operatorAudience)
     throw new Error("Invalid CLAUDE_BILLING_CONFIG or missing Claude billing KMS keys");
-  return { signer, platform: new ClaudePlatform(config as Settings, signer), cipher: claudeKmsTokenCipher(tokenKey) };
+  return { signer, platform: new ClaudePlatform(config as Settings, signer), cipher: claudeKmsTokenCipher(tokenKey, fetch, serviceAccountJson) };
 }
 
 export interface ClaudeConnectionTokens {
