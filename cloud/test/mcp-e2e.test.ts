@@ -53,7 +53,12 @@ test("the SDK client authorizes by URL alone, calls tools and refreshes silently
   expect(provider.authorizationUrl!.searchParams.get("code_challenge_method")).toBe("S256");
   expect(provider.authorizationUrl!.searchParams.get("resource")).toBe(`${origin}/v1/mcp`);
   expect(client.getServerVersion()?.name).toBe("oyobidashi");
-  expect((await client.listTools()).tools).toHaveLength(6);
+  const { tools } = await client.listTools();
+  expect(tools).toHaveLength(6);
+  for (const tool of tools) {
+    expect(tool.annotations?.title).toBeString();
+    expect(tool.annotations?.title).toBe(tool.title);
+  }
 
   const device = await h.pair("carol");
   const asked = await client.callTool({ name: "ask_human", arguments: { question: "本番に反映しますか？", wait_seconds: 0 } });

@@ -405,7 +405,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
         wait_seconds: z.number().optional().describe(WAIT_SECONDS_DESCRIPTION),
       },
       outputSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+      annotations: { title: "Ask the human (via their phone)", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async (args, extra): Promise<ToolResult> => {
       const question = args.question.trim();
@@ -466,7 +466,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
         wait_seconds: z.number().optional().describe(WAIT_SECONDS_DESCRIPTION),
       },
       outputSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { title: "Keep waiting for the human's answer", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args, extra): Promise<ToolResult> => {
       const requestId = args.request_id.trim();
@@ -490,7 +490,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
         message: z.string().max(4000).describe("The notification text, short and self-contained (1-4000 characters)."),
       },
       outputSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+      annotations: { title: "Notify the human (one-way)", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async (args, extra): Promise<ToolResult> => {
       const message = args.message.trim();
@@ -518,7 +518,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
         request_id: z.string().describe("The request_id returned by ask_human or notify_human (looks like \"req_...\")."),
       },
       outputSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      annotations: { title: "Cancel a pending question or notification", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args, extra): Promise<ToolResult> => {
       const requestId = args.request_id.trim();
@@ -554,7 +554,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
       description: GET_HUMAN_STATUS_DESCRIPTION,
       inputSchema: {},
       outputSchema: presenceOutputSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { title: "Check human presence and feedback", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (_args, extra): Promise<ToolResult> => {
       try {
@@ -582,7 +582,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
           .describe('New requested delivery mode. "call" needs high/urgent priority and a blocked task; check get_human_status first.'),
       },
       outputSchema,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      annotations: { title: "Update a pending question's priority or delivery", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args, extra): Promise<ToolResult> => {
       const requestId = args.request_id.trim();
