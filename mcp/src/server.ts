@@ -76,7 +76,7 @@ const waitSecondsDescription = (max: number) =>
   `How long this call blocks waiting for the human's answer, in seconds (0-${max}; out-of-range values are clamped). ` +
   "Default: 50, chosen to stay under typical MCP tool-call timeouts (the user can change it with OYOBIDASHI_DEFAULT_WAIT_SECONDS). " +
   "Only pass a larger value if you know your MCP client allows tool calls that long. " +
-  "0 returns immediately with status \"pending\". When the time runs out you get status \"pending\" and continue with wait_for_answer.";
+  "0 returns immediately with status \"pending\". A timeout returns the existing request ID and pending status.";
 
 const ASK_HUMAN_DESCRIPTION = `Ask your human (the user who started you) a question via their phone, and wait for their reply.
 
@@ -131,6 +131,15 @@ const UPDATE_REQUEST_DESCRIPTION = `Change the priority or delivery mode of a pe
 Pass "priority" (low/normal/high/urgent) and/or "delivery_mode" (auto/actions/text/call). At least one is required. The relay recalculates the effective delivery and the result reports the current request including the effective "delivery_mode" and "call" state plus any human "feedback". Use it to escalate when truly blocked (check get_human_status first) or to quieten a question that can wait. A call needs high/urgent priority and explicit "call" mode; if the call was declined, hung up, missed, or failed, do NOT switch back to call. If the question is no longer useful, call cancel_request instead.
 
 Switch to call only if the existing "question" already gives the human enough background to answer by listening. If the human needs to open a Jira issue, follow a link, or read "context" to answer the opening question, keep the request in text.`;
+
+const hostedToolDescriptions = {
+  ask_human: "Sends a question to the paired phone and waits up to the requested timeout. The recipient can reply with text, a choice, or voice when calls are available. A pending result includes the request ID and delivery state. Phone delivery depends on the device, network, and settings.",
+  wait_for_answer: "Waits for an existing question to resolve, without sending another notification. Returns the reply or the current request status and delivery state. A zero-second timeout returns the current state immediately. Voice replies are speech-to-text transcripts.",
+  notify_human: "Sends a one-way text notification to the paired phone and returns the request ID and delivery information. Delivery depends on the device, network, and settings.",
+  cancel_request: "Withdraws a pending question or notification by request ID. If the request has already resolved, returns its existing status and any reply.",
+  get_human_status: "Returns the paired devices' explicitly shared availability and recent feedback, including missed, declined, or ended calls. Availability does not confirm that a notification was seen.",
+  update_request: "Changes the priority or delivery mode of an existing pending question. Returns the effective delivery mode, call state, and any feedback. A call requires high or urgent priority and explicit call delivery.",
+};
 
 const outputSchema = {
   status: z
@@ -362,7 +371,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
     "ask_human",
     {
       title: "Ask the human (via their phone)",
-      description: ASK_HUMAN_DESCRIPTION + restrictionPrompt,
+      description: (subscriptions ? ASK_HUMAN_DESCRIPTION : hostedToolDescriptions.ask_human) + restrictionPrompt,
       inputSchema: {
         question: z
           .string()
@@ -390,7 +399,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
         delivery_mode: z
           .enum(["auto", "actions", "text", "call"])
           .optional()
-          .describe('"auto" (default) picks one-tap actions for short choice-only questions and text otherwise. "text" fits context and long free-form answers. "call" only with high/urgent priority when actually blocked, after checking get_human_status.'),
+          .describe('"auto" (default) picks one-tap actions for short choice-only questions and text otherwise. "text" fits context and long free-form answers. "call" only with high/urgent priority when a blocking decision requires a call.'),
         urgency: z
           .enum(["normal", "high"])
           .optional()
@@ -460,7 +469,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
     "wait_for_answer",
     {
       title: "Keep waiting for the human's answer",
-      description: WAIT_FOR_ANSWER_DESCRIPTION,
+      description: (subscriptions ? WAIT_FOR_ANSWER_DESCRIPTION : hostedToolDescriptions.wait_for_answer),
       inputSchema: {
         request_id: z.string().describe("The request_id returned by ask_human (looks like \"req_...\")."),
         wait_seconds: z.number().optional().describe(WAIT_SECONDS_DESCRIPTION),
@@ -485,7 +494,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
     "notify_human",
     {
       title: "Notify the human (one-way)",
-      description: NOTIFY_HUMAN_DESCRIPTION + restrictionPrompt,
+      description: (subscriptions ? NOTIFY_HUMAN_DESCRIPTION : hostedToolDescriptions.notify_human) + restrictionPrompt,
       inputSchema: {
         message: z.string().max(4000).describe("The notification text, short and self-contained (1-4000 characters)."),
       },
@@ -513,7 +522,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
     "cancel_request",
     {
       title: "Cancel a pending question or notification",
-      description: CANCEL_REQUEST_DESCRIPTION,
+      description: (subscriptions ? CANCEL_REQUEST_DESCRIPTION : hostedToolDescriptions.cancel_request),
       inputSchema: {
         request_id: z.string().describe("The request_id returned by ask_human or notify_human (looks like \"req_...\")."),
       },
@@ -551,7 +560,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
     "get_human_status",
     {
       title: "Check human presence and feedback",
-      description: GET_HUMAN_STATUS_DESCRIPTION,
+      description: (subscriptions ? GET_HUMAN_STATUS_DESCRIPTION : hostedToolDescriptions.get_human_status),
       inputSchema: {},
       outputSchema: presenceOutputSchema,
       annotations: { title: "Check human presence and feedback", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -569,7 +578,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
     "update_request",
     {
       title: "Update a pending question's priority or delivery",
-      description: UPDATE_REQUEST_DESCRIPTION,
+      description: (subscriptions ? UPDATE_REQUEST_DESCRIPTION : hostedToolDescriptions.update_request),
       inputSchema: {
         request_id: z.string().describe("The request_id returned by ask_human (looks like \"req_...\")."),
         priority: z
@@ -579,7 +588,7 @@ export function createServer(deps: ServerDeps = {}): McpServer {
         delivery_mode: z
           .enum(["auto", "actions", "text", "call"])
           .optional()
-          .describe('New requested delivery mode. "call" needs high/urgent priority and a blocked task; check get_human_status first.'),
+          .describe('New requested delivery mode. "call" needs high/urgent priority and a blocking decision.'),
       },
       outputSchema,
       annotations: { title: "Update a pending question's priority or delivery", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },

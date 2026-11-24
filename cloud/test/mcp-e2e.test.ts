@@ -58,6 +58,7 @@ test("the SDK client authorizes by URL alone, calls tools and refreshes silently
   for (const tool of tools) {
     expect(tool.annotations?.title).toBeString();
     expect(tool.annotations?.title).toBe(tool.title);
+    expect(tool.description).not.toMatch(/ask_human|wait_for_answer|notify_human|cancel_request|get_human_status|update_request/);
   }
 
   const device = await h.pair("carol");
