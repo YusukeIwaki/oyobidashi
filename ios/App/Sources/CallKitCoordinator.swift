@@ -240,14 +240,6 @@ extension CallKitCoordinator: CXProviderDelegate {
                 action.fail()
                 return
             }
-            // ペアリング時の同意がない端末 (アプリ更新直後など) では音声会話を始めない。
-            // 通話中に尋ねることはせず、文字での返信へ切り替える。
-            guard model.hasVoiceAIConsent else {
-                action.fail()
-                provider.reportCall(with: uuid, endedAt: Date(), reason: .failed)
-                _ = await model.failCall(requestID: requestID)
-                return
-            }
             self.activeCallUUID = uuid
             self.activeRequestID = requestID
             let outcome = await model.answerCall(requestID: requestID)
@@ -271,6 +263,9 @@ extension CallKitCoordinator: CXProviderDelegate {
                 provider.reportCall(with: uuid, endedAt: Date(), reason: .failed)
                 self.activeCallUUID = nil
                 self.activeRequestID = nil
+                if case .failed(.voiceAIConsentRequired) = outcome {
+                    _ = await model.failCall(requestID: requestID)
+                }
             }
         }
     }

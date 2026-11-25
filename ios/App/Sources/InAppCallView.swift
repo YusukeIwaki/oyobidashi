@@ -213,10 +213,6 @@ struct InAppCallView: View {
     }
 
     private func answer() async {
-        guard model.hasVoiceAIConsent else {
-            actionError = RelayError.voiceAIConsentRequired.userMessage
-            return
-        }
         answering = true
         actionError = nil
         defer { answering = false }

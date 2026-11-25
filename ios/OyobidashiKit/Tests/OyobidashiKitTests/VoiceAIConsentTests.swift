@@ -214,6 +214,21 @@ final class VoiceAIConsentTests: XCTestCase {
         XCTAssertTrue(model.isPaired)
     }
 
+    func testAnswerChecksAccountConsentOnColdStart() async throws {
+        try credentialStore.save(Credentials(endpoint: cloud, deviceToken: "kd_token", deviceID: "dev_01"))
+        stub.on("GET", "/v1/voice/disclosure", status: 200, body: Data(#"{"provider":"gemini","consented":true}"#.utf8))
+        stub.on("POST", "/v1/requests/req_1/call", status: 409,
+                body: Data(#"{"error":{"code":"call_ended"}}"#.utf8))
+        let model = makeModel()
+        XCTAssertFalse(model.hasVoiceAIConsent)
+
+        _ = await model.answerCall(requestID: "req_1")
+
+        XCTAssertTrue(model.hasVoiceAIConsent)
+        XCTAssertNil(model.voiceAIReview)
+        XCTAssertEqual(stub.requests.map { $0.url?.path }, ["/v1/voice/disclosure", "/v1/requests/req_1/call"])
+    }
+
     func testHandoffFetchesTheRequestAndKeepsTheAnswersAlreadySaved() async throws {
         try credentialStore.save(Credentials(endpoint: cloud, deviceToken: "kd_token", deviceID: "dev_01"))
         consentStore.save(consent(cloud, provider: "gemini"))
