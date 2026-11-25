@@ -295,9 +295,13 @@ class RequestsRepository(
         return submit(id, AnswerBody(choice, choiceIndex, InputMethod.CHOICE))
     }
 
+    suspend fun submitItems(id: String, replies: List<ItemReply>): AnswerOutcome =
+        submit(id, AnswerBody("", inputMethod = InputMethod.TEXT, itemAnswers = replies))
+
     private suspend fun submit(id: String, body: AnswerBody): AnswerOutcome {
         if (_state.value.signedOut) return AnswerOutcome.SignedOut
-        if (body.text.isEmpty() || body.text.length > AnswerLimits.MAX_TEXT_LENGTH) return failed(id, AnswerError.INVALID)
+        if (body.itemAnswers == null && (body.text.isEmpty() || body.text.length > AnswerLimits.MAX_TEXT_LENGTH))
+            return failed(id, AnswerError.INVALID)
         var started = false
         _state.update { s ->
             started = id !in s.submitting

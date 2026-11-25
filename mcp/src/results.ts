@@ -42,7 +42,7 @@ export const NO_DEVICE_WARNING =
 export const PRIVACY_NOTICE =
   "This oyobidashi account is on the FREE plan of the hosted service, which does not accept personal or confidential information. " +
   "Do not put personal data (names, contact details, addresses, account or ID numbers), credentials or secrets, or confidential business information " +
-  "in question, subject, context, choices or notification messages, and do not ask the human to state such information in their answer. " +
+  "in question, subject, context, choices, items or notification messages, and do not ask the human to state such information in their answer. " +
   "Refer to it indirectly instead (for example \"the customer in the ticket you opened\"), or leave the decision until the human is back at the keyboard.";
 
 /** Default hint for a stdio connection, where the owner accepts the restriction in the login command. */
@@ -81,6 +81,7 @@ function result(text: string, output: ToolOutput, isError = false): ToolResult {
 
 /** Copies extension telemetry (priority, effective delivery mode, call) into a tool output. */
 function addTelemetry(output: ToolOutput, request: RelayRequest): void {
+  if (request.item_answers) output.item_answers = request.item_answers;
   if (request.priority) output.priority = request.priority;
   if (request.delivery_mode) output.delivery_mode = request.delivery_mode;
   if (request.requested_mode) output.requested_mode = request.requested_mode;
@@ -136,7 +137,9 @@ export function requestResult(
       if (typeof answer.choice_index === "number") output.choice_index = answer.choice_index;
 
       let how: string;
-      if (answer.input_method === "voice") {
+      if (request.item_answers) {
+        how = "The human completed the request. Use item_answers to match replies and their input methods to item IDs.";
+      } else if (answer.input_method === "voice") {
         how =
           "The human answered by voice. The text below is an automatic speech-to-text transcription, so it may contain recognition errors " +
           "(wrong homophones, garbled identifiers, missing punctuation). Interpret it in context; if it is ambiguous and the decision matters, ask again to confirm.";
@@ -150,8 +153,10 @@ export function requestResult(
     case "pending": {
       const waited = opts.waitedSeconds !== undefined ? ` after waiting ${opts.waitedSeconds}s` : "";
       const telemetry = telemetryLine(request);
+      const progress = request.item_answers?.some(item => item.status === "answered")
+        ? "Some item answers are saved." : `No answer yet${waited}.`;
       return result(
-        `No answer yet${waited}. This is not an error: the question is still waiting on the human's phone (request_id: ${id}).` +
+        `${progress} This is not an error: the question is still waiting on the human's phone (request_id: ${id}).` +
           (telemetry ? `\n${telemetry}` : "") +
           `\nCall wait_for_answer with request_id "${id}" to keep waiting, and repeat until you get an answer. ` +
           "Do NOT call ask_human again for the same question (that would ring the phone twice). " +

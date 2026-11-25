@@ -41,7 +41,11 @@ final class NotificationService: UNNotificationServiceExtension {
                     if current.isActionsEligible {
                         enriched.userInfo["choices"] = current.effectiveChoices
                     }
-                    enriched.categoryIdentifier = current.kind == .notification ? PushCategory.notification : PushCategory.question
+                    if current.kind == .notification {
+                        enriched.categoryIdentifier = PushCategory.notification
+                    } else {
+                        enriched.categoryIdentifier = current.items == nil ? PushCategory.question : PushCategory.itemQuestion
+                    }
                 } else {
                     enriched.body = "この質問は終了しました"
                     enriched.sound = nil

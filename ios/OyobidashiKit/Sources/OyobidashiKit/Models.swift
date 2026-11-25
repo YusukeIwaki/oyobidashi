@@ -512,6 +512,8 @@ public struct AgentRequest: Codable, Equatable, Identifiable, Sendable {
     public var subject: String?
     public var context: String?
     public var choices: [String]?
+    public var items: [RequestItem]?
+    public var itemAnswers: [ItemAnswer]?
     public var urgency: Urgency
     public var priority: RequestPriority
     public var deliveryMode: DeliveryMode
@@ -526,6 +528,8 @@ public struct AgentRequest: Codable, Equatable, Identifiable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, kind, question, subject, context, choices, urgency, status, answer, agent, priority, call
+        case items
+        case itemAnswers = "item_answers"
         case deliveryMode = "delivery_mode"
         case requestedMode = "requested_mode"
         case createdAt = "created_at"
@@ -538,7 +542,7 @@ public struct AgentRequest: Codable, Equatable, Identifiable, Sendable {
         choices: [String]? = nil, urgency: Urgency = .normal, status: RequestStatus = .pending,
         answer: Answer? = nil, agent: AgentInfo? = nil, createdAt: Date, updatedAt: Date? = nil, expiresAt: Date? = nil,
         priority: RequestPriority = .normal, deliveryMode: DeliveryMode = .text, requestedMode: RequestedMode = .auto, call: CallSession? = nil,
-        subject: String? = nil
+        subject: String? = nil, items: [RequestItem]? = nil, itemAnswers: [ItemAnswer]? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -546,6 +550,8 @@ public struct AgentRequest: Codable, Equatable, Identifiable, Sendable {
         self.subject = subject
         self.context = context
         self.choices = choices
+        self.items = items
+        self.itemAnswers = itemAnswers
         self.urgency = urgency
         self.priority = priority
         self.deliveryMode = deliveryMode
@@ -567,6 +573,8 @@ public struct AgentRequest: Codable, Equatable, Identifiable, Sendable {
         subject = try? c.decodeIfPresent(String.self, forKey: .subject)
         context = try? c.decodeIfPresent(String.self, forKey: .context)
         choices = try? c.decodeIfPresent([String].self, forKey: .choices)
+        items = try c.decodeIfPresent([RequestItem].self, forKey: .items)
+        itemAnswers = try c.decodeIfPresent([ItemAnswer].self, forKey: .itemAnswers)
         urgency = (try? c.decodeIfPresent(Urgency.self, forKey: .urgency)) ?? .normal
         priority = (try? c.decodeIfPresent(RequestPriority.self, forKey: .priority)) ?? .normal
         deliveryMode = (try? c.decodeIfPresent(DeliveryMode.self, forKey: .deliveryMode)) ?? .text
@@ -588,6 +596,8 @@ public struct AgentRequest: Codable, Equatable, Identifiable, Sendable {
         try c.encodeIfPresent(subject, forKey: .subject)
         try c.encodeIfPresent(context, forKey: .context)
         try c.encodeIfPresent(choices, forKey: .choices)
+        try c.encodeIfPresent(items, forKey: .items)
+        try c.encodeIfPresent(itemAnswers, forKey: .itemAnswers)
         try c.encode(urgency, forKey: .urgency)
         try c.encode(priority, forKey: .priority)
         try c.encode(deliveryMode, forKey: .deliveryMode)
@@ -743,17 +753,20 @@ public struct AnswerBody: Codable, Equatable, Sendable {
     public var text: String
     public var choiceIndex: Int?
     public var inputMethod: InputMethod
+    public var itemAnswers: [ItemReply]?
 
     enum CodingKeys: String, CodingKey {
         case text
         case choiceIndex = "choice_index"
         case inputMethod = "input_method"
+        case itemAnswers = "item_answers"
     }
 
-    public init(text: String, choiceIndex: Int? = nil, inputMethod: InputMethod) {
+    public init(text: String, choiceIndex: Int? = nil, inputMethod: InputMethod, itemAnswers: [ItemReply]? = nil) {
         self.text = text
         self.choiceIndex = choiceIndex
         self.inputMethod = inputMethod
+        self.itemAnswers = itemAnswers
     }
 
     public static let maxTextLength = 10_000
@@ -894,8 +907,10 @@ public struct CallTurn: Codable, Equatable, Sendable, Identifiable {
     public var reply: String?
     public var resolved: Bool
     public var error: CallTurnFailure?
-    public init(id: String, state: CallTurnState, reply: String? = nil, resolved: Bool = false, error: CallTurnFailure? = nil) {
-        self.id = id; self.state = state; self.reply = reply; self.resolved = resolved; self.error = error
+    public var endCall: Bool?
+    enum CodingKeys: String, CodingKey { case id, state, reply, resolved, error; case endCall = "end_call" }
+    public init(id: String, state: CallTurnState, reply: String? = nil, resolved: Bool = false, error: CallTurnFailure? = nil, endCall: Bool? = nil) {
+        self.id = id; self.state = state; self.reply = reply; self.resolved = resolved; self.error = error; self.endCall = endCall
     }
 }
 
@@ -929,13 +944,15 @@ public struct CallActionResponse: Decodable, Equatable, Sendable {
     public var reply: String?
     public var resolved: Bool?
     public var turn: CallTurn?
-    enum CodingKeys: String, CodingKey { case request, call, reply, resolved, turn }
-    public init(request: AgentRequest, call: CallSession? = nil, reply: String? = nil, resolved: Bool? = nil, turn: CallTurn? = nil) {
+    public var endCall: Bool?
+    enum CodingKeys: String, CodingKey { case request, call, reply, resolved, turn; case endCall = "end_call" }
+    public init(request: AgentRequest, call: CallSession? = nil, reply: String? = nil, resolved: Bool? = nil, turn: CallTurn? = nil, endCall: Bool? = nil) {
         self.request = request
         self.call = call
         self.reply = reply
         self.resolved = resolved
         self.turn = turn
+        self.endCall = endCall
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -944,6 +961,7 @@ public struct CallActionResponse: Decodable, Equatable, Sendable {
         reply = try? c.decodeIfPresent(String.self, forKey: .reply)
         resolved = try? c.decodeIfPresent(Bool.self, forKey: .resolved)
         turn = try c.decodeIfPresent(CallTurn.self, forKey: .turn)
+        endCall = try c.decodeIfPresent(Bool.self, forKey: .endCall)
     }
 }
 

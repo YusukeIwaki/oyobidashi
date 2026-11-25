@@ -23,6 +23,7 @@ public enum PushRecipient: Equatable, Sendable {
 
 public enum PushCategory {
     public static let question = "OYOBIDASHI_QUESTION"
+    public static let itemQuestion = "OYOBIDASHI_ITEM_QUESTION"
     public static let notification = "OYOBIDASHI_NOTIFICATION"
     public static let actions = "OYOBIDASHI_ACTIONS"
     /// 通知から直接返信する `UNTextInputNotificationAction` の identifier。

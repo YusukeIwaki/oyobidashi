@@ -6,6 +6,7 @@ import type {
 } from "../../relay/src/types.ts";
 
 export interface TurnView {
+  end_call?: boolean;
   id: string;
   state: "queued" | "running" | "completed" | "failed" | "cancelled";
   reply: string | null;
@@ -23,6 +24,7 @@ export interface CloudRequest extends RequestObject {
   call: CloudCall | null;
 }
 export interface Device extends DeviceObject {
+  supports_request_items?: boolean;
   push_client_id?: string | null;
   push_registered_at?: number | null;
   voip_registered_at?: number | null;
@@ -255,6 +257,7 @@ export interface IdentityVerifier {
   identify?(token: string): Promise<{ uid: string; provider: string | null; authenticatedAt?: number; verifiedEmail?: string }>;
 }
 export const turnView = (t: Turn): TurnView => ({
+  ...(t.end_call ? { end_call: true } : {}),
   id: t.id,
   state: t.state,
   reply: t.reply,

@@ -66,7 +66,12 @@ struct RequestDetailView: View {
                     callCard(request: request, call: call)
                 }
 
-                if model.store.isPending(request) {
+                if request.items != nil {
+                    ItemAnswersPanel(
+                        request: request, canAnswer: model.store.isPending(request), model: model
+                    )
+                    .id(request.id)
+                } else if model.store.isPending(request) {
                     AnswerPanel(request: request, model: model)
                         .id(request.id)
                 } else {
@@ -420,5 +425,113 @@ private extension AnswerViewModel {
     var isFailed: Bool {
         if case .failed = phase { return true }
         return false
+    }
+}
+
+
+private struct ItemAnswersPanel: View {
+    let request: AgentRequest
+    let canAnswer: Bool
+    let model: AppModel
+    @State private var drafts: [String: ItemReply] = [:]
+    @State private var submitting = false
+    @State private var error: String?
+
+    var body: some View {
+        let form = ItemAnswerForm(request: request, drafts: drafts)
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(form.rows) { row in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(row.item.question)
+                        .font(.headline)
+                        .accessibilityAddTraits(.isHeader)
+                    if let context = row.item.context {
+                        Text(context).font(.callout).foregroundStyle(PagerTheme.inkSoft).textSelection(.enabled)
+                    }
+                    if let answer = row.answer, answer.status == .answered {
+                        if answer.inputMethod == .voice, canAnswer {
+                            Text("通話で回答済み").font(.caption).foregroundStyle(PagerTheme.inkSoft)
+                        }
+                        Text(answer.text ?? "").textSelection(.enabled)
+                    } else if row.answer?.status == .notApplicable {
+                        Text("対象外").font(.callout).foregroundStyle(PagerTheme.inkSoft)
+                    } else if canAnswer {
+                        if row.answer?.status == .deferred {
+                            Text("通話で保留").font(.caption).foregroundStyle(PagerTheme.inkSoft)
+                        }
+                        itemInput(row.item)
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(PagerTheme.card, in: RoundedRectangle(cornerRadius: 12))
+            }
+
+            if canAnswer {
+                if let draft = model.drafts.draft(for: request.id), draft.usedVoice, !draft.text.isEmpty, !request.hasLiveCall {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("送信が確定していない音声入力").font(.caption.bold())
+                        Text(draft.text).font(.callout).textSelection(.enabled)
+                    }
+                    .foregroundStyle(PagerTheme.inkSoft)
+                }
+                if let error {
+                    Text(error).font(.callout).foregroundStyle(.red)
+                }
+                Button {
+                    guard let body = form.submission, !submitting else { return }
+                    submitting = true
+                    Task {
+                        error = nil
+                        switch await model.submitAnswer(requestID: request.id, body: body) {
+                        case .answered, .alreadyResolved, .notFound, .unauthorized: break
+                        case .unreachable: error = RelayError.unreachableMessage
+                        case .failed(let failure):
+                            error = failure.userMessage
+                            await model.refreshRequest(id: request.id)
+                        }
+                        submitting = false
+                    }
+                } label: {
+                    if submitting { ProgressView() }
+                    else { Label("回答を送信", systemImage: "paperplane.fill") }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(PagerTheme.orange)
+                .disabled(form.submission == nil || submitting)
+            }
+        }
+        .foregroundStyle(PagerTheme.ink)
+    }
+
+    @ViewBuilder
+    private func itemInput(_ item: RequestItem) -> some View {
+        if let choices = item.choices, !choices.isEmpty {
+            Picker("回答", selection: Binding(
+                get: { drafts[item.id]?.choiceIndex },
+                set: { drafts[item.id] = ItemReply(itemID: item.id, choiceIndex: $0) }
+            )) {
+                Text("選択してください").tag(Int?.none)
+                ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in
+                    Text(choice).tag(Int?.some(index))
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityLabel(item.question)
+            .disabled(submitting)
+        } else {
+            TextField("回答を入力", text: Binding(
+                get: { drafts[item.id]?.text ?? "" },
+                set: { drafts[item.id] = ItemReply(itemID: item.id, text: $0) }
+            ), axis: .vertical)
+            .lineLimit(2...6)
+            .textFieldStyle(.roundedBorder)
+            .accessibilityLabel(item.question)
+            .disabled(submitting)
+            if (drafts[item.id]?.text?.utf16.count ?? 0) > ItemReply.maxTextLength {
+                Text("回答は\(ItemReply.maxTextLength)文字以内で入力してください")
+                    .font(.caption).foregroundStyle(.red)
+            }
+        }
     }
 }

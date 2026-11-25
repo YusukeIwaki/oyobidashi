@@ -232,7 +232,7 @@ mcp の接続先解決順: 環境変数 `OYOBIDASHI_RELAY_URL` / `OYOBIDASHI_AGE
 
 | ツール | 引数 | 動作 |
 |---|---|---|
-| `ask_human` | `question` (必須), `subject?` (用件, ≤40文字), `context?`, `choices?`, `urgency?`, `wait_seconds?` | request を作り、回答を待つ |
+| `ask_human` | `question` (必須), `subject?` (用件, ≤40文字), `context?`, `choices?`, `items?`, `urgency?`, `wait_seconds?` | request を作り、回答を待つ |
 | `wait_for_answer` | `request_id` (必須), `wait_seconds?` | 既存 request の回答を待ち続ける |
 | `notify_human` | `message` (必須) | 一方向通知 (`kind: notification`) |
 | `cancel_request` | `request_id` (必須) | 質問を取り消す |
@@ -240,6 +240,6 @@ mcp の接続先解決順: 環境変数 `OYOBIDASHI_RELAY_URL` / `OYOBIDASHI_AGE
 - `wait_seconds`: 既定は環境変数 `OYOBIDASHI_DEFAULT_WAIT_SECONDS` (無ければ 50。Codex のツールタイムアウト既定60秒に収めるため)、範囲 0〜3600。内部では `GET …?wait=` を最大30秒ずつ繰り返す。
 - 待ち時間内に回答が無ければ **エラーではなく** `status: "pending"` と `request_id` を返し、`wait_for_answer` を呼ぶよう案内する。
 - `agent.name` は MCP クライアントの `clientInfo.name`、`agent.cwd` は `process.cwd()`。
-- 結果は人間可読テキスト + `structuredContent` (`{ status, request_id, answer?, input_method?, choice_index?, warning? }`)。
+- 結果は人間可読テキスト + `structuredContent` (`{ status, request_id, answer?, input_method?, choice_index?, item_answers?, warning? }`)。項目ごとの回答は [複数項目の質問](EXTENSIONS.md#複数項目の質問) を参照。
 - `cancelled` / `expired` は `isError: false` でその旨を返す。relay に繋がらない・401 などは `isError: true` で対処方法つきのメッセージ。
 - `paired_devices: 0` のときは `warning` に「ペアリング済みデバイスが無い」旨を入れる。

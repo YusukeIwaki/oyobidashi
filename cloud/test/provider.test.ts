@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { SPOKEN_QUESTION_GUIDANCE } from "../../relay/src/conversation.ts";
+import { runConversationTurn, SPOKEN_QUESTION_GUIDANCE } from "../../relay/src/conversation.ts";
 import type { Call, RequestObject } from "../../relay/src/types.ts";
 import {
   apiConversation,
@@ -105,6 +105,38 @@ describe.each(["anthropic", "meta"] as const)(
       expect(system).toMatch(/resolved=true only when every item is answered or explicitly deferred/i);
       expect(system).toMatch(/numbered list with one line per item number/i);
     });
+    test("extracts item replies using saved state and the currently spoken question", async () => {
+      const items = [
+        { id: "method", question: "配送方法は？", choices: ["通常", "速達"] },
+        { id: "day", question: "発送日は？" },
+        { id: "label", question: "ラベルの版は？" },
+      ];
+      const item_answers = [{ item_id: "method", status: "answered", choice_index: 1, text: "速達", input_method: "voice" }] as const;
+      const voice = provider(fetcher(async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body.system).toContain("latest user utterance");
+        expect(JSON.parse(body.messages[0].content)).toMatchObject({ items, item_answers, current_item_id: "day" });
+        if (selected === "meta") {
+          expect(body.output_config.format.schema.required).toEqual(["updates", "clarification", "handoff"]);
+        }
+        return json(payload({
+          updates: [
+            { item_id: "day", evidence: "金曜日", choice_index: null, deferred: false, correction: false },
+            { item_id: "label", evidence: "第2版", choice_index: null, deferred: false, correction: false },
+          ],
+          clarification: null, handoff: false,
+        }));
+      }));
+      const transcript: Call["transcript"] = [
+        { role: "assistant", text: "発送日は？" }, { role: "user", text: "金曜日、ラベルは第2版です" },
+      ];
+      const result = await runConversationTurn(
+        voice, { ...request, items, item_answers: [...item_answers] },
+        { ...call, transcript }, new AbortController().signal,
+      );
+      expect(result).toMatchObject({ resolved: true, answer: "method: 速達\nday: 金曜日\nlabel: 第2版" });
+    });
+
     test("sends only the conversation data with no tools and forwards cancellation", async () => {
       const controller = new AbortController();
       const result = await provider(

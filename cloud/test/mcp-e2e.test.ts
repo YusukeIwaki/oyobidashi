@@ -99,3 +99,65 @@ test("a second user of the same server never sees the first user's requests", as
   await carol.close();
   await dave.close();
 });
+
+test("an MCP client creates item questions and gets item IDs and conditional results back", async () => {
+  const client = await connectHosted(`${origin}/v1/mcp`, new MemoryOAuthProvider(), approveAs("items-user"));
+  try {
+    const device = await h.pair("items-user");
+    expect((await h.call("GET", "/v1/requests", device.device_token, undefined, {
+      "x-oyobidashi-request-items": "1",
+    })).status).toBe(200);
+    const asked = await client.callTool({ name: "ask_human", arguments: {
+      question: "発送の確認です", wait_seconds: 0, items: [
+        { id: "route", question: "通常便と速達のどちらですか？", choices: ["通常便", "速達"] },
+        { id: "deadline", question: "速達の期限はいつですか？", applies_when: { item_id: "route", choice_index: 1 } },
+        { id: "label", question: "ラベルの版はどれですか？" },
+      ],
+    } });
+    expect(asked.structuredContent).toMatchObject({ status: "pending", delivery_mode: "text", item_answers: [] });
+    const id = (asked.structuredContent as { request_id: string }).request_id;
+    const sent = await h.call("POST", `/v1/requests/${id}/answer`, device.device_token, {
+      item_answers: [{ item_id: "route", choice_index: 0 }, { item_id: "label", text: "新版" }],
+    });
+    expect(sent.status).toBe(200);
+    const result = await client.callTool({ name: "wait_for_answer", arguments: { request_id: id, wait_seconds: 0 } });
+    expect(result.structuredContent).toMatchObject({
+      status: "answered",
+      item_answers: [
+        { item_id: "route", status: "answered", choice_index: 0, text: "通常便" },
+        { item_id: "deadline", status: "not_applicable" },
+        { item_id: "label", status: "answered", text: "新版" },
+      ],
+    });
+  } finally {
+    await client.close();
+  }
+});
+
+test("a paired older mobile client receives a numbered reply request instead of an item form", async () => {
+  const uid = "items-legacy";
+  const client = await connectHosted(`${origin}/v1/mcp`, new MemoryOAuthProvider(), approveAs(uid));
+  try {
+    const oldDevice = await h.pair(uid);
+    const currentDevice = await h.pair(uid);
+    await h.call("GET", "/v1/requests", currentDevice.device_token, undefined, { "x-oyobidashi-request-items": "1" });
+    const asked = await client.callTool({ name: "ask_human", arguments: {
+      question: "発送の確認です", wait_seconds: 0, delivery_mode: "call", priority: "high",
+      items: [
+        { id: "route", question: "通常便と速達のどちらですか？", choices: ["通常便", "速達"] },
+        { id: "deadline", question: "速達の期限はいつですか？", applies_when: { item_id: "route", choice_index: 1 } },
+      ],
+    } });
+    expect(asked.structuredContent).toMatchObject({ status: "pending", delivery_mode: "text", warning: expect.stringContaining("numbered text request") });
+    const id = (asked.structuredContent as { request_id: string }).request_id;
+    const fetched = (await h.call("GET", `/v1/requests/${id}`, oldDevice.device_token)).body.request;
+    expect(fetched.items).toBeUndefined();
+    expect(fetched.context).toContain("1. 通常便と速達のどちらですか？");
+    expect(fetched.context).toContain("2. 速達の期限はいつですか？（1で「速達」を選んだ場合のみ）");
+    expect((await h.call("POST", `/v1/requests/${id}/answer`, oldDevice.device_token, {
+      text: "1. 通常便", input_method: "text",
+    })).status).toBe(200);
+  } finally {
+    await client.close();
+  }
+});

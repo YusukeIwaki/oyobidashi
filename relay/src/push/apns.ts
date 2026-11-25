@@ -36,13 +36,16 @@ export function buildApnsPayload(request: RequestObject): Record<string, unknown
   const actionChoices=request.delivery_mode === "actions" ? (request.choices ?? []).slice(0,3).map(x=>pushPreview(x,180)) : [];
   const body=pushPreview(text.body,1400)+(actionChoices.length ? "\n"+actionChoices.map((x,i)=>`${i+1}: ${x}`).join(" / ") : "");
   const isNotification = request.kind === "notification";
+  const category = isNotification ? "OYOBIDASHI_NOTIFICATION"
+    : request.items || request.requires_item_answers ? "OYOBIDASHI_ITEM_QUESTION"
+    : request.delivery_mode === "actions" ? `OYOBIDASHI_ACTIONS_${actionChoices.length}` : "OYOBIDASHI_QUESTION";
   return {
     aps: {
       alert: { title, body },
       ...(request.priority === "low" ? {} : {sound:"default"}),
       "mutable-content":1,
       "interruption-level": request.priority === "low" ? "passive" : request.priority === "normal" ? "active" : request.priority ? "time-sensitive" : isNotification ? "active" : "time-sensitive",
-      category: isNotification ? "OYOBIDASHI_NOTIFICATION" : request.delivery_mode === "actions" ? `OYOBIDASHI_ACTIONS_${actionChoices.length}` : "OYOBIDASHI_QUESTION",
+      category,
       "thread-id": "oyobidashi",
     },
     request_id: request.id,

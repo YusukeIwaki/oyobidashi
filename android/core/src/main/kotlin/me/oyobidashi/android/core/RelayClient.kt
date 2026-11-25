@@ -218,7 +218,8 @@ class RelayClient(
             if (status != null) addQueryParameter("status", status.wireName)
             if (limit != null) addQueryParameter("limit", limit.toString())
         }.build()
-        return decode(RequestsEnvelope.serializer(), execute(newRequest(url).get().build())).requests
+        val request = newRequest(url).header("X-Oyobidashi-Request-Items", "1").get().build()
+        return decode(RequestsEnvelope.serializer(), execute(request)).requests
     }
 
     override suspend fun getRequest(id: String): Request =

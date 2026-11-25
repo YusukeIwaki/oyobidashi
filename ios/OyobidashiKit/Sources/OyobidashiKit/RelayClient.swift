@@ -308,7 +308,7 @@ public struct RelayClient: Sendable {
                           !turn.resolved || response.request.status == .answered else {
                         throw RelayError.decoding("invalid completed voice turn")
                     }
-                    return CallActionResponse(request: response.request, call: response.call, reply: reply, resolved: turn.resolved, turn: turn)
+                    return CallActionResponse(request: response.request, call: response.call, reply: reply, resolved: turn.resolved, turn: turn, endCall: turn.endCall)
                 case .failed:
                     throw RelayError.turnFailed
                 case .cancelled:
@@ -414,6 +414,9 @@ public struct RelayClient: Sendable {
             // トークンが無ければ送信せずに unauthorized とする。
             guard let deviceToken, !deviceToken.isEmpty else { throw RelayError.unauthorized }
             request.setValue("Bearer \(deviceToken)", forHTTPHeaderField: "Authorization")
+        }
+        if method == "GET", segments == ["v1", "requests"] {
+            request.setValue("1", forHTTPHeaderField: "X-Oyobidashi-Request-Items")
         }
         if segments.last == "call", let voiceAccessToken {
             request.setValue(voiceAccessToken, forHTTPHeaderField: "X-Oyobidashi-Voice-Token")

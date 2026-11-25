@@ -33,7 +33,7 @@ describe("tool listing", () => {
       ["ask_human", "cancel_request", "get_human_status", "notify_human", "update_request", "wait_for_answer"].sort(),
     );
 
-    const requestOutput = ["answer", "call", "choice_index", "delivery_mode", "error_code", "feedback", "input_method", "priority", "privacy_notice", "request_id", "requested_mode", "status", "warning"].sort();
+    const requestOutput = ["answer", "call", "choice_index", "delivery_mode", "error_code", "feedback", "input_method", "item_answers", "priority", "privacy_notice", "request_id", "requested_mode", "status", "warning"].sort();
     const presenceOutput = ["devices", "error_code", "now", "privacy_notice", "recent_events", "status", "warning"].sort();
     const ajv = new Ajv({ strict: false });
     for (const tool of tools) {
@@ -53,7 +53,7 @@ describe("tool listing", () => {
 
     const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
     expect(Object.keys(byName.ask_human!.inputSchema.properties!).sort()).toEqual(
-      ["choices", "context", "delivery_mode", "expires_in_seconds", "priority", "question", "subject", "urgency", "wait_seconds"].sort(),
+      ["choices", "context", "delivery_mode", "expires_in_seconds", "items", "priority", "question", "subject", "urgency", "wait_seconds"].sort(),
     );
     expect(byName.ask_human!.inputSchema.required).toEqual(["question"]);
     expect(Object.keys(byName.wait_for_answer!.inputSchema.properties!).sort()).toEqual(["request_id", "wait_seconds"]);
@@ -71,6 +71,8 @@ describe("tool listing", () => {
     expect(props.context.maxLength).toBe(8000);
     expect(props.choices.maxItems).toBe(8);
     expect(props.choices.items.maxLength).toBe(200);
+    expect(props.items.minItems).toBe(2);
+    expect(props.items.maxItems).toBe(8);
     expect(props.urgency.enum).toEqual(["normal", "high"]);
     expect(props.priority.enum).toEqual(["low", "normal", "high", "urgent"]);
     expect(props.delivery_mode.enum).toEqual(["auto", "actions", "text", "call"]);
@@ -97,21 +99,18 @@ describe("tool listing", () => {
     // What to do about it.
     expect(ask).toMatch(/ask it in ONE request/);
     expect(ask).toMatch(/does not block you yet can wait/i);
-    expect(ask).toMatch(/3 to 5 items/);
-    // How several items are laid out, and that choices do not fit them.
-    expect(ask).toMatch(/how many items there are and state the first one/i);
-    expect(ask).toMatch(/remaining items in "context" as a numbered list/i);
-    expect(ask).toMatch(/only "question" is read aloud/i);
-    expect(ask).toMatch(/do not pass "choices" with several items/i);
-    // The old one-question wording contradicted batching.
-    expect(ask).not.toMatch(/one complete question/i);
-    // No fixed waiting time between interruptions: that depends on the human.
+    expect(ask).toMatch(/use "items", with a short one-sentence purpose/i);
+    expect(ask).toMatch(/applies_when/);
+    expect(ask).toMatch(/ask_on_call=false/);
+    expect(ask).toMatch(/unanswered call items one at a time/i);
+    expect(ask).toMatch(/carries completed answers over to the app/i);
+    expect(ask).toMatch(/top-level choices are for a single question/i);
     expect(ask).not.toMatch(/\b\d+\s*(minutes?|seconds?|hours?)\b[^.]*(between|before (calling|asking|interrupting) again)/i);
     const props = tool.inputSchema.properties as Record<string, { description: string }>;
     expect(props.question!.description).toMatch(/first thing read aloud on a call/i);
-    expect(props.question!.description).toMatch(/count and the first item/i);
-    expect(props.context!.description).toMatch(/numbered list of the remaining items/i);
-    expect(props.context!.description).toMatch(/not read aloud/i);
+    expect(props.question!.description).toMatch(/the first applicable item is added by the server/i);
+    expect(props.context!.description).toMatch(/common supporting details/i);
+    expect(props.items!.description).toMatch(/questions to answer together/i);
     const instructions = h.client.getInstructions()!;
     expect(instructions).toMatch(/human is busy/i);
     expect(instructions).toMatch(/focus comes first/i);

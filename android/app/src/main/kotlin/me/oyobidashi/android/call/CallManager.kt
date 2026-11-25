@@ -48,6 +48,7 @@ data class CallUiState(
     val awaitingReply: Boolean = false,
     val canRetryVoice: Boolean = false,
     val subject: String? = null,
+    val handoffToAnswer: Boolean = false,
 )
 
 /**
@@ -154,6 +155,10 @@ class CallManager(
     }
 
     private fun doReconcile(requests: List<Request>) {
+        val handoff = _uiState.value?.takeIf { it.handoffToAnswer }
+        if (handoff != null && requests.none { it.id == handoff.requestId && it.isAnswerable }) {
+            _uiState.value = null
+        }
         val mine = myDeviceId()
         val live = requests.filter { it.isLiveCall }
         val cur = current
@@ -520,13 +525,13 @@ class CallManager(
         scope.launch { doHangup(requestId, callId) }
     }
 
-    private suspend fun doHangup(requestId: String, callId: String) {
+    private suspend fun doHangup(requestId: String, callId: String, handoffToAnswer: Boolean = false) {
         val cur = current
         val isRinging = cur != null && cur.requestId == requestId && cur.callId == callId && cur.state == CallState.RINGING
         // service と接続を即止める。
         CallService.stop(context)
         if (cur != null && cur.requestId == requestId && cur.callId == callId) {
-            cleanupCurrent(silently = true)
+            cleanupCurrent(silently = true, handoffToAnswer = handoffToAnswer)
         }
         regularNotifier.cancel(requestId)
         val client = api() ?: return
@@ -595,7 +600,7 @@ class CallManager(
     }
 
     /** 通話データを消して接続を切る。通知の出し直しは呼び出し側で行う。 */
-    private fun cleanupCurrent(silently: Boolean) {
+    private fun cleanupCurrent(silently: Boolean, handoffToAnswer: Boolean = false) {
         val cur = current ?: return
         markStopped(cur.callId)
         if (voiceTurnRequestId == cur.requestId) voiceTurnRequestId = null
@@ -609,7 +614,15 @@ class CallManager(
             // 既に破棄済み等
         }
         cur.connection = null
-        _uiState.value = null
+        _uiState.value = if (handoffToAnswer) {
+            _uiState.value?.copy(
+                state = CallState.ENDED,
+                ringing = false,
+                awaitingReply = false,
+                canRetryVoice = false,
+                handoffToAnswer = true,
+            )
+        } else null
         if (!silently) Log.i(TAG, "call ${cur.callId} cleaned up")
     }
 
@@ -620,6 +633,7 @@ class CallManager(
             val cur = current
             if (cur != null) regularNotifier.cancel(cur.requestId)
             cleanupCurrent(silently = true)
+            _uiState.value = null
         }
     }
 
@@ -687,6 +701,16 @@ class CallManager(
                 cleanupCurrent(silently = true)
                 regularNotifier.cancel(requestId)
                 refreshQuietly(requestId)
+            }
+        }
+    }
+
+    /** 最終案内まで読み上げたら、この通話画面を残りの回答へ引き継ぐ。 */
+    fun onServiceHandoff(requestId: String, callId: String) {
+        scope.launch {
+            val cur = current ?: return@launch
+            if (cur.requestId == requestId && cur.callId == callId && cur.state == CallState.ACTIVE) {
+                doHangup(requestId, callId, handoffToAnswer = true)
             }
         }
     }

@@ -30,6 +30,50 @@ afterAll(async () => {
 });
 
 suite("real PostgreSQL concurrency and forced failure", () => {
+  test("another API replica reads saved voice items and finishes them as text", async () => {
+    const { h, schema } = await setup(1);
+    const phone = await h.pair();
+    const created = await h.call("POST", "/v1/requests", "agent-alice", {
+      question: "発送方法の確認です。", priority: "high", delivery_mode: "call", items: [
+        { id: "delivery", question: "どの方法で発送しますか？", choices: ["通常便", "速達"] },
+        { id: "label", question: "ラベルの版はどれですか？", ask_on_call: false },
+      ],
+    });
+    const path = `/v1/requests/${created.body.request.id}`;
+    await h.call("POST", `${path}/call`, phone.device_token, { event: "answer" });
+    expect((await h.call("POST", `${path}/call`, phone.device_token, {
+      event: "turn", turn_id: crypto.randomUUID(), async: true, text: "速達",
+    })).status).toBe(202);
+    const worker = new JobWorker(h.service, { conversation: {
+      turn: async () => { throw new Error("legacy turn should be unused"); },
+      itemTurn: async () => ({
+        updates: [{ item_id: "delivery", evidence: "速達", choice_index: 1 }], handoff: false,
+      }),
+    } });
+    expect(await worker.runOnce("turn")).toBe(true);
+
+    const anotherPool = new PostgresDatabase(url!, 1, schema);
+    try {
+      const other = harness(anotherPool);
+      expect((await other.call("POST", `${path}/call`, phone.device_token, { event: "hangup" })).body.request).toMatchObject({
+        status: "pending", delivery_mode: "text",
+        item_answers: [{ item_id: "delivery", status: "answered", input_method: "voice", text: "速達" }],
+      });
+      expect((await other.call("POST", `${path}/answer`, phone.device_token, {
+        item_answers: [{ item_id: "label", text: "新版" }],
+      })).status).toBe(200);
+      expect((await h.call("GET", path)).body.request).toMatchObject({
+        status: "answered",
+        item_answers: [
+          { item_id: "delivery", text: "速達", input_method: "voice" },
+          { item_id: "label", text: "新版", input_method: "text" },
+        ],
+      });
+    } finally {
+      await anotherPool.close();
+    }
+  });
+
   test("account erasure revokes OAuth and keeps anonymized purchase ownership", async () => {
     const { h, db } = await setup(1);
     const oauth = new PostgresOAuthStore(db.sql);

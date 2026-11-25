@@ -66,6 +66,7 @@ import androidx.core.content.ContextCompat
 import me.oyobidashi.android.Session
 import me.oyobidashi.android.call.CallActivity
 import me.oyobidashi.android.core.Availability
+import me.oyobidashi.android.core.CallState
 import me.oyobidashi.android.core.Priority
 import me.oyobidashi.android.core.Request
 import kotlinx.coroutines.launch
@@ -124,7 +125,9 @@ fun RequestListScreen(vm: MainViewModel, session: Session) {
                 items(state.pending, key = { it.id }) { request ->
                     RequestCard(request, hasDraft = state.draft(request.id).text.isNotEmpty()) {
                         val call = vm.graph.callManager.uiState.value
-                        if (call != null && call.requestId == request.id) {
+                        if (call != null && call.requestId == request.id &&
+                            (call.state == CallState.RINGING || call.state == CallState.ACTIVE)
+                        ) {
                             context.startActivity(Intent(context, CallActivity::class.java)
                                 .setAction(CallActivity.ACTION_SHOW)
                                 .putExtra(CallActivity.EXTRA_REQUEST_ID, call.requestId)

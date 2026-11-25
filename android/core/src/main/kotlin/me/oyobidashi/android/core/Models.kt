@@ -169,6 +169,8 @@ data class Call(
     val transcript: List<CallTranscriptEntry> = emptyList(),
     /** クラウドの最新ターン。LAN relay はこのフィールドを返さない。 */
     val turn: CallTurn? = null,
+    /** LAN の自動切断マーカー。クラウドでは turn.end_call に含まれる。 */
+    @SerialName("end_call") val endCall: Boolean? = null,
 ) {
     val isValid: Boolean get() = id.isNotEmpty()
     val isRinging: Boolean get() = state == CallState.RINGING
@@ -200,6 +202,8 @@ data class Request(
     @SerialName("requested_mode") val requestedMode: RequestedMode = RequestedMode.AUTO,
     val call: Call? = null,
     val subject: String? = null,
+    val items: List<RequestItem>? = null,
+    @SerialName("item_answers") val itemAnswers: List<ItemAnswer>? = null,
 ) {
     val isPending: Boolean get() = status == RequestStatus.PENDING
 
@@ -215,6 +219,9 @@ data class Request(
         isPending && kind == RequestKind.QUESTION &&
             deliveryMode == DeliveryMode.CALL &&
             call != null && call.isValid && call.isLive
+
+    val isItemAnswerHandoff: Boolean get() =
+        isAnswerable && !items.isNullOrEmpty() && (call?.endCall == true || call?.turn?.endCall == true)
 
     /** 通話が終わってテキストにフォールバックした pending か (call ended + pending)。 */
     val isCallFallback: Boolean get() =
@@ -262,6 +269,7 @@ data class AnswerBody(
     val text: String,
     @SerialName("choice_index") val choiceIndex: Int? = null,
     @SerialName("input_method") val inputMethod: InputMethod,
+    @SerialName("item_answers") val itemAnswers: List<ItemReply>? = null,
 )
 
 /** PUT /v1/devices/me の push_token: 触らない / 解除 (null を送る) / 設定。 */
@@ -349,6 +357,7 @@ data class CallTurn(
     val reply: String? = null,
     val resolved: Boolean? = null,
     val error: CallTurnError? = null,
+    @SerialName("end_call") val endCall: Boolean? = null,
 ) {
     val isPending: Boolean get() = state == "queued" || state == "running"
 }
@@ -364,6 +373,7 @@ data class CallResponse(
     val reply: String? = null,
     val resolved: Boolean? = null,
     val turn: CallTurn? = null,
+    @SerialName("end_call") val endCall: Boolean? = null,
 ) {
     val isResolved: Boolean get() = resolved == true
 }

@@ -47,11 +47,14 @@ final class CallKitCoordinator: NSObject, IncomingCallHandling {
         super.init()
         provider.setDelegate(self, queue: nil)
         pushRegistry.delegate = self
-        voice.onRequestEndCall = { [weak self] in
+        voice.onRequestEndCall = { [weak self] handoff in
             guard let self, let requestID = self.activeRequestID else { return }
+            if handoff {
+                Task { _ = await self.model?.hangupCall(requestID: requestID) }
+            }
             self.model?.finishVoiceCall(requestID: requestID)
             if let callID = self.uuidByCallID.first(where: { $0.value == self.activeCallUUID })?.key {
-                self.handleCallEnded(callID: callID, requestID: requestID, reason: .resolved)
+                self.handleCallEnded(callID: callID, requestID: requestID, reason: handoff ? .remoteEnded : .resolved)
             } else {
                 self.voice.endConversation()
                 self.activeRequestID = nil

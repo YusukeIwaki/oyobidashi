@@ -1,5 +1,6 @@
 import { deliveryMode } from "./policy.ts";
-import type { ConversationProvider } from "./conversation.ts";
+import { runConversationTurn, type ConversationProvider } from "./conversation.ts";
+import { ITEM_CALL_HANDOFF, ITEM_HANDOFF_TIMEOUT_MS, canAskItemsOnCall, itemAnswerSummary, itemCallOpening, parseRequestItems, submitItemAnswers } from "./request-items.ts";
 import { systemClock, type Clock } from "./clock.ts";
 import { toDeviceObject, toRequestObject, type DeviceRow, type RequestRow, type Store } from "./db.ts";
 import { newDeviceId, newDeviceToken, newRequestId, safeEqualHex, sha256Hex } from "./ids.ts";
@@ -235,7 +236,7 @@ export function createApp(opts: AppOptions): App {
   }
 
   function routeMode(row: RequestRow, priority: Priority, requested: RequestedMode) {
-    return deliveryMode({requested,priority,question:row.question,choices:row.choices ? JSON.parse(row.choices) : null,context:row.context,presence:store.listPresence(clock.now()),anotherCall:store.liveCalls().some(x=>x.id!==row.id) || callOf(row)?.state === "ended"});
+    return deliveryMode({requested,priority,question:row.question,choices:row.choices ? JSON.parse(row.choices) : null,context:row.context,presence:store.listPresence(clock.now()),anotherCall:store.liveCalls().some(x=>x.id!==row.id) || callOf(row)?.state === "ended" || !canAskItemsOnCall(toRequestObject(row))});
   }
 
   function startCall(row: RequestRow): RequestRow {
@@ -398,6 +399,10 @@ export function createApp(opts: AppOptions): App {
       if (rawChoices.length > 0) choices = rawChoices as string[];
     }
 
+    const items = parseRequestItems(body.items, invalid);
+    if (items && (kind !== "question" || choices || question.length > 160))
+      throw invalid("items require a question summary of up to 160 characters and no top-level choices");
+
     let agentName: string | null = null;
     let agentCwd: string | null = null;
     const rawAgent = body.agent;
@@ -415,10 +420,11 @@ export function createApp(opts: AppOptions): App {
       subject,
       context,
       choices,
+      items,
       urgency,
       priority,
       requested_mode: requestedMode,
-      delivery_mode: kind === "notification" ? "text" : deliveryMode({ requested:requestedMode, priority, question, choices, context, presence:store.listPresence(now), anotherCall:store.liveCalls().length > 0 }),
+      delivery_mode: kind === "notification" || (items && !canAskItemsOnCall({items})) ? "text" : deliveryMode({ requested:requestedMode, priority, question, choices, context, presence:store.listPresence(now), anotherCall:store.liveCalls().length > 0 }),
       status: kind === "notification" ? "notified" : "pending",
       agent_name: agentName,
       agent_cwd: agentCwd,
@@ -502,6 +508,24 @@ export function createApp(opts: AppOptions): App {
   async function answerRequest(req: Request, id: string): Promise<Response> {
     const device = requireDevice(req);
     const body = await readJsonObject(req);
+    expireDue();
+    const row = store.getRequest(id);
+    if (!row) throw notFound("request not found");
+    if (row.items_json) {
+      const request = toRequestObject(row);
+      if (row.status === "answered" && row.answer_device_id === device.id && row.answer_input_method === "text") {
+        submitItemAnswers(request, body.item_answers, invalid);
+        return json(200, { request });
+      }
+      if (row.status !== "pending") throw alreadyResolved(row.status);
+      const answers = submitItemAnswers(request, body.item_answers, invalid);
+      const updated = store.answerRequest(id, {
+        text: itemAnswerSummary(answers), choice_index: null, input_method: "text", device_id: device.id,
+      }, clock.now(), answers);
+      if (!updated) throw alreadyResolved(store.getRequest(id)?.status ?? "expired");
+      return json(200, { request: emitUpdated(updated) });
+    }
+    if (body.item_answers != null) throw invalid("this request does not accept item_answers");
     const text = reqString(body, "text", 10000);
     const choiceIndexRaw = body.choice_index;
     if (
@@ -516,9 +540,6 @@ export function createApp(opts: AppOptions): App {
     if (inputMethod === "choice" && !hasIndex) throw invalid("choice_index is required when input_method is choice");
 
     // No await below this point: lookup, checks and the conditional UPDATE are one atomic step.
-    expireDue();
-    const row = store.getRequest(id);
-    if (!row) throw notFound("request not found");
     if (row.status !== "pending") throw alreadyResolved(row.status);
     if (hasIndex) {
       const count = row.choices === null ? 0 : (JSON.parse(row.choices) as unknown[]).length;
@@ -567,7 +588,9 @@ export function createApp(opts: AppOptions): App {
     if(auth.role === "agent") requireAgent(peer)(req);
     else store.touchDevice(auth.device.id,clock.now());
     const devices=store.listPresence(clock.now());
-    return json(200, {devices:auth.role === "agent" ? devices : devices.filter(x=>x.device_id===auth.device.id),recent_events:auth.role === "agent" ? store.recentFeedback() : [],now:iso(clock.now())});
+    const paired = auth.role === "agent" ? store.listDevices() : [];
+    const requestItems = paired.length > 0 && paired.every(d => d.supports_request_items === 1);
+    return json(200, {...(requestItems ? { request_items_supported: true } : {}), devices:auth.role === "agent" ? devices : devices.filter(x=>x.device_id===auth.device.id),recent_events:auth.role === "agent" ? store.recentFeedback() : [],now:iso(clock.now())});
   }
 
   async function putPresence(req: Request): Promise<Response> {
@@ -601,7 +624,7 @@ export function createApp(opts: AppOptions): App {
     if (call.device_id && call.device_id !== device.id) throw new HttpError(409,"call_claimed","call was answered on another device");
     if (event === "answer") {
       if (call.state === "active") return json(200,{request:toRequestObject(row),call,reply:call.transcript[0]?.text ?? row.question,resolved:false});
-      const reply = row.question;
+      const reply = itemCallOpening(toRequestObject(row));
       call = {...call,state:"active",device_id:device.id,updated_at:iso(clock.now()),transcript:[{role:"assistant",text:reply}]};
       row = store.saveCall(id,call,clock.now());
       store.feedback(id,device.id,"answered_call",clock.now());
@@ -614,6 +637,9 @@ export function createApp(opts: AppOptions): App {
       return json(200,{request:emitUpdated(row),call:callOf(row),resolved:false});
     }
     if (call.state !== "active") throw new HttpError(409,"call_not_active","answer the call before speaking");
+    if (call.end_call) return json(200, {
+      request: toRequestObject(row), call, reply: ITEM_CALL_HANDOFF, resolved: false, end_call: true,
+    });
     if (turns.has(id)) throw new HttpError(409,"turn_in_progress","wait for the current turn to complete");
     if (!opts.conversation) throw new HttpError(503,"voice_unavailable","conversation provider is unavailable; reply by text");
     if (call.transcript.length >= 60) throw new HttpError(409,"call_too_long","continue with text");
@@ -625,7 +651,7 @@ export function createApp(opts: AppOptions): App {
     server?.timeout(req,0);
     try {
       const conversation = {...call,transcript:[...call.transcript,{role:"user" as const,text:text!}]};
-      const result = await opts.conversation.turn(toRequestObject(row),conversation,controller.signal);
+      const result = await runConversationTurn(opts.conversation, toRequestObject(row), conversation, controller.signal);
       // The CLI may finish after a human hung up, another device replied, or an agent cancelled.
       expireDue();
       row = store.getRequest(id)!;
@@ -636,12 +662,21 @@ export function createApp(opts: AppOptions): App {
         if (!result.answer?.trim()) throw new Error("resolved call has no answer");
         call = {...call,state:"ended",outcome:"resolved"};
       }
-      row = store.saveCall(id,call,clock.now());
-      if (result.resolved) {
-        row = store.answerRequest(id,{text:result.answer!,choice_index:null,input_method:"voice",device_id:device.id},clock.now())!;
-        store.feedback(id,device.id,"resolved",clock.now());
-      }
-      return json(200,{request:emitUpdated(row),call,reply:result.reply,resolved:result.resolved});
+      const now = clock.now();
+      const itemAnswers = "itemAnswers" in result ? result.itemAnswers : undefined;
+      const handoff = "handoff" in result && result.handoff;
+      if (handoff) call.end_call = true;
+      row = store.db.transaction(() => {
+        const saved = store.saveCall(id, call!, now, itemAnswers);
+        if (!result.resolved) return saved;
+        const answered = store.answerRequest(id, {
+          text: result.answer!, choice_index: null, input_method: "voice", device_id: device.id,
+        }, now);
+        if (!answered) throw alreadyResolved("expired");
+        store.feedback(id, device.id, "resolved", now);
+        return answered;
+      })();
+      return json(200,{request:emitUpdated(row, result.resolved),call,reply:result.reply,resolved:result.resolved,...(handoff ? { end_call: true } : {})});
     } catch (error) {
       if (error instanceof HttpError) throw error;
       log.warn(`conversation failed: ${error instanceof Error ? error.message : "unknown"}`);
@@ -654,7 +689,7 @@ export function createApp(opts: AppOptions): App {
   }
 
   function listRequests(req: Request, params: URLSearchParams): Response {
-    requireDevice(req);
+    const device = requireDevice(req);
     const statusRaw = params.get("status");
     let status: Status | null = null;
     if (statusRaw !== null) {
@@ -662,6 +697,8 @@ export function createApp(opts: AppOptions): App {
       status = statusRaw as Status;
     }
     const limit = queryInt(params, "limit", 1, 200, 50);
+    if (req.headers.get("x-oyobidashi-request-items") === "1" && !device.supports_request_items)
+      store.noteRequestItemsSupport(device.id);
     expireDue();
     return json(200, { requests: store.listRequests(status, limit).map(toRequestObject) });
   }
@@ -869,6 +906,8 @@ export function createApp(opts: AppOptions): App {
       for (const row of store.liveCalls()) {
         const call = callOf(row)!;
         if (call.state === "ringing" && now - Date.parse(call.started_at) >= 45_000) emitUpdated(endCall(row,"missed",true));
+        else if (call.state === "active" && call.end_call && now - Date.parse(call.updated_at) >= ITEM_HANDOFF_TIMEOUT_MS)
+          emitUpdated(endCall(row,"hangup",true));
         else if (call.state === "active" && now-Date.parse(call.updated_at) >= 10*60_000) emitUpdated(endCall(row,"failed",true));
       }
       for (const ip of [...pairFailures.keys()]) recentFailures(ip, now);

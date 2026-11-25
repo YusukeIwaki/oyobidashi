@@ -27,6 +27,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -66,6 +67,9 @@ import me.oyobidashi.android.call.CallActivity
 import me.oyobidashi.android.core.CallState
 import me.oyobidashi.android.core.AnswerOutcome
 import me.oyobidashi.android.core.InputMethod
+import me.oyobidashi.android.core.ItemAnswerForm
+import me.oyobidashi.android.core.ItemReply
+import me.oyobidashi.android.core.ItemStatus
 import me.oyobidashi.android.core.Priority
 import me.oyobidashi.android.core.Request
 import me.oyobidashi.android.core.RequestKind
@@ -125,9 +129,10 @@ fun RequestDetailScreen(vm: MainViewModel, session: Session, requestId: String) 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    // 一覧に無い (通知から直接開いた等) 場合は取りに行く
+    // 項目別の回答は別端末や直前の通話でも更新される。
     LaunchedEffect(requestId) {
-        if (repository.state.value.find(requestId) == null) repository.refresh()
+        val cached = repository.state.value.find(requestId)
+        if (cached == null || cached.items != null) repository.refresh()
     }
 
     Scaffold(
@@ -172,7 +177,13 @@ fun RequestDetailScreen(vm: MainViewModel, session: Session, requestId: String) 
                     Text(meta, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 // 通話バナー: 着信中は通話画面へ、フォールバックは注記。
-                if (request.isLiveCall) {
+                if (request.isItemAnswerHandoff) {
+                    Text(
+                        Texts.remainingQuestions,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else if (request.isLiveCall) {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                         modifier = Modifier.fillMaxWidth(),
@@ -236,7 +247,18 @@ fun RequestDetailScreen(vm: MainViewModel, session: Session, requestId: String) 
                     Text(Texts.answerError(it), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                 }
 
-                if (request.isAnswerable) {
+                if (request.items != null) {
+                    ItemAnswersPanel(
+                        request = request,
+                        submitting = requestId in state.submitting,
+                        unconfirmedSpeech = state.draft(requestId).takeIf {
+                            it.dictated && !request.isLiveCall
+                        }?.text.orEmpty(),
+                        onSend = { replies -> scope.launch {
+                            if (repository.submitItems(requestId, replies) is AnswerOutcome.Success) vm.answerSubmitted(requestId)
+                        } },
+                    )
+                } else if (request.isAnswerable) {
                     AnswerForm(
                         request = request,
                         draftText = state.draft(requestId).text,
@@ -264,6 +286,76 @@ fun RequestDetailScreen(vm: MainViewModel, session: Session, requestId: String) 
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ItemAnswersPanel(
+    request: Request,
+    submitting: Boolean,
+    unconfirmedSpeech: String,
+    onSend: (List<ItemReply>) -> Unit,
+) {
+    var drafts by remember(request.id) { mutableStateOf<Map<String, ItemReply>>(emptyMap()) }
+    val form = ItemAnswerForm(request, drafts)
+    form.rows.forEach { row ->
+        val item = row.item
+        val answer = row.answer
+        val draft = drafts[item.id]
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(item.question, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleMedium)
+                item.context?.let { SelectionContainer { Text(it, style = MaterialTheme.typography.bodyMedium) } }
+                when {
+                    answer?.status == ItemStatus.ANSWERED -> {
+                        if (answer.inputMethod == InputMethod.VOICE && request.isAnswerable) {
+                            Text("通話で回答済み", style = MaterialTheme.typography.labelMedium)
+                        }
+                        SelectionContainer { Text(answer.text.orEmpty()) }
+                    }
+                    answer?.status == ItemStatus.NOT_APPLICABLE -> Text("対象外")
+                    request.isAnswerable -> {
+                        if (answer?.status == ItemStatus.DEFERRED) {
+                            Text("通話で保留", style = MaterialTheme.typography.labelMedium)
+                        }
+                        if (!item.choices.isNullOrEmpty()) {
+                            item.choices.orEmpty().forEachIndexed { index, label ->
+                                FilterChip(
+                                    selected = draft?.choiceIndex == index,
+                                    enabled = !submitting,
+                                    onClick = { drafts = drafts + (item.id to ItemReply(item.id, choiceIndex = index)) },
+                                    label = { Text(label) },
+                                )
+                            }
+                        } else {
+                            OutlinedTextField(
+                                value = draft?.text.orEmpty(),
+                                onValueChange = { drafts = drafts + (item.id to ItemReply(item.id, text = it)) },
+                                label = { Text("回答を入力") },
+                                enabled = !submitting,
+                                minLines = 2,
+                                modifier = Modifier.fillMaxWidth(),
+                                isError = (draft?.text?.length ?: 0) > ItemReply.MAX_TEXT_LENGTH,
+                                supportingText = if ((draft?.text?.length ?: 0) > ItemReply.MAX_TEXT_LENGTH) {
+                                    { Text("回答は${ItemReply.MAX_TEXT_LENGTH}文字以内で入力してください") }
+                                } else null,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (request.isAnswerable) {
+        if (unconfirmedSpeech.isNotBlank()) {
+            Text("送信が確定していない音声入力", style = MaterialTheme.typography.labelMedium)
+            SelectionContainer { Text(unconfirmedSpeech, style = MaterialTheme.typography.bodyMedium) }
+        }
+        Button(
+            enabled = form.replies != null && !submitting,
+            onClick = { form.replies?.let(onSend) },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (submitting) "送信中…" else "回答を送信") }
     }
 }
 

@@ -1,3 +1,4 @@
+import type { ItemAnswer, RequestItem } from "./request-items.ts";
 import { Database, type Statement } from "bun:sqlite";
 import { freshPushRegistration } from "./push/lifecycle.ts";
 import type {
@@ -22,6 +23,8 @@ export interface RequestRow {
   delivery_mode: DeliveryMode;
   requested_mode: RequestedMode;
   call_json: string | null;
+  items_json: string | null;
+  item_answers_json: string | null;
   seq: number;
   id: string;
   kind: Kind;
@@ -44,6 +47,7 @@ export interface RequestRow {
 }
 
 export interface DeviceRow {
+  supports_request_items?: number;
   push_client_id?: string | null;
   push_registered_at?: number | null;
   voip_registered_at?: number | null;
@@ -67,6 +71,7 @@ export interface NewRequest {
   subject?: string | null;
   context: string | null;
   choices: string[] | null;
+  items?: RequestItem[] | undefined;
   urgency: Urgency;
   status: Status;
   agent_name: string | null;
@@ -96,6 +101,10 @@ export function toRequestObject(row: RequestRow): RequestObject {
     ...(row.subject ? { subject: row.subject } : {}),
     context: row.context,
     choices: row.choices === null ? null : (JSON.parse(row.choices) as string[]),
+    ...(row.items_json ? {
+      items: JSON.parse(row.items_json) as RequestItem[],
+      item_answers: row.item_answers_json ? JSON.parse(row.item_answers_json) as ItemAnswer[] : [],
+    } : {}),
     urgency: row.urgency,
     status: row.status,
     answer:
@@ -178,10 +187,11 @@ export class Store {
     this.db.exec(SCHEMA);
     // Additive migrations also cover databases created by the reference app.
     const columns = new Set((this.db.query("PRAGMA table_info(requests)").all() as { name: string }[]).map(x => x.name));
-    for (const [name, definition] of Object.entries({ priority: "TEXT NOT NULL DEFAULT 'normal'", delivery_mode: "TEXT NOT NULL DEFAULT 'text'", requested_mode: "TEXT NOT NULL DEFAULT 'auto'", call_json: "TEXT", subject: "TEXT" })) {
+    for (const [name, definition] of Object.entries({ priority: "TEXT NOT NULL DEFAULT 'normal'", delivery_mode: "TEXT NOT NULL DEFAULT 'text'", requested_mode: "TEXT NOT NULL DEFAULT 'auto'", call_json: "TEXT", subject: "TEXT", items_json: "TEXT", item_answers_json: "TEXT" })) {
       if (!columns.has(name)) this.db.exec(`ALTER TABLE requests ADD COLUMN ${name} ${definition}`);
     }
     const deviceColumns = new Set((this.db.query("PRAGMA table_info(devices)").all() as { name: string }[]).map(x => x.name));
+    if (!deviceColumns.has("supports_request_items")) this.db.exec("ALTER TABLE devices ADD COLUMN supports_request_items INTEGER NOT NULL DEFAULT 0");
     if (!deviceColumns.has("voip_token")) this.db.exec("ALTER TABLE devices ADD COLUMN voip_token TEXT");
     this.db.exec(`CREATE TABLE IF NOT EXISTS presence (device_id TEXT PRIMARY KEY, availability TEXT NOT NULL, until_ms INTEGER, note TEXT, updated_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS feedback (seq INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT NOT NULL, device_id TEXT, event TEXT NOT NULL, at INTEGER NOT NULL);`);
@@ -210,8 +220,8 @@ export class Store {
 
   insertRequest(r: NewRequest): RequestRow {
     const row = this.q(
-      `INSERT INTO requests (id, kind, question, subject, context, choices, urgency, status, agent_name, agent_cwd, created_at, updated_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+      `INSERT INTO requests (id, kind, question, subject, context, choices, items_json, urgency, status, agent_name, agent_cwd, created_at, updated_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     ).get(
       r.id,
       r.kind,
@@ -219,6 +229,7 @@ export class Store {
       r.subject ?? null,
       r.context,
       r.choices === null ? null : JSON.stringify(r.choices),
+      r.items ? JSON.stringify(r.items) : null,
       r.urgency,
       r.status,
       r.agent_name,
@@ -232,11 +243,12 @@ export class Store {
   }
 
   updateRouting(id: string, priority: Priority, mode: DeliveryMode, requested: RequestedMode, now: number): RequestRow | null {
-    return this.q("UPDATE requests SET priority = ?, delivery_mode = ?, requested_mode = ?, updated_at = ? WHERE id = ? AND status = 'pending' AND expires_at > ? RETURNING *").get(priority, mode, requested, now, id, now) as RequestRow | null;
+    return this.q("UPDATE requests SET priority = ?, delivery_mode = ?, requested_mode = ?, updated_at = MAX(?, updated_at + (items_json IS NOT NULL)) WHERE id = ? AND status = 'pending' AND expires_at > ? RETURNING *").get(priority, mode, requested, now, id, now) as RequestRow | null;
   }
 
-  saveCall(id: string, call: Call, now: number): RequestRow {
-    this.q("UPDATE requests SET call_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(call), now, id);
+  saveCall(id: string, call: Call, now: number, items?: ItemAnswer[]): RequestRow {
+    this.q("UPDATE requests SET call_json = ?, updated_at = MAX(?, updated_at + (items_json IS NOT NULL)), item_answers_json = COALESCE(?, item_answers_json) WHERE id = ?")
+      .run(JSON.stringify(call), now, items ? JSON.stringify(items) : null, id);
     return this.getRequest(id)!;
   }
 
@@ -255,6 +267,10 @@ export class Store {
 
   setPresence(deviceId: string, availability: Presence["availability"], until: number | null, note: string | null, now: number): void {
     this.q("INSERT INTO presence VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(device_id) DO UPDATE SET availability=excluded.availability, until_ms=excluded.until_ms, note=excluded.note, updated_at=excluded.updated_at, last_seen_at=excluded.last_seen_at").run(deviceId, availability, until, note, now, now);
+  }
+
+  noteRequestItemsSupport(deviceId: string): void {
+    this.q("UPDATE devices SET supports_request_items = 1 WHERE id = ? AND supports_request_items = 0").run(deviceId);
   }
 
   touchDevice(deviceId: string, now: number): void {
@@ -288,13 +304,13 @@ export class Store {
   }
 
   /** First answer wins: only a pending, non-expired request can be answered. */
-  answerRequest(id: string, a: NewAnswer, now: number): RequestRow | null {
+  answerRequest(id: string, a: NewAnswer, now: number, items?: ItemAnswer[]): RequestRow | null {
     return (
       (this.q(
         `UPDATE requests SET status = 'answered', answer_text = ?, answer_choice_index = ?, answer_input_method = ?,
-           answer_device_id = ?, answered_at = ?, updated_at = ?
+           answer_device_id = ?, answered_at = ?, updated_at = MAX(?, updated_at + (items_json IS NOT NULL)), item_answers_json = COALESCE(?, item_answers_json)
          WHERE id = ? AND status = 'pending' AND expires_at > ? RETURNING *`,
-      ).get(a.text, a.choice_index, a.input_method, a.device_id, now, now, id, now) as RequestRow | null) ?? null
+      ).get(a.text, a.choice_index, a.input_method, a.device_id, now, now, items ? JSON.stringify(items) : null, id, now) as RequestRow | null) ?? null
     );
   }
 

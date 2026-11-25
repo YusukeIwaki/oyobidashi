@@ -16,6 +16,8 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 object Texts {
+    const val remainingQuestions = "残りの質問に回答してください"
+
     const val UNREACHABLE = "中継サーバーに接続できません。ネットワーク接続を確認してください"
 
     fun billingVoiceTraining(training: Boolean?): String = when (training) {

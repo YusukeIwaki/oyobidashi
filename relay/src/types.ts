@@ -1,3 +1,5 @@
+import type { ItemAnswer, RequestItem } from "./request-items.ts";
+
 export const VERSION = "0.2.0";
 export const IOS_APP_ID = "me.oyobidashi.ios";
 export const ANDROID_APP_ID = "me.oyobidashi.android";
@@ -38,6 +40,7 @@ export interface Call {
   state: "ringing" | "active" | "ended";
   outcome: "resolved" | "declined" | "hangup" | "missed" | "cancelled" | "expired" | "failed" | null;
   device_id: string | null;
+  end_call?: boolean;
   started_at: string;
   updated_at: string;
   transcript: { role: "user" | "assistant"; text: string }[];
@@ -57,6 +60,8 @@ export interface RequestObject {
   recipient_device_id?: string;
   preview_url?:string;
   preview_token?:string;
+  /** Push only: select the category that opens the form without a direct reply action. */
+  requires_item_answers?: boolean;
   priority?: Priority;
   delivery_mode?: DeliveryMode;
   requested_mode?: RequestedMode;
@@ -68,6 +73,8 @@ export interface RequestObject {
   subject?: string | null;
   context: string | null;
   choices: string[] | null;
+  items?: RequestItem[];
+  item_answers?: ItemAnswer[];
   urgency: Urgency;
   status: Status;
   answer: Answer | null;

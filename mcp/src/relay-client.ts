@@ -1,3 +1,4 @@
+import type { RequestItem } from "../../relay/src/request-items.ts";
 import { z } from "zod";
 import { abortError, systemClock, type Clock } from "./clock.ts";
 
@@ -30,6 +31,14 @@ const CallSchema = z.object({
   transcript: z.array(TranscriptEntrySchema).nullish(),
 });
 
+export const ItemAnswerSchema = z.object({
+  item_id: z.string(),
+  status: z.enum(["answered", "deferred", "not_applicable"]),
+  text: z.string().optional(),
+  choice_index: z.number().int().optional(),
+  input_method: z.enum(["text", "choice", "voice"]).optional(),
+});
+
 const RequestSchema = z.object({
   id: z.string().min(1),
   kind: z.string().nullish(),
@@ -37,6 +46,7 @@ const RequestSchema = z.object({
   subject: z.string().nullish(),
   context: z.string().nullish(),
   choices: z.array(z.string()).nullish(),
+  item_answers: z.array(ItemAnswerSchema).nullish(),
   urgency: z.string().nullish(),
   priority: z.string().nullish(),
   delivery_mode: z.string().nullish(),
@@ -75,6 +85,7 @@ const PresenceEventSchema = z.object({
 });
 
 const PresenceSchema = z.object({
+  request_items_supported: z.boolean().nullish(),
   devices: z.array(PresenceDeviceSchema).nullish(),
   recent_events: z.array(PresenceEventSchema).nullish(),
   now: z.string().nullish(),
@@ -106,6 +117,7 @@ export interface CreateRequestInput {
   subject?: string | undefined;
   context?: string | undefined;
   choices?: string[] | undefined;
+  items?: RequestItem[] | undefined;
   urgency?: "normal" | "high" | undefined;
   priority?: RelayPriority | undefined;
   deliveryMode?: RelayDeliveryMode | undefined;
@@ -223,6 +235,7 @@ export class RelayClient {
     const body: Record<string, unknown> = { kind: input.kind, question: input.question };
     if (input.subject !== undefined) body.subject = input.subject;
     if (input.context !== undefined) body.context = input.context;
+    if (input.items !== undefined) body.items = input.items;
     if (input.choices !== undefined && input.choices.length > 0) body.choices = input.choices;
     if (input.urgency !== undefined) body.urgency = input.urgency;
     if (input.priority !== undefined) body.priority = input.priority;

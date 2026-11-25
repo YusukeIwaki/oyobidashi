@@ -34,3 +34,28 @@ Remote device access: default is private LAN. An explicit `serve --public-url ht
 
 
 MCP resource `human://status` exposes the same presence/feedback JSON as GET /v1/presence. Clients can subscribe and receive notifications/resources/updated when the content changes (5-second polling, only while subscribed). Unsubscribe and transport close stop polling. No availability is fabricated when the relay is unreachable.
+
+
+## 複数項目の質問
+
+`ask_human` と `POST /v1/requests` は任意の `items` を受け取る。対応するサーバー・MCP・アプリの組み合わせで利用する。`items` を省略した既存の質問は従来の形式で回答する。
+
+```json
+{
+  "question": "発送方法を確認します。",
+  "items": [
+    { "id": "route", "question": "通常便と速達のどちらですか？", "choices": ["通常便", "速達"] },
+    { "id": "date", "question": "速達の期限はいつですか？", "applies_when": { "item_id": "route", "choice_index": 1 } },
+    { "id": "label", "question": "ラベルの版はどれですか？", "ask_on_call": false }
+  ]
+}
+```
+
+- 対応アプリは質問一覧を取得するときに `X-Oyobidashi-Request-Items: 1` を送る。ペアリング済みの全端末が対応を通知したら、エージェントの `GET /v1/presence` に `request_items_supported: true` が含まれる。それまではMCPが番号付きのテキスト質問に変換し、従来の回答欄から返信できるようにする。
+- `items` は2〜8件。トップレベルの `question` は用件の要約（160文字以内）、`context` は共通の補足。トップレベルの `choices` は省略する。
+- 各項目に一意の `id`（英数字・`_`・`-`、最大40文字）と `question`（最大500文字）を付ける。`context`（最大1000文字）と `choices`（最大5件、各200文字）は任意。`choices` がある場合、回答はその選択肢のいずれか。
+- `applies_when` は先行項目の `item_id` と0始まりの `choice_index`。先行項目でその選択肢が回答されたときに表示・質問し、別の選択肢が回答された場合や先行項目自体が対象外の場合は対象外になる。
+- 通話では最初に用件と1問目を読み、以降は回答・条件を見て次の1問を選ぶ。会話モデルは直近の発話に根拠がある回答を項目IDで抽出し、サーバーが受理した回答をターンごとに保存する。`ask_on_call: false` の項目は電話から聞かず、通話で保留した項目とともにアプリで回答できる。通話で選択肢や判断に必要な前提を読み上げる場合は各項目の `question` に含める。
+- 通話で聞く項目が残っていない場合や利用者が切り替えを求めた場合、ターン応答は `end_call: true` と `resolved: false` を返す。アプリは案内を読んだ後で `hangup` を送信する。送信されなければサーバーが60秒後に通話を閉じる。リクエストは未回答の項目がある間 `pending` のまま。
+- `item_answers` は項目ID付きの結果。保存済みの回答は `answered`、通話で後回しにした項目は `deferred`、条件から外れた項目は `not_applicable`。未回答で保留されていない項目は配列に含まれない。状態の例は [request_item_progress.json](fixtures/request_item_progress.json)。
+- アプリは `POST /v1/requests/{id}/answer` に残りの `item_answers: [{item_id, text} | {item_id, choice_index}]` をまとめて送る。自由記述は項目ごとに最大1000文字。保存済みの通話回答と合わせて、適用対象の全項目が回答済みになった時点で `answered` になる。MCP は `item_answers` で項目ごとの回答と入力方法を返し、従来の `answer` でも回答済み項目の要約を返す。

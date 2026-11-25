@@ -148,7 +148,7 @@ internal class VoiceTurnRunner(private val options: VoiceTurnOptions) {
                         if (!turn.resolved && (response.call?.isEnded == true || response.request.call?.isEnded == true)) {
                             throw RelayException.VoiceTurn(turnId, "cancelled", "call_ended")
                         }
-                        return response.copy(reply = turn.reply, resolved = turn.resolved, turn = turn)
+                        return response.copy(reply = turn.reply, resolved = turn.resolved, turn = turn, endCall = turn.endCall)
                     }
                     "failed", "cancelled" -> {
                         if (turn.resolved) throw RelayException.Protocol("failed voice turn cannot resolve a request")

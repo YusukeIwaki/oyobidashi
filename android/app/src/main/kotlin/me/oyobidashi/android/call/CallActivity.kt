@@ -32,6 +32,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,10 +41,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.withResumed
 import me.oyobidashi.android.core.CallState
 import me.oyobidashi.android.graph
 import me.oyobidashi.android.ui.MainActivity
 import me.oyobidashi.android.ui.OyobidashiTheme
+import me.oyobidashi.android.ui.Texts
 
 /**
  * 着信・通話中の全画面 UI。CallStyle 通知の応答・拒否・フルスクリーンから開く。
@@ -175,6 +179,18 @@ private fun CallScreen(
     val graph = androidx.compose.ui.platform.LocalContext.current.graph
     val ui by graph.callManager.uiState.collectAsState()
     val state = ui?.takeIf { it.requestId == requestId && (callId.isEmpty() || it.callId == callId) }
+    val handoff = state?.takeIf { it.handoffToAnswer }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(handoff?.requestId, handoff?.callId) {
+        if (handoff != null) {
+            lifecycle.withResumed {
+                val latest = graph.callManager.uiState.value
+                if (latest?.handoffToAnswer == true && latest.callId == handoff.callId) {
+                    onOpenDetail(handoff.requestId)
+                }
+            }
+        }
+    }
 
     Scaffold { padding ->
         Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.TopCenter) {
@@ -184,6 +200,10 @@ private fun CallScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                if (handoff != null) {
+                    Text(Texts.remainingQuestions, style = MaterialTheme.typography.titleMedium)
+                    return@Column
+                }
                 if (state == null) {
                     Text(
                         "この通話は既に応答・終了しているか、他の端末で対応されました。" +

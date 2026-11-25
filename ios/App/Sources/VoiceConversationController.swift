@@ -46,7 +46,7 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     /// 読み上げ完了後に通話終了すべきとき、協調クラスが CXEndCallAction を要求するためのフック。
-    var onRequestEndCall: (@MainActor () -> Void)?
+    var onRequestEndCall: (@MainActor (Bool) -> Void)?
     /// 権限不足などで会話を開始できないとき (failCall 送信は呼び出し側でも行う)。
     var onConversationFailed: (@MainActor (String) -> Void)?
 
@@ -54,6 +54,7 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
     @ObservationIgnored private weak var model: AppModel?
     @ObservationIgnored private var requestID: String?
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var pendingHandoff = false
     @ObservationIgnored private var pendingResolvedEnd = false
     @ObservationIgnored private var usesCallKitAudio = false
     @ObservationIgnored private var audioEngine: AVAudioEngine?
@@ -156,14 +157,15 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
     /// (0.575 → 約1.4倍、0.6 → 約1.6倍)。Android の `SPEECH_RATE` と揃える。
     private static let speechRate: Float = 0.59
 
-    private func speak(_ text: String, isFinalReply: Bool, gen: Int) {
+    private func speak(_ text: String, isFinalReply: Bool, gen: Int, handoff: Bool = false) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            if isFinalReply { finishAfterFinalReply(gen: gen) } else { startListening(gen: gen) }
+            if isFinalReply { finishAfterFinalReply(gen: gen, handoff: handoff) } else { startListening(gen: gen) }
             return
         }
         stopListening(sendFinal: false)
         lastAssistantText = trimmed
+        pendingHandoff = handoff
         pendingResolvedEnd = isFinalReply
         phase = .speaking
         let utterance = AVSpeechUtterance(string: trimmed)
@@ -178,7 +180,7 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
             let gen = self.generation
             if self.pendingResolvedEnd {
                 self.pendingResolvedEnd = false
-                self.finishAfterFinalReply(gen: gen)
+                self.finishAfterFinalReply(gen: gen, handoff: self.pendingHandoff)
             } else {
                 self.startListening(gen: gen)
             }
@@ -189,14 +191,14 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
         // cancel() 側で状態遷移するのでここでは何もしない。
     }
 
-    private func finishAfterFinalReply(gen: Int) {
+    private func finishAfterFinalReply(gen: Int, handoff: Bool = false) {
         guard generation == gen else { return }
         // 最終返答を読み終えた後にだけ通話を終える。
         #if DEBUG
         print("[oyobidashi.voice] final_reply_finished")
         #endif
         phase = .ended
-        onRequestEndCall?()
+        onRequestEndCall?(handoff)
     }
 
     // MARK: Listening
@@ -347,10 +349,12 @@ final class VoiceConversationController: NSObject, AVSpeechSynthesizerDelegate {
             case .success(let resp):
                 let reply = resp.reply ?? ""
                 let resolved = resp.resolved ?? (resp.request.status == .answered)
+                let handoff = resp.endCall == true
+                let shouldEnd = handoff || ConversationPolicy.shouldEndAfterSpeaking(resolved: resolved)
                 if !reply.isEmpty {
-                    self.speak(reply, isFinalReply: ConversationPolicy.shouldEndAfterSpeaking(resolved: resolved), gen: gen)
-                } else if resolved {
-                    self.finishAfterFinalReply(gen: gen)
+                    self.speak(reply, isFinalReply: shouldEnd, gen: gen, handoff: handoff)
+                } else if shouldEnd {
+                    self.finishAfterFinalReply(gen: gen, handoff: handoff)
                 } else {
                     self.startListening(gen: gen)
                 }

@@ -33,6 +33,7 @@ final class NotificationCoordinator: NSObject, NotificationManaging {
         )
         var categories: [UNNotificationCategory] = [
             UNNotificationCategory(identifier: PushCategory.question, actions: [reply], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: PushCategory.itemQuestion, actions: [], intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: PushCategory.notification, actions: [], intentIdentifiers: [], options: []),
         ]
         // リモート Push 用の静的 actions カテゴリ (汎用名 + 1〜3件)。タイトルは汎用だが index は正確に送る。
@@ -146,6 +147,8 @@ final class NotificationCoordinator: NSObject, NotificationManaging {
         }
         if request.kind == .notification {
             content.categoryIdentifier = PushCategory.notification
+        } else if request.items != nil {
+            content.categoryIdentifier = PushCategory.itemQuestion
         } else if request.isActionsEligible {
             content.categoryIdentifier = PushCategory.actionsCategoryIdentifier(requestID: request.id)
         } else {

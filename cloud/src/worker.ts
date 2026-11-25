@@ -2,7 +2,8 @@ import type {
   ConversationProvider,
   ConversationResult,
 } from "../../relay/src/conversation.ts";
-import { validateConversationResult } from "../../relay/src/conversation.ts";
+import { runConversationTurn } from "../../relay/src/conversation.ts";
+import type { ItemResult } from "../../relay/src/request-items.ts";
 import type { PushProviders } from "../../relay/src/push/types.ts";
 import { ProviderFailure } from "./provider.ts";
 import { CloudService, hash } from "./service.ts";
@@ -251,16 +252,11 @@ export class JobWorker {
       };
     });
     if (!input) return;
-    let result: ConversationResult | undefined, error: unknown;
+    let result: ConversationResult | ItemResult | undefined, error: unknown;
     try {
       // Never substitute the other model: its data-use terms differ.
       if (!input.conversation) throw new ProviderFailure(false);
-      result = validateConversationResult(
-        await abortable(
-          input.conversation.turn(input.r, input.call, signal),
-          signal,
-        ),
-      );
+      result = await abortable(runConversationTurn(input.conversation, input.r, input.call, signal), signal);
     } catch (e) {
       error = e;
     }
@@ -329,6 +325,10 @@ export class JobWorker {
       t.state = "completed";
       t.reply = result.reply;
       t.resolved = result.resolved;
+      if ("itemAnswers" in result) {
+        r.item_answers = result.itemAnswers;
+        if (result.handoff) t.end_call = true;
+      }
       t.error = null;
       await tx.put("turn", t.id, t, this.service.now() + 30 * 86400_000);
       r.call.turn = turnView(t);
@@ -406,8 +406,10 @@ export class JobWorker {
         return null;
       }
       // Never put transcript/turn contents in push payloads.
+      const { items, item_answers: _answers, ...requestWithoutItems } = r;
       const safe = {
-        ...r,
+        ...requestWithoutItems,
+        ...(items ? { requires_item_answers: true } : {}),
         // The short subject is intended for the native incoming call screen.
         // Ordinary notifications still retrieve all content via scoped previews.
         subject: voip ? r.subject ?? null : null,

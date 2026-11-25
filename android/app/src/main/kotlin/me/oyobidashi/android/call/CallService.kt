@@ -196,17 +196,18 @@ class CallService : Service() {
                 transcript.addAll(serverTranscript)
             }
             val nextReply = res.reply?.takeIf { it.isNotBlank() }
-            if (res.isResolved) {
-                // 解決。最終応答を話してから終わる。
+            if (res.isResolved || res.endCall == true) {
+                // 最終応答を読み上げてから、通話を閉じる。
                 if (nextReply != null) {
                     // サーバー transcript に最終応答が含まれていない場合の保険で足す。
                     if (transcript.lastOrNull()?.text != nextReply) {
                         transcript += CallTranscriptEntry(CallRole.ASSISTANT, nextReply)
                     }
                     graph.callManager.onTurnProgress(reqId, cId, transcript.toList(), nextReply)
-                    speak(nextReply) // 失敗しても終わる (解決済みのため)
+                    speak(nextReply) // 読み上げに失敗しても通話終了へ進む。
                 }
-                graph.callManager.onServiceFinished(reqId, cId)
+                if (res.isResolved) graph.callManager.onServiceFinished(reqId, cId)
+                else graph.callManager.onServiceHandoff(reqId, cId)
                 stopSelf()
                 return
             }

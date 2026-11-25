@@ -1,3 +1,4 @@
+import { ITEM_HANDOFF_TIMEOUT_MS, canAskItemsOnCall, itemAnswerSummary, itemCallOpening, parseRequestItems, submitItemAnswers } from "../../relay/src/request-items.ts";
 import { claudeTokensNeedRelink } from "./claude-tokens.ts";
 import { deliveryMode } from "../../relay/src/policy.ts";
 import { INPUT_CONSENT_MISSING_MESSAGE, INPUT_RESTRICTION_VERSION, type InputRestriction } from "./input-restriction.ts";
@@ -243,7 +244,7 @@ export class CloudService {
     if (call?.state === "active")
       return Math.min(
         expiry,
-        Date.parse(call.updated_at) + 600_000,
+        Date.parse(call.updated_at) + (call.turn?.end_call ? ITEM_HANDOFF_TIMEOUT_MS : 600_000),
         liveTurn(call.turn) ? (call.turn?.deadline ?? Infinity) : Infinity,
       );
     return expiry;
@@ -349,9 +350,9 @@ export class CloudService {
         await this.save(tx, r, "fallback");
       } else if (
         r.call?.state === "active" &&
-        now - Date.parse(r.call.updated_at) >= 600_000
+        now - Date.parse(r.call.updated_at) >= (r.call.turn?.end_call ? ITEM_HANDOFF_TIMEOUT_MS : 600_000)
       ) {
-        await this.endCall(tx, r, "failed", true);
+        await this.endCall(tx, r, r.call.turn?.end_call ? "hangup" : "failed", true);
         await this.save(tx, r, "fallback");
       } else if (r.call?.state === "active" && liveTurn(r.call.turn)) {
         const t = await tx.get("turn", r.call.turn!.id);
@@ -376,6 +377,7 @@ export class CloudService {
     requested: RequestedMode,
   ) {
     const now = this.now();
+    if (requested === "call" && !canAskItemsOnCall(r)) return "text";
     if (requested === "call" && !r.call &&
         (await this.recentVoiceTurns(tx, now)).length >= VOICE_TURNS_PER_HOUR)
       return "text";
@@ -466,6 +468,9 @@ export class CloudService {
       throw invalid(
         "choices must contain at most eight nonempty strings of up to 200 characters",
       );
+    const items = parseRequestItems(body.items, invalid);
+    if (items && (kind !== "question" || (Array.isArray(choices) && choices.length) || question.length > 160))
+      throw invalid("items require a question summary of up to 160 characters and no top-level choices");
     let agent = null;
     if (body.agent !== undefined && body.agent !== null) {
       if (typeof body.agent !== "object" || Array.isArray(body.agent))
@@ -494,6 +499,7 @@ export class CloudService {
       ...(subject ? { subject } : {}),
       context,
       choices: Array.isArray(choices) && choices.length ? choices : null,
+      ...(items ? { items, item_answers: [] } : {}),
       urgency,
       priority,
       requested_mode: requested,
@@ -551,6 +557,23 @@ export class CloudService {
     b: Record<string, unknown>,
   ) {
     const r = await this.request(tx, id);
+    if (r.items) {
+      if (r.status === "answered" && r.answer?.device_id === deviceId && r.answer.input_method === "text") {
+        submitItemAnswers(r, b.item_answers, invalid);
+        return { request: r };
+      }
+      if (r.status !== "pending") throw conflict("already_resolved", "request is already closed");
+      r.item_answers = submitItemAnswers(r, b.item_answers, invalid);
+      r.status = "answered";
+      r.answer = {
+        text: itemAnswerSummary(r.item_answers), choice_index: null, input_method: "text",
+        device_id: deviceId, answered_at: iso(this.now()),
+      };
+      await this.endCall(tx, r, "resolved");
+      await this.save(tx, r);
+      return { request: r };
+    }
+    if (b.item_answers != null) throw invalid("this request does not accept item_answers");
     const text = string(b, "text", 10000, true)!;
     const input = enumeration(
       b,
@@ -660,7 +683,7 @@ export class CloudService {
     return {
       request: r,
       call: r.call,
-      ...(t ? { turn: turnView(t), reply: t.reply, resolved: t.resolved } : {}),
+      ...(t ? { turn: turnView(t), reply: t.reply, resolved: t.resolved, ...(t.end_call ? { end_call: true } : {}) } : {}),
     };
   }
   async call(
@@ -746,7 +769,7 @@ export class CloudService {
         c.state = "active";
         c.device_id = deviceId;
         c.updated_at = iso(this.now());
-        c.transcript = [{ role: "assistant", text: r.question }];
+        c.transcript = [{ role: "assistant", text: itemCallOpening(r) }];
         await this.save(tx, r);
       }
       return {
@@ -776,6 +799,7 @@ export class CloudService {
     }
     if (c.state !== "active")
       throw conflict("call_not_active", "answer the call before speaking");
+    if (c.turn?.end_call) throw conflict("call_ended", "残りの質問にはアプリで回答できます。");
     if (await this.voiceHammer(tx))
       return { status: 403, body: { error: { code: "account_banned", message: "このアカウントは利用を停止しました。" } } };
     if (liveTurn(c.turn))
@@ -994,10 +1018,20 @@ export class CloudService {
     }
     if (changed) await tx.put("device", d.id, d);
   }
+  async noteRequestItemsSupport(tx: Transaction, deviceId: string) {
+    const device = await tx.get("device", deviceId);
+    if (device && !device.supports_request_items) {
+      device.supports_request_items = true;
+      await tx.put("device", deviceId, device);
+    }
+  }
+
   async presence(tx: Transaction, p: Principal) {
     const devices = await tx.list("device", {}, 33);
     const stored = await tx.list("presence", {}, 33);
     return {
+      ...(p.role === "agent" && devices.length > 0 && devices.every(d => d.supports_request_items)
+        ? { request_items_supported: true } : {}),
       devices: devices
         .filter((d) => p.role === "agent" || p.deviceId === d.id)
         .map((d) => {

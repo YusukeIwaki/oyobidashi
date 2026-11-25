@@ -433,6 +433,8 @@ export class CloudApp {
                 raw === null
                   ? 50
                   : integer(/^\d+$/.test(raw) ? Number(raw) : NaN, 1, 200, 50);
+            if (p.role === "device" && req.headers.get("x-oyobidashi-request-items") === "1")
+              await this.service.noteRequestItemsSupport(tx, p.deviceId);
             return json(200, {
               requests: await tx.list(
                 "request",
