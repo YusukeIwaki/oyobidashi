@@ -272,7 +272,7 @@ private fun CallScreen(
                 if (recipient != null) {
                     Text(
                         if (state.voiceConsentRequired)
-                            "通話の文字起こしと質問・補足・選択肢・会話の履歴を${recipient.displayName}に送信します。"
+                            recipient.disclosure
                         else "送信先  ${recipient.displayName}",
                         style = MaterialTheme.typography.bodyMedium,
                     )

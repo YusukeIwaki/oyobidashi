@@ -58,7 +58,11 @@ struct RootView: View {
                     awaitingConsent = nil
                     Task { await model.pair(pending.info, voiceAIConsent: disclosure) }
                 },
-                onDecline: { awaitingConsent = nil }
+                onDecline: { awaitingConsent = nil },
+                onAccountConsent: {
+                    awaitingConsent = nil
+                    Task { await model.pair(pending.info) }
+                }
             )
             .environment(model)
         }

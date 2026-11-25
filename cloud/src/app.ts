@@ -116,7 +116,8 @@ export class CloudApp {
         return json(200, {
           ok: true,
           version: "0.3.0",
-          ...(this.service.voiceProvider ? { voice_ai: { provider: this.service.voiceProvider } } : {}),
+          ...(this.service.planVoiceProviders ? { voice_ai: { plan_consent: true } }
+            : this.service.voiceProvider ? { voice_ai: { provider: this.service.voiceProvider } } : {}),
           capabilities: { async_turns: true, turn_idempotency: true },
         });
       if (path === "/readyz" && method === "GET") {
@@ -272,6 +273,7 @@ export class CloudApp {
         (path === "/v1/auth/link-token" ||
           path === "/v1/pairing-codes" ||
           path === "/v1/input-restriction" ||
+          path === "/v1/voice-plan-consent" ||
           path === "/v1/events")
       )
         throw new CloudError(403, "forbidden", "not available to MCP clients");
@@ -304,12 +306,23 @@ export class CloudApp {
         if (input.accept !== true) throw invalid("accept must be true");
         return json(200, await this.service.run(p, (tx) => this.service.acceptInputRestriction(tx, input.version)));
       }
+      if (path === "/v1/voice-plan-consent" && (method === "GET" || method === "POST")) {
+        requireRole(p, "agent");
+        if (method === "GET")
+          return json(200, await this.service.run(p, tx => this.service.voicePlanConsent(tx)));
+        if (req.headers.get("origin") !== requestOrigin(req))
+          throw new CloudError(403, "forbidden", "open the pairing page to change voice consent");
+        const input = await readBody(req);
+        if (typeof input.accept !== "boolean") throw invalid("accept must be a boolean");
+        return json(200, await this.service.run(p, tx => this.service.updateVoicePlanConsent(tx, input.policy, input.accept as boolean)));
+      }
       if (path === "/v1/voice" || path.startsWith("/v1/voice/")) {
         requireRole(p, "device");
         const device = p as Extract<Principal, { role: "device" }>;
         if (path === "/v1/voice/disclosure" && method === "GET" &&
             (requestOrigin(req) === OFFICIAL_CLOUD_ORIGIN || this.service.planVoiceProviders))
-          return json(200, await this.service.run(device, async tx => ({ provider: await this.service.voiceDisclosure(tx) })));
+          return json(200, await this.service.run(device, tx =>
+            this.service.voiceDisclosure(tx, req.headers.get("x-oyobidashi-voice-plan-consent") === "1")));
         if (!this.voice) throw missing();
         if (path === "/v1/voice" && method === "GET")
           return json(200, await this.voice.status(device));

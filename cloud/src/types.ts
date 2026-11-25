@@ -20,6 +20,7 @@ export interface CloudCall extends Call {
   turn_count?: number;
   voice_provider?: VoiceProvider | "anthropic-linked";
   voice_plan?: VoicePlan;
+  account_voice_consent?: true;
   end_call?: boolean;
 }
 export interface CloudRequest extends RequestObject {
@@ -132,6 +133,7 @@ export interface Records {
   account_deletion: { started: number };
   /** The owner's acceptance of the FREE plan input restriction. */
   input_consent: { version: number; at: number };
+  voice_plan_consent: { policy: string; at: number };
   claude_organization: ClaudeOrganization;
   claude_member: ClaudeMembership;
   claude_invite: { emailHash: string; expires: number };

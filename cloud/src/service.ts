@@ -154,9 +154,30 @@ export class CloudService {
       await this.save(tx, request, "fallback");
     }
   }
-  async voiceDisclosure(tx: Transaction) {
-    if (await tx.claudeAccess()) return "anthropic-linked";
-    return this.planVoiceProviders ? this.planVoiceProviders[await this.voicePlan(tx)] : this.voiceProvider;
+  async voiceDisclosure(tx: Transaction, supportsPlanConsent: boolean) {
+    if (await tx.claudeAccess()) return { provider: "anthropic-linked" };
+    const plans = await this.voicePlanConsent(tx);
+    if (!plans) return { provider: this.voiceProvider };
+    // Older clients only understand device-local, single-recipient consent.
+    return { provider: supportsPlanConsent ? plans.providers[await this.voicePlan(tx)] : null, consented: plans.accepted };
+  }
+  async voicePlanConsent(tx: Transaction) {
+    const providers = this.planVoiceProviders;
+    if (!providers) return null;
+    const policy = `1:${providers.free}:${providers.plus}`;
+    const record = await tx.get("voice_plan_consent", "current");
+    return { providers, policy, accepted: record?.policy === policy };
+  }
+  async updateVoicePlanConsent(tx: Transaction, policy: unknown, accept: boolean) {
+    const state = await this.voicePlanConsent(tx);
+    if (!state || policy !== state.policy)
+      throw conflict("voice_consent_changed", "音声の送信先が更新されました。ページを読み込み直してください。");
+    if (state.accepted !== accept) {
+      await this.quota(tx, "voice_plan_consent", 10);
+      if (accept) await tx.put("voice_plan_consent", "current", { policy: state.policy, at: this.now() });
+      else await tx.remove("voice_plan_consent", "current");
+    }
+    return { ...state, accepted: accept };
   }
   private async voicePlan(tx: Transaction): Promise<VoicePlan> {
     return await this.hasPlus(tx) ? "plus" : "free";
@@ -166,7 +187,8 @@ export class CloudService {
     if (call.voice_provider === "anthropic-linked") return true;
     if (!this.planVoiceProviders && !call.voice_plan) return true;
     const plan = await this.voicePlan(tx);
-    return call.voice_plan === plan && this.planVoiceProviders?.[plan] === call.voice_provider;
+    return call.voice_plan === plan && this.planVoiceProviders?.[plan] === call.voice_provider &&
+      (await this.voicePlanConsent(tx))?.accepted === true;
   }
   async handoffPlanCall(tx: Transaction, request: CloudRequest) {
     if (request.call) request.call.end_call = true;
@@ -406,7 +428,8 @@ export class CloudService {
           choice.connectionId !== access?.billing?.connectionId)) ||
           (access && (!this.claudeBillingEnabled || !access.billing || access.billing.disabled ||
             claudeTokensNeedRelink(access, now) || (access.tokens?.retryAfter ?? 0) > now)) ||
-          (await this.inputConsentMissing(tx))) return "text";
+          (await this.inputConsentMissing(tx)) ||
+          (!access && this.planVoiceProviders && !(await this.voicePlanConsent(tx))?.accepted)) return "text";
     }
     const presence = (await tx.list("presence", {}, 33)).map((p) =>
       p.until && Date.parse(p.until) <= now
@@ -697,7 +720,7 @@ export class CloudService {
       updated_at: now,
       transcript: [],
       ...(linked ? { voice_provider: "anthropic-linked" as const } : {}),
-      ...(plan ? { voice_plan: plan, voice_provider: this.planVoiceProviders![plan] } : {}),
+      ...(plan ? { voice_plan: plan, voice_provider: this.planVoiceProviders![plan], account_voice_consent: true as const } : {}),
     };
   }
   envelope(r: CloudRequest, t?: Turn) {
@@ -779,7 +802,7 @@ export class CloudService {
           code: "call_ended", message: "音声の送信先を確認できませんでした。文字で返信できます。",
         } } };
       }
-      if (!linked && (!(await this.samePlanCall(tx, c)) || (c.voice_plan && disclosedProvider !== c.voice_provider))) {
+      if (!linked && !(await this.samePlanCall(tx, c))) {
         await this.handoffPlanCall(tx, r);
         return { status: 409, body: { error: {
           code: "voice_handoff", message: "残りの質問に回答してください。",

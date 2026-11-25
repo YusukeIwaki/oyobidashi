@@ -407,10 +407,15 @@ Model names stay deployment configuration and are never returned.
 ### プランごとの音声送信先
 
 `FREE_AI_PROVIDER` と `PLUS_AI_PROVIDER` を設定した環境では、同じアカウントでもプランによって
-送信先が変わります。端末認証付きの `GET /v1/voice/disclosure` は現在の送信先を返します。
-着信時に `call.voice_plan` と `call.voice_provider` を記録するので、端末は表示した提供元について
-同意を受けた場合だけ `X-Oyobidashi-Voice-Provider` を応答と発話に付けます。
-提供元が異なる同意、未同意、または通話中に変わったプランは次のモデルへの送信を許可しません。
+送信先が変わります。ペアリング画面で両プランの送信先を表示し、ログインした利用者が
+`GET /v1/voice-plan-consent` で確認した `policy` に対して
+`POST /v1/voice-plan-consent` で `accept: true` を送ると同意をアカウントに保存します。
+ペアリング済みの利用者は `/pair?voice=1` で同意を確認・取り消しできます。
+端末認証付きの `GET /v1/voice/disclosure` は `consented` を返し、
+`X-Oyobidashi-Voice-Plan-Consent: 1` を送る端末には現在の提供元も返します。
+着信時に `call.voice_plan`、`call.voice_provider` と `call.account_voice_consent: true` を記録します。
+未同意の場合は最初から文字で届けます。
+通話中のプラン変更や、同意の撤回・提供元の変更があった場合は以後の送信を止めます。
 `voice_handoff` と `call.end_call: true` の場合、アプリは保存済みの回答を表示して残りを入力できます。
 元の提供元に送信済みの発話は、結果を得られた場合に保存してから引き継ぎます。
 

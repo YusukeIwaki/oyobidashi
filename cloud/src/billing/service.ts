@@ -148,6 +148,7 @@ export class Billing {
     return {
       enabled: true,
       voice_training: this.service.voiceTrainingPolicy,
+      ...(this.service.planVoiceProviders ? { voice_plan_providers: this.service.planVoiceProviders } : {}),
       ...((await tx.claudeAccess()) ? { voice_provider: "anthropic-linked" } : {}),
       purchase_account_id: purchaseAccountId(tx.uid),
       active: granted || expires > now,

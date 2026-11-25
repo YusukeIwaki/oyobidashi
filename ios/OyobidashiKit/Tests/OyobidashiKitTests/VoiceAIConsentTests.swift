@@ -181,6 +181,39 @@ final class VoiceAIConsentTests: XCTestCase {
         XCTAssertEqual(model.voiceAIReview?.provider, "gemini")
     }
 
+    func testCloudConsentCoversBothPlansAndCanBeWithdrawnOnTheAccount() async throws {
+        try credentialStore.save(Credentials(endpoint: cloud, deviceToken: "kd_token", deviceID: "dev_01"))
+        let model = makeModel()
+        func setConsent(provider: String, accepted: Bool) {
+            let data = Data(#"{"provider":"\#(provider)","consented":\#(accepted)}"#.utf8)
+            stub.on("GET", "/v1/voice/disclosure", status: 200, body: data)
+        }
+        setConsent(provider: "meta", accepted: true)
+        await model.reviewVoiceAIConsent()
+        XCTAssertTrue(model.hasVoiceAIConsent)
+        XCTAssertTrue(model.usesAccountVoiceConsent)
+        XCTAssertNil(model.voiceAIReview)
+        XCTAssertNil(consentStore.load())
+        XCTAssertEqual(stub.requests.first?.value(forHTTPHeaderField: "X-Oyobidashi-Voice-Plan-Consent"), "1")
+
+        setConsent(provider: "gemini", accepted: true)
+        stub.on("POST", "/v1/requests/req_1/call", status: 409,
+                body: Data(#"{"error":{"code":"call_ended"}}"#.utf8))
+        _ = await model.answerCall(requestID: "req_1")
+        XCTAssertTrue(model.hasVoiceAIConsent)
+        XCTAssertNil(model.voiceAIReview)
+        XCTAssertEqual(stub.requests.last?.httpMethod, "POST")
+        XCTAssertNil(stub.requests.last?.value(forHTTPHeaderField: "X-Oyobidashi-Voice-Provider"))
+
+        setConsent(provider: "gemini", accepted: false)
+        await model.reviewVoiceAIConsent()
+        XCTAssertFalse(model.hasVoiceAIConsent)
+        XCTAssertNil(model.voiceAIReview)
+        let refused = await model.sendCallTurn(requestID: "req_1", text: "はい")
+        XCTAssertEqual(refused, .failed(.voiceAIConsentRequired))
+        XCTAssertTrue(model.isPaired)
+    }
+
     func testHandoffFetchesTheRequestAndKeepsTheAnswersAlreadySaved() async throws {
         try credentialStore.save(Credentials(endpoint: cloud, deviceToken: "kd_token", deviceID: "dev_01"))
         consentStore.save(consent(cloud, provider: "gemini"))

@@ -96,6 +96,7 @@ public final class AppModel: AnswerSubmitting {
     public private(set) var pairingState: PairingState = .idle
     /// 今のペアリング先について、音声会話の内容をAIへ送ることに同意済みか。
     public private(set) var hasVoiceAIConsent = false
+    public private(set) var usesAccountVoiceConsent = false
     /// 同意の確認が必要なときの送信先。ペアリング済みで同意の記録がない (アプリ更新後など)、
     /// または接続先の送信先が変わった場合に入る。
     public private(set) var voiceAIReview: VoiceAIDisclosure?
@@ -205,17 +206,29 @@ public final class AppModel: AnswerSubmitting {
         if let client,
            let disclosure = try? await client.voiceDisclosure(),
            self.credentials == credentials {
+            usesAccountVoiceConsent = disclosure.consented != nil
+            if let consented = disclosure.consented {
+                hasVoiceAIConsent = consented
+                voiceAIReview = nil
+                return
+            }
             hasVoiceAIConsent = record?.covers(credentials.endpoint, disclosure: disclosure) == true
             if !hasVoiceAIConsent { voiceAIReview = disclosure == deferredVoiceAIReview ? nil : disclosure }
             else { voiceAIReview = nil }
             return
         }
+        if usesAccountVoiceConsent { return }
         if record?.covers(credentials.endpoint) != true {
-            hasVoiceAIConsent = false
             let disclosure = await voiceAIDisclosure(for: credentials.endpoint)
-            if self.credentials == credentials, !hasVoiceAIConsent {
-                voiceAIReview = disclosure == deferredVoiceAIReview ? nil : disclosure
+            guard self.credentials == credentials else { return }
+            if disclosure.planConsent == true {
+                usesAccountVoiceConsent = true
+                hasVoiceAIConsent = false
+                voiceAIReview = nil
+                return
             }
+            hasVoiceAIConsent = false
+            voiceAIReview = disclosure == deferredVoiceAIReview ? nil : disclosure
             return
         }
         // 送信先を確認できないときは、すでに受け取った同意をそのまま使う。
@@ -230,7 +243,7 @@ public final class AppModel: AnswerSubmitting {
 
     /// 確認画面での同意。
     public func acceptVoiceAI(_ disclosure: VoiceAIDisclosure) {
-        guard let credentials else { return }
+        guard let credentials, !usesAccountVoiceConsent else { return }
         recordVoiceAIConsent(disclosure, for: credentials.endpoint)
     }
 
@@ -269,6 +282,7 @@ public final class AppModel: AnswerSubmitting {
             store.reset()
             if previous != new { drafts.removeAll() }
             phase = .paired(new)
+            usesAccountVoiceConsent = false
             recordVoiceAIConsent(voiceAIConsent, for: new.endpoint)
             lastAnswerSubmission = nil
             signedOutReason = nil
@@ -321,6 +335,7 @@ public final class AppModel: AnswerSubmitting {
         try? credentialStore.clear()
         voiceAIConsentStore.save(nil)
         hasVoiceAIConsent = false
+        usesAccountVoiceConsent = false
         voiceAIReview = nil
         deferredVoiceAIReview = nil
         voiceHandoffRequestID = nil
@@ -533,7 +548,7 @@ public final class AppModel: AnswerSubmitting {
         do {
             let voiceToken = (body.event == .answer || body.event == .turn) ? try await voiceAccessProvider?(credentials) : nil
             let consent = voiceAIConsentStore.load()
-            let provider = hasVoiceAIConsent && consent?.covers(credentials.endpoint) == true ? consent?.provider : nil
+            let provider = !usesAccountVoiceConsent && hasVoiceAIConsent && consent?.covers(credentials.endpoint) == true ? consent?.provider : nil
             let activeClient = RelayClient(endpoint: credentials.endpoint, deviceToken: credentials.deviceToken, transport: transport, voiceTurnPolicy: voiceTurnPolicy, voiceAccessToken: voiceToken, disclosedVoiceProvider: provider)
             let resp = try await activeClient.callAction(requestID: requestID, body: body)
             guard self.credentials == credentials else { return .failed(.cancelled) }

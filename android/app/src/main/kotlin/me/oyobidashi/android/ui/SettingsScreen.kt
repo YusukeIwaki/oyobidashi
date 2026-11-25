@@ -165,6 +165,13 @@ fun SettingsScreen(vm: MainViewModel, session: Session) {
                         }
                     }
                 }
+                if (isOyobidashiCloud && billing.status?.voicePlanProviders != null) {
+                    item {
+                        TextButton(onClick = {
+                            openSettings(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://api.oyobidashi.me/pair?voice=1")))
+                        }) { Text("音声通話の送信先") }
+                    }
+                }
                 item { SectionHeading("権限") }
                 item {
                     SettingsGroup {

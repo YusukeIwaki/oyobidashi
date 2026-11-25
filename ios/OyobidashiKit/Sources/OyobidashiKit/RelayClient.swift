@@ -427,6 +427,9 @@ public struct RelayClient: Sendable {
         if segments.last == "call", let voiceAccessToken {
             request.setValue(voiceAccessToken, forHTTPHeaderField: "X-Oyobidashi-Voice-Token")
         }
+        if segments == ["v1", "voice", "disclosure"] {
+            request.setValue("1", forHTTPHeaderField: "X-Oyobidashi-Voice-Plan-Consent")
+        }
         if segments.last == "call", let disclosedVoiceProvider,
            ["meta", "gemini", "anthropic"].contains(disclosedVoiceProvider)
             || (endpoint.isOfficialCloud && disclosedVoiceProvider == "anthropic-linked") {

@@ -19,9 +19,14 @@ const itemProvider = (itemTurn: NonNullable<ConversationProvider["itemTurn"]>): 
   itemTurn,
 });
 
-async function setup(plus = false) {
+async function setup(plus = false, accept = true) {
   const h = harness();
   h.service.planVoiceProviders = plans;
+  const consentPath = "/v1/voice-plan-consent";
+  const choice = (await h.call("GET", consentPath)).body;
+  const consent = (approved: boolean, policy = choice.policy) => h.call("POST", consentPath, "agent-alice",
+    { policy, accept: approved }, { origin: "http://localhost" });
+  if (accept) expect((await consent(true)).status).toBe(200);
   const setPlus = (active: boolean) => h.db.transaction("alice", tx => tx.put("entitlement", "current", {
     sources: active ? {
       test: { store: "apple", product_id: "plus", shared: false, expires: h.clock.now + 60_000 },
@@ -37,22 +42,24 @@ async function setup(plus = false) {
   const path = `/v1/requests/${created.body.request.id}`;
   const event = (body: object, provider?: string) => h.call("POST", `${path}/call`, token, body,
     provider ? { "X-Oyobidashi-Voice-Provider": provider } : {});
-  return { ...h, created, token, path, event, setPlus };
+  return { ...h, created, token, path, event, setPlus, consent, choice };
 }
 
 test("a plan selects and discloses its provider, and the worker uses only that route", async () => {
   for (const tier of ["free", "plus"] as const) {
     const h = await setup(tier === "plus");
     const provider = plans[tier];
-    expect((await h.call("GET", "/v1/voice/disclosure", h.token)).body).toEqual({ provider });
-    expect(h.created.body.request.call).toMatchObject({ voice_provider: provider, voice_plan: tier });
-    expect((await h.event({ event: "answer" }, provider)).status).toBe(200);
+    expect((await h.call("GET", "/v1/voice/disclosure", h.token, undefined, { "X-Oyobidashi-Voice-Plan-Consent": "1" })).body)
+      .toEqual({ provider, consented: true });
+    expect((await h.call("GET", "/v1/voice/disclosure", h.token)).body).toEqual({ provider: null, consented: true });
+    expect(h.created.body.request.call).toMatchObject({ voice_provider: provider, voice_plan: tier, account_voice_consent: true });
+    expect((await h.event({ event: "answer" })).status).toBe(200);
     const calls: string[] = [];
     const worker = new JobWorker(h.service, {
       freeConversation: itemProvider(async () => { calls.push("meta"); return routeResult; }),
       conversation: itemProvider(async () => { calls.push("gemini"); return routeResult; }),
     });
-    expect((await h.event(turnBody("通常便で"), provider)).status).toBe(202);
+    expect((await h.event(turnBody("通常便で"))).status).toBe(202);
     await worker.runOnce("turn");
     expect(calls).toEqual([provider]);
     expect((await h.call("GET", h.path, h.token)).body.request.item_answers).toMatchObject([
@@ -61,20 +68,33 @@ test("a plan selects and discloses its provider, and the worker uses only that r
   }
 });
 
-test("missing or stale consent on answer or turn prevents transmission and offers text", async () => {
-  for (const consent of [undefined, "meta"]) {
-    const h = await setup(true);
-    const result = await h.event({ event: "answer" }, consent);
-    expect(result.status).toBe(409);
-    expect(result.body.error.code).toBe("voice_handoff");
-    expect((await h.call("GET", h.path, h.token)).body.request).toMatchObject({
-      status: "pending", delivery_mode: "text", call: { end_call: true, state: "ended", transcript: [] },
-    });
-  }
+test("pairing can continue as text and only the signed-in owner can accept the disclosed mapping", async () => {
+  const h = await setup(true, false);
+  expect(h.created.body.request).toMatchObject({ status: "pending", delivery_mode: "text" });
+  expect(h.created.body.request.call ?? null).toBeNull();
+  expect(h.choice).toMatchObject({ providers: plans, accepted: false });
+  expect((await h.consent(true, "stale")).status).toBe(409);
+  const body = { policy: h.choice.policy, accept: true };
+  expect((await h.call("POST", "/v1/voice-plan-consent", h.token, body, { origin: "http://localhost" })).status).toBe(403);
+  expect((await h.call("POST", "/v1/voice-plan-consent", "agent-alice", body, { origin: "https://example.com" })).status).toBe(403);
+  expect((await h.consent(true)).body.accepted).toBe(true);
+});
+
+test("withdrawing consent or changing the disclosed mapping during a call prevents further transmission", async () => {
   const h = await setup(true);
-  expect((await h.event({ event: "answer" }, "gemini")).status).toBe(200);
-  expect((await h.event(turnBody("通常便"), "meta")).status).toBe(409);
-  expect(await new JobWorker(h.service, {}).runOnce("turn")).toBe(false);
+  expect((await h.event({ event: "answer" })).status).toBe(200);
+  const body = turnBody("通常便");
+  expect((await h.event(body)).status).toBe(202);
+  expect((await h.consent(false)).body.accepted).toBe(false);
+  let sends = 0;
+  const model = itemProvider(async () => { sends++; return routeResult; });
+  expect(await new JobWorker(h.service, { conversation: model }).runOnce("turn")).toBe(true);
+  expect(sends).toBe(0);
+  expect((await h.event(body)).body).toMatchObject({ turn: { error: { code: "voice_handoff" } } });
+  const changed = await setup(true);
+  changed.service.planVoiceProviders = { free: "anthropic", plus: "gemini" };
+  const result = await changed.event({ event: "answer" }, "gemini");
+  expect(result.body.error.code).toBe("voice_handoff");
 });
 
 test("upgrade or lapse after a committed answer preserves it for text handoff", async () => {
@@ -105,6 +125,11 @@ test("upgrade or lapse after a committed answer preserves it for text handoff", 
         { item_id: "label", text: "第2版", input_method: "text" },
       ],
     });
+    const next = await h.call("POST", "/v1/requests", "agent-alice", {
+      question: "次の質問", priority: "high", delivery_mode: "call",
+    });
+    expect(next.body.request.call).toMatchObject({ voice_provider: startingPlus ? "meta" : "gemini" });
+    expect((await h.call("POST", `/v1/requests/${next.body.request.id}/call`, h.token, { event: "answer" })).status).toBe(200);
   }
 });
 

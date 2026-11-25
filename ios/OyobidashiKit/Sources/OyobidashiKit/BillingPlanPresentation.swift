@@ -38,11 +38,13 @@ public struct BillingPlanPresentation: Equatable, Sendable {
     public let nextRenewalDate: Date?
     public let freePlanStartsAt: Date?
     private let voiceTraining: BillingVoiceTraining?
+    private let voicePlanProviders: [String: String]?
     private let usesLinkedClaude: Bool
 
     public init(status: BillingStatus, renewalPeriods: [BillingRenewalPeriod] = [], isAssigned: Bool = false, now: Date = Date()) {
         isEnabled = status.enabled
         voiceTraining = status.voiceTraining
+        voicePlanProviders = status.voicePlanProviders
         usesLinkedClaude = status.voiceProvider == "anthropic-linked"
         currentPlan = status.enabled && status.active ? .standard : .free
         self.isAssigned = isAssigned
@@ -72,11 +74,15 @@ public struct BillingPlanPresentation: Equatable, Sendable {
 
     public func privacyNotice(for plan: Plan) -> String {
         if usesLinkedClaude { return "通話には連携したClaudeを使い、APIの利用分はAnthropicから直接請求されます。" }
+        let training: String
         switch plan == .free ? voiceTraining?.free : voiceTraining?.plus {
-        case true?: return "通話の内容がAIモデルの学習に使われる場合があります。"
-        case false?: return "通話の内容はAIモデルの学習に使われません。"
-        case nil: return "通話の学習利用は確認できません。"
+        case true?: training = "通話の内容がAIモデルの学習に使われる場合があります。"
+        case false?: training = "通話の内容はAIモデルの学習に使われません。"
+        case nil: training = "通話の学習利用は確認できません。"
         }
+        guard let provider = voicePlanProviders?[plan == .free ? "free" : "plus"] else { return training }
+        let recipient = VoiceAIDisclosure(provider: provider).recipientName
+        return "通話の文字起こしと質問・会話履歴を\(recipient)へ送信します。\n\(training)"
     }
     public var changeTitle: String { "変更" }
     public var restoreTitle: String { "購入を復元" }

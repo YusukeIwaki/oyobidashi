@@ -17,6 +17,7 @@ import type {AccountProvider} from "../../relay/src/auth-handoff.ts";
 import {browserAuthFailure, parsePublicAuthConfig} from "./auth-browser-flow.ts";
 import {appPairingState, authorizationParams, canPostponeInputConsent, isHostedService, isPhoneToPair, MCP_REVIEW_HEADER, openedByApp, pairedDevices, pairingUrl, qrPath, stepAfterSignIn} from "./oauth-browser-flow.ts";
 import {INPUT_RESTRICTION_TERMS, UNRESTRICTED_INPUT, parseInputRestriction, type InputRestriction} from "./input-restriction.ts";
+import {voiceRecipientNames} from "./voice-plan-consent.ts";
 
 // Consent page for a hosted MCP client (/oauth/authorize) and the standalone
 // pairing page (/pair). The Firebase session lives in memory only and its ID
@@ -28,6 +29,7 @@ const heading = element("heading"), explanation = element("explanation"), detail
 const providers = element("providers"), pairing = element("pairing"), qr = element("qr");
 const pairingHint = element("pairing-hint"), actions = element("actions"), status = element("status");
 const mode = main?.dataset.mode === "pair" ? "pair" : main?.dataset.mode === "connections" ? "connections" : "authorize";
+const voiceSettings = mode === "pair" && new URLSearchParams(location.search).get("voice") === "1";
 const clientName = main?.dataset.client || "名前のないアプリ";
 const request = authorizationParams(location.search);
 const thisPhone = isPhoneToPair(location.search, navigator.userAgent);
@@ -358,6 +360,60 @@ async function showConnections() {
   }
 }
 
+type VoicePlanConsent = {
+  policy: string;
+  accepted: boolean;
+  providers: Record<"free" | "plus", keyof typeof voiceRecipientNames>;
+};
+
+async function checkVoicePlanConsent(paired: number) {
+  try {
+    const consent = await call("/v1/voice-plan-consent", {method:"GET"}) as VoicePlanConsent | null;
+    if (!voiceSettings && (!consent || consent.accepted)) return void showPairing(paired);
+    if (!consent) {
+      heading.textContent = "音声通話の設定";
+      explanation.textContent = "現在はプランごとの送信先を設定できません。";
+      message("");
+      return;
+    }
+    showVoicePlanConsent(consent, paired);
+  } catch {
+    message(UNREACHABLE);
+    actions.replaceChildren(button("再試行", () => void checkVoicePlanConsent(paired)));
+  }
+}
+
+function showVoicePlanConsent(consent: VoicePlanConsent, paired: number) {
+  heading.textContent = "音声通話の送信先";
+  explanation.textContent = "音声で応答すると、文字起こし・質問・補足・選択肢・会話の履歴を、通話での返答と回答の要約のために送信します。";
+  describe([
+    ["FREE", voiceRecipientNames[consent.providers.free]],
+    ["PLUS", voiceRecipientNames[consent.providers.plus]],
+  ]);
+  message(consent.accepted ? "音声通話を許可しています。" : "音声通話を許可せず、文字で使うこともできます。");
+  const save = async (accept: boolean) => {
+    setDisabled(true);
+    try {
+      const updated = await call("/v1/voice-plan-consent", {
+        method:"POST", body:{policy:consent.policy, accept},
+      }) as VoicePlanConsent;
+      if (voiceSettings) showVoicePlanConsent(updated, paired);
+      else await showPairing(paired);
+    } catch (error) {
+      if ((error as {status?: number}).status === 409) {
+        await checkVoicePlanConsent(paired);
+        return;
+      }
+      message(UNREACHABLE);
+      setDisabled(false);
+    }
+  };
+  actions.replaceChildren(consent.accepted
+    ? button("音声通話の同意を取り消す", () => void save(false), true)
+    : button(voiceSettings ? "両プランの送信先に同意する" : "両プランの送信先に同意して進む", () => void save(true)));
+  if (!voiceSettings) actions.append(button("文字で利用する", () => void showPairing(paired), true));
+}
+
 /** Shows a one-time pairing code and watches for the phone to appear. */
 async function showPairing(alreadyPaired: number) {
   clearTimeout(pollTimer);
@@ -474,7 +530,7 @@ function continueSignedIn(restriction: InputRestriction, paired: number) {
     case "input_restriction": return showInputRestriction(restriction, paired);
     case "connections": return void showConnections();
     case "approval": return showApproval();
-    case "pairing": return void showPairing(paired);
+    case "pairing": return void checkVoicePlanConsent(paired);
   }
 }
 
@@ -565,7 +621,7 @@ if (mode === "authorize") {
   explanation.textContent = `未確認のアプリ「${clientName}」が、あなたのスマホへ質問や通知を送ろうとしています。ログイン後に許可するか選べます。`;
   describe(clientDetails);
 } else if (mode === "pair") {
-  heading.textContent = "スマホをペアリング";
+  heading.textContent = voiceSettings ? "音声通話の設定" : "スマホをペアリング";
   explanation.textContent = fromApp
     ? "エージェント（MCP）の接続に使ったアカウントでログインすると、このスマホを登録できます。"
     : "エージェント（MCP）の接続に使ったアカウントでログインすると、スマホを登録する手順を表示します。";

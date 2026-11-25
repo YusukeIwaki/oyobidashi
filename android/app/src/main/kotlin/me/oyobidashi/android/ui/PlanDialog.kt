@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import me.oyobidashi.android.billing.BillingPlanState
+import me.oyobidashi.android.core.VoiceRecipient
 
 @Composable
 internal fun PlanDialog(
@@ -43,9 +44,11 @@ internal fun PlanDialog(
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (!status.active) {
                     Text("FREE", style = MaterialTheme.typography.titleMedium)
+                    VoiceRecipient.fromProvider(status.voicePlanProviders?.get("free"))?.let { Text(it.disclosure) }
                     Text(Texts.billingVoiceTraining(status.voiceTraining?.free))
                     Text("PLUS", style = MaterialTheme.typography.titleMedium)
                 }
+                VoiceRecipient.fromProvider(status.voicePlanProviders?.get("plus"))?.let { Text(it.disclosure) }
                 Text(Texts.billingVoiceTraining(status.voiceTraining?.plus))
                 if (status.active) {
                     val expiry = Texts.billingExpiry(status.expiresAt)

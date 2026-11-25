@@ -9,9 +9,17 @@ import Foundation
 public struct VoiceAIDisclosure: Decodable, Equatable, Sendable {
     /// 未知の値も保持する。画面では名前を出さず、同意の照合にだけ使う。
     public let provider: String?
+    public let planConsent: Bool?
+    public let consented: Bool?
 
-    public init(provider: String?) {
+    public init(provider: String?, planConsent: Bool? = nil, consented: Bool? = nil) {
         self.provider = provider
+        self.planConsent = planConsent
+        self.consented = consented
+    }
+    enum CodingKeys: String, CodingKey {
+        case provider, consented
+        case planConsent = "plan_consent"
     }
 
     /// 接続先が送信先を示さない (古いサーバー、または確認に失敗した) 場合。

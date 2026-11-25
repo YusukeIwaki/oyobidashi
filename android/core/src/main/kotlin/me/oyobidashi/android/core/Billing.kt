@@ -29,6 +29,7 @@ data class BillingStatus(
     val google: BillingProducts? = null,
     @SerialName("purchase_account_id") val purchaseAccountId: String? = null,
     @SerialName("voice_training") val voiceTraining: BillingVoiceTraining? = null,
+    @SerialName("voice_plan_providers") val voicePlanProviders: Map<String, String>? = null,
 ) {
     val expiresInstant: Instant? get() = parseTimestamp(expiresAt)
 

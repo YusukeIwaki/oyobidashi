@@ -171,6 +171,7 @@ data class Call(
     val turn: CallTurn? = null,
     @SerialName("voice_provider") val voiceProvider: String? = null,
     @SerialName("voice_plan") val voicePlan: String? = null,
+    @SerialName("account_voice_consent") val accountVoiceConsent: Boolean = false,
     /** LAN の自動切断マーカー。クラウドでは turn.end_call に含まれる。 */
     @SerialName("end_call") val endCall: Boolean? = null,
 ) {

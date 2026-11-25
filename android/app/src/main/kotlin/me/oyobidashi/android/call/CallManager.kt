@@ -83,6 +83,7 @@ class CallManager(
         var question: String,
         var subject: String?,
         val voiceProvider: String?,
+        val accountConsent: Boolean,
         var transcript: List<CallTranscriptEntry>,
         var lastReply: String?,
         var error: String?,
@@ -326,6 +327,7 @@ class CallManager(
             question = req.question,
             subject = req.subject,
             voiceProvider = call.voiceProvider,
+            accountConsent = call.accountVoiceConsent,
             transcript = call.transcript,
             lastReply = if (call.isActive) call.transcript.lastOrNull()?.takeIf { it.role == me.oyobidashi.android.core.CallRole.ASSISTANT }?.text else null,
             error = if (call.isActive) "通話が中断されました。再開するか、テキストで返信できます" else null,
@@ -415,13 +417,13 @@ class CallManager(
         scope.launch { doAnswer(requestId, callId, acceptedProvider) }
     }
 
-    private fun consentRequired(provider: String?, deviceId: String? = myDeviceId()): Boolean =
-        VoiceRecipient.fromProvider(provider) != null &&
-            (deviceId == null || voiceConsent.getString(deviceId, null) != provider)
+    private fun consentRequired(call: ActiveCall, deviceId: String? = myDeviceId()): Boolean =
+        !call.accountConsent && VoiceRecipient.fromProvider(call.voiceProvider) != null &&
+            (deviceId == null || voiceConsent.getString(deviceId, null) != call.voiceProvider)
 
     fun consentedVoiceProvider(requestId: String, callId: String): String? =
         current?.takeIf { it.requestId == requestId && it.callId == callId }
-            ?.voiceProvider?.takeUnless { consentRequired(it) }
+            ?.takeUnless { it.accountConsent || consentRequired(it) }?.voiceProvider
 
     private suspend fun doAnswer(requestId: String, callId: String, acceptedProvider: String?) {
         val cur = current
@@ -432,7 +434,7 @@ class CallManager(
         }
         if (cur.state == CallState.ACTIVE) return // 済み
         val deviceId = myDeviceId()
-        if (consentRequired(cur.voiceProvider, deviceId)) {
+        if (consentRequired(cur, deviceId)) {
             if (deviceId == null || acceptedProvider != cur.voiceProvider) {
                 publish(cur)
                 return
@@ -770,7 +772,7 @@ class CallManager(
             question = cur.question,
             subject = cur.subject,
             voiceProvider = cur.voiceProvider,
-            voiceConsentRequired = consentRequired(cur.voiceProvider),
+            voiceConsentRequired = consentRequired(cur),
             state = cur.state,
             transcript = cur.transcript,
             lastReply = cur.lastReply,

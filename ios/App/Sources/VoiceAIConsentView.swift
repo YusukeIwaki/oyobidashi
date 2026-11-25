@@ -11,6 +11,7 @@ struct VoiceAIConsentView: View {
     let declineTitle: String
     let onAccept: (VoiceAIDisclosure) -> Void
     let onDecline: () -> Void
+    var onAccountConsent: (() -> Void)? = nil
     @Environment(AppModel.self) private var model
     @State private var disclosure: VoiceAIDisclosure?
 
@@ -53,7 +54,10 @@ struct VoiceAIConsentView: View {
         }
         .interactiveDismissDisabled()
         .task {
-            if let known { disclosure = known } else { disclosure = await model.voiceAIDisclosure(for: endpoint) }
+            let current: VoiceAIDisclosure
+            if let known { current = known } else { current = await model.voiceAIDisclosure(for: endpoint) }
+            if current.planConsent == true, let onAccountConsent { onAccountConsent() }
+            else { disclosure = current }
         }
     }
 }

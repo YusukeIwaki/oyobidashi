@@ -133,7 +133,13 @@ struct PairingView: View {
                             if await model.pair(pending.info, voiceAIConsent: disclosure) { onPaired?() }
                         }
                     },
-                    onDecline: { awaitingConsent = nil }
+                    onDecline: { awaitingConsent = nil },
+                    onAccountConsent: {
+                        awaitingConsent = nil
+                        Task {
+                            if await model.pair(pending.info) { onPaired?() }
+                        }
+                    }
                 )
                 .environment(model)
             }

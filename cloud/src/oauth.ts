@@ -291,7 +291,7 @@ export class OAuthServer {
     const method = req.method;
     if ((path === "/v1/presence" && method === "GET") ||
         (path === "/v1/pairing-codes" && method === "POST") ||
-        (path === "/v1/input-restriction" && (method === "GET" || method === "POST"))) {
+        ((path === "/v1/input-restriction" || path === "/v1/voice-plan-consent") && (method === "GET" || method === "POST"))) {
       if (method === "POST" && req.headers.get("origin") !== this.origin(req))
         throw new CloudError(403, "forbidden", "this endpoint is only available to the review page");
       return this.reviewUid(req);

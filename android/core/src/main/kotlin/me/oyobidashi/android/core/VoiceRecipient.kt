@@ -6,6 +6,9 @@ enum class VoiceRecipient(val provider: String, val displayName: String) {
     GEMINI("gemini", "Google（Gemini）"),
     CLAUDE("anthropic", "Anthropic");
 
+    val disclosure: String
+        get() = "通話の文字起こしと質問・補足・選択肢・会話の履歴を${displayName}に送信します。"
+
     companion object {
         fun fromProvider(provider: String?): VoiceRecipient? = entries.firstOrNull { it.provider == provider }
     }
