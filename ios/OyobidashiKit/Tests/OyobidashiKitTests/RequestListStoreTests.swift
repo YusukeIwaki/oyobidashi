@@ -34,6 +34,24 @@ final class RequestListStoreTests: XCTestCase {
         XCTAssertEqual(notifications.presented, [], "hello では通知を出さない")
     }
 
+    func testHomeNoticeClearsWithoutChangingRequestsOrDrafts() throws {
+        let request = makeRequest(id: "a", created: "2026-11-15T14:00:00.000Z")
+        let hello = try XCTUnwrap(RelayEvent.decode(text: """
+            {"type":"hello","pending":[],"home_notice":{"type":"voice_plan_consent_required","providers":{"free":"meta","plus":"gemini"}}}
+            """))
+        store.apply(hello)
+        XCTAssertEqual(store.homeNotice?.requiresVoicePlanConsent, true)
+        XCTAssertEqual(store.homeNotice?.providers["plus"], "gemini")
+        store.merge([request])
+        drafts.set(AnswerDraft(text: "入力中"), for: request.id)
+        let cleared = try XCTUnwrap(RelayEvent.decode(text: #"{"type":"home_notice.updated","notice":null}"#))
+        store.apply(cleared)
+        XCTAssertNil(store.homeNotice)
+        XCTAssertEqual(store.pending.map(\.id), [request.id])
+        XCTAssertEqual(drafts.draft(for: request.id)?.text, "入力中")
+        XCTAssertTrue(notifications.presented.isEmpty)
+    }
+
     func testEmptyHelloClearsPending() {
         store.merge([makeRequest(id: "a"), makeRequest(id: "n", kind: .notification, status: .notified)])
         store.apply(.hello(pending: []))

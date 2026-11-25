@@ -1,8 +1,10 @@
 package me.oyobidashi.android.ui
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,7 +31,9 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -52,7 +56,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -67,8 +74,10 @@ import me.oyobidashi.android.Session
 import me.oyobidashi.android.call.CallActivity
 import me.oyobidashi.android.core.Availability
 import me.oyobidashi.android.core.CallState
+import me.oyobidashi.android.core.HomeNotice
 import me.oyobidashi.android.core.Priority
 import me.oyobidashi.android.core.Request
+import me.oyobidashi.android.core.VoiceRecipient
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.temporal.ChronoUnit
@@ -77,6 +86,8 @@ import java.time.temporal.ChronoUnit
 @Composable
 fun RequestListScreen(vm: MainViewModel, session: Session) {
     val state by session.repository.state.collectAsState()
+    val voiceNotice = state.homeNotice?.takeIf { it.requiresVoicePlanConsent }
+    var noticeOpen by remember(session) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
@@ -113,7 +124,26 @@ fun RequestListScreen(vm: MainViewModel, session: Session) {
             ) {
                 if (state.refreshing) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                 if (state.relayUnreachable) item { UnreachableBanner() }
-                item { AvailabilityCard(vm) }
+                item { AvailabilityCard(vm, voiceNeedsConsent = voiceNotice != null) }
+                if (voiceNotice != null) item(key = "home_voice_notice") {
+                    Card(
+                        onClick = { noticeOpen = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                    ) {
+                        Row(
+                            Modifier.padding(16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Default.Notifications, contentDescription = null)
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("音声通話の送信先を確認", style = MaterialTheme.typography.titleMedium)
+                                Text("同意すると、次の通話から音声で応答できます。", style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
                 item {
                     Row(Modifier.padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -138,11 +168,47 @@ fun RequestListScreen(vm: MainViewModel, session: Session) {
             }
         }
     }
+    if (noticeOpen && voiceNotice != null) {
+        VoiceNoticeDialog(voiceNotice, session.credentials.baseUrl, onClose = { noticeOpen = false })
+    }
+    LaunchedEffect(voiceNotice) {
+        if (voiceNotice == null) noticeOpen = false
+    }
+}
+
+@Composable
+private fun VoiceNoticeDialog(notice: HomeNotice, baseUrl: String, onClose: () -> Unit) {
+    val context = LocalContext.current
+    var browserUnavailable by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("音声通話の送信先") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("現在は、通話での質問もテキストで届きます。音声で応答したときは、文字起こしと質問・会話履歴を利用プランの送信先へ送ります。")
+                VoiceRecipient.fromProvider(notice.providers["free"])?.let { Text("FREE  ${it.displayName}") }
+                VoiceRecipient.fromProvider(notice.providers["plus"])?.let { Text("PLUS  ${it.displayName}") }
+                if (browserUnavailable) Text("ブラウザを開けませんでした。", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                val uri = Uri.parse(baseUrl).buildUpon().appendPath("pair").appendQueryParameter("voice", "1").build()
+                try {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                    onClose()
+                } catch (_: ActivityNotFoundException) {
+                    browserUnavailable = true
+                }
+            }) { Text("送信先を確認して同意") }
+        },
+        dismissButton = { TextButton(onClick = onClose) { Text("あとで") } },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AvailabilityCard(vm: MainViewModel) {
+private fun AvailabilityCard(vm: MainViewModel, voiceNeedsConsent: Boolean) {
     val presence by vm.graph.presence.collectAsState()
     val syncError by vm.graph.presenceSyncError.collectAsState()
     val current = presence.effectiveAvailability
@@ -203,7 +269,7 @@ private fun AvailabilityCard(vm: MainViewModel) {
                 Text(when (current) {
                     Availability.BUSY -> "取り込み中は、通話の代わりに文字で連絡が届きます"
                     Availability.AWAY -> "離席中は、通話の代わりに文字で連絡が届きます"
-                    else -> "通話や通知で連絡を受け取れます"
+                    else -> if (voiceNeedsConsent) "質問や通知を文字で受け取れます" else "通話や通知で連絡を受け取れます"
                 }, style = MaterialTheme.typography.bodyMedium)
             }
             syncError?.let {

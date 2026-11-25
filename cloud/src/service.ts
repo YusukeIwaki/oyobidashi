@@ -20,6 +20,7 @@ import {
   liveTurn,
   turnView,
   type CloudRequest,
+  type HomeNotice,
   type ClaudeCredentialRef,
   type Database,
   type Device,
@@ -167,6 +168,11 @@ export class CloudService {
     const policy = `1:${providers.free}:${providers.plus}`;
     const record = await tx.get("voice_plan_consent", "current");
     return { providers, policy, accepted: record?.policy === policy };
+  }
+  async homeNotice(tx: Transaction): Promise<HomeNotice | null> {
+    const consent = await this.voicePlanConsent(tx);
+    if (!consent || consent.accepted || await tx.claudeAccess()) return null;
+    return { type: "voice_plan_consent_required", providers: consent.providers };
   }
   async updateVoicePlanConsent(tx: Transaction, policy: unknown, accept: boolean) {
     const state = await this.voicePlanConsent(tx);

@@ -81,6 +81,7 @@ data class RequestsState(
      * 下書きは保持され、WebSocket 再接続・一覧取得・回答送信のいずれかが成功した時点で false に戻る。
      */
     val relayUnreachable: Boolean = false,
+    val homeNotice: HomeNotice? = null,
 ) {
     val pending: List<Request> get() = requests.filter { it.isPending }
     val history: List<Request> get() = requests.filterNot { it.isPending }
@@ -117,7 +118,8 @@ class RequestsRepository(
 
     fun onEvent(event: RelayEvent) {
         when (event) {
-            is RelayEvent.Hello -> replacePending(event.pending)
+            is RelayEvent.Hello -> replacePending(event.pending, event.homeNotice)
+            is RelayEvent.HomeNoticeUpdated -> _state.update { it.copy(homeNotice = event.notice) }
             is RelayEvent.RequestCreated -> {
                 val isNew = _state.value.find(event.request.id) == null
                 applyRequest(event.request)
@@ -135,7 +137,7 @@ class RequestsRepository(
     }
 
     /** hello: サーバーの pending 一覧が正。手元で pending のままのものは解決済みなので取り除く (履歴は [refresh] で補う)。 */
-    private fun replacePending(pending: List<Request>) {
+    private fun replacePending(pending: List<Request>, notice: HomeNotice?) {
         val ids = pending.map { it.id }.toSet()
         val dropped = mutableListOf<String>()
         _state.update { s ->
@@ -145,7 +147,7 @@ class RequestsRepository(
                 if (!keep) dropped += r.id
                 keep
             }
-            s.copy(requests = sorted(merge(kept, pending)))
+            s.copy(requests = sorted(merge(kept, pending)), homeNotice = notice)
         }
         dropped.forEach { notifier.cancel(it) }
         pending.filter(::shouldDismissNotification).forEach { notifier.cancel(it.id) }

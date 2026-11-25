@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { CloudApp, type Socket, type SocketData } from "../src/app.ts";
 import { hash } from "../src/service.ts";
-import type { CloudRequest, Transaction } from "../src/types.ts";
+import type { CloudRequest, HomeNotice, Transaction } from "../src/types.ts";
 import { harness } from "./helpers.ts";
 import { MemoryDatabase } from "./memory.ts";
 
 type Harness = ReturnType<typeof harness>;
-type Frame = { type: string; pending?: CloudRequest[]; request?: CloudRequest };
+type Frame = {
+  type: string;
+  pending?: CloudRequest[];
+  request?: CloudRequest;
+  home_notice?: HomeNotice;
+  notice?: HomeNotice | null;
+};
 const apps = new Set<CloudApp>();
 const unsubscribers: (() => void)[] = [];
 const servers: Bun.Server<SocketData>[] = [];
@@ -129,6 +135,45 @@ async function subscribe(h: Harness, ...gateways: CloudApp[]) {
 }
 
 describe("gateway identity, replicas and snapshots", () => {
+  test("voice consent is one account notice and clears on every connected device", async () => {
+    const h = setup();
+    const otherGateway = replica(h);
+    const providers = { free: "meta", plus: "gemini" } as const;
+    h.service.planVoiceProviders = providers;
+    const notice: HomeNotice = { type: "voice_plan_consent_required", providers };
+    const setConsent = (uid: string, accept: boolean) => h.call("POST", "/v1/voice-plan-consent", `agent-${uid}`,
+      { policy: "1:meta:gemini", accept }, { origin: "http://localhost" });
+    unsubscribers.push(await h.bus.subscribe(digest => {
+      h.app.onWake(digest);
+      otherGateway.onWake(digest);
+    }));
+    expect((await setConsent("bob", true)).status).toBe(200);
+    const aliceFirst = await socket(h, (await h.pair("alice")).device_token);
+    const aliceSecond = await socket(h, (await h.pair("alice", "android")).device_token, otherGateway);
+    const bob = await socket(h, (await h.pair("bob")).device_token, otherGateway);
+    for (const alice of [aliceFirst, aliceSecond])
+      expect(alice.frames[0]).toMatchObject({ type: "hello", pending: [], home_notice: notice });
+    expect(bob.frames).toEqual([{ type: "hello", pending: [] }]);
+
+    const created = await h.call("POST", "/v1/requests", "agent-alice", {
+      question: "発送の確認", priority: "high", delivery_mode: "call",
+    });
+    expect(created.body.request).toMatchObject({ delivery_mode: "text", status: "pending", call: null });
+    await until(() => aliceSecond.frames.some(frame => frame.type === "request.created"), "text question");
+    expect(aliceSecond.frames.filter(frame => frame.type === "home_notice.updated")).toHaveLength(0);
+    expect((await setConsent("alice", true)).status).toBe(200);
+    await until(() => [aliceFirst, aliceSecond].every(ws => ws.frames.some(frame => frame.type === "home_notice.updated")), "cleared consent notice");
+    for (const alice of [aliceFirst, aliceSecond])
+      expect(alice.frames.filter(frame => frame.type === "home_notice.updated")).toEqual([{ type: "home_notice.updated", notice: null }]);
+    expect(bob.frames).toEqual([{ type: "hello", pending: [] }]);
+    expect((await h.call("GET", `/v1/requests/${created.body.request.id}`)).body.request)
+      .toMatchObject({ delivery_mode: "text", status: "pending", call: null });
+
+    expect((await setConsent("alice", false)).status).toBe(200);
+    await until(() => aliceSecond.frames.filter(frame => frame.type === "home_notice.updated").length === 2, "withdrawn consent notice");
+    expect(aliceSecond.frames.at(-1)).toEqual({ type: "home_notice.updated", notice });
+  });
+
   test("hello contains only the device owner's pending requests, with no credential material", async () => {
     const h = setup(),
       alice = await h.pair(),

@@ -3,13 +3,23 @@ import SwiftUI
 
 struct RequestListView: View {
     @Environment(AppModel.self) private var model
-    @State private var showingSettings = false
+    @State private var sheet: HomeSheet?
+
+    private var voiceNotice: HomeNotice? {
+        model.store.homeNotice.flatMap { $0.requiresVoicePlanConsent ? $0 : nil }
+    }
 
     var body: some View {
         let store = model.store
         ScrollView {
             VStack(spacing: 14) {
                 availabilityCard
+                if let notice = voiceNotice, let endpoint = model.credentials?.endpoint {
+                    banner(icon: "phone", text: "音声通話の送信先を確認", detail: "同意すると、次の通話から音声で応答できます。", color: PagerTheme.orange, actionIcon: "chevron.right") {
+                        sheet = .voiceNotice(notice, endpoint)
+                    }
+                    .accessibilityIdentifier("home.voiceNotice")
+                }
                 if store.reachability == .unreachable {
                     banner(icon: "wifi.slash", text: RelayError.unreachableMessage, detail: "接続できるようになると自動的に再接続します。入力中の回答は保存されます。", color: PagerTheme.orange) {
                         Task { await model.refresh() }
@@ -46,15 +56,23 @@ struct RequestListView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    showingSettings = true
+                    sheet = .settings
                 } label: {
                     Label("設定", systemImage: "gearshape")
                 }
                 .tint(PagerTheme.ink)
             }
         }
-        .sheet(isPresented: $showingSettings) {
-            SettingsView()
+        .sheet(item: $sheet) { destination in
+            switch destination {
+            case .settings:
+                SettingsView()
+            case .voiceNotice(let notice, let endpoint):
+                VoiceNoticeSheet(notice: notice, endpoint: endpoint)
+            }
+        }
+        .onChange(of: voiceNotice) { _, notice in
+            if notice == nil, case .voiceNotice = sheet { sheet = nil }
         }
     }
 
@@ -114,7 +132,7 @@ struct RequestListView: View {
     private var presenceExplanation: String {
         if model.isUpdatingPresence { return "エージェントに状態を共有しています…" }
         switch model.effectivePresenceAvailability() {
-        case .available: return "通話や通知で連絡を受け取れます"
+        case .available: return voiceNotice == nil ? "通話や通知で連絡を受け取れます" : "質問や通知を文字で受け取れます"
         case .busy: return "取り込み中は、通話の代わりに文字で連絡が届きます"
         case .away: return "離席中は、通話の代わりに文字で連絡が届きます"
         case .unknown: return "状態を選ぶとエージェントに共有されます"
@@ -134,8 +152,8 @@ struct RequestListView: View {
             .padding(.top, 4)
     }
 
-    private func banner(icon: String, text: String, detail: String, color: Color, retry: @escaping () -> Void) -> some View {
-        Button(action: retry) {
+    private func banner(icon: String, text: String, detail: String, color: Color, actionIcon: String = "arrow.clockwise", action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: icon).foregroundStyle(color)
                 VStack(alignment: .leading, spacing: 2) {
@@ -143,13 +161,60 @@ struct RequestListView: View {
                     Text(detail).font(.caption).foregroundStyle(PagerTheme.inkSoft).multilineTextAlignment(.leading)
                 }
                 Spacer()
-                Image(systemName: "arrow.clockwise").foregroundStyle(color)
+                Image(systemName: actionIcon).foregroundStyle(color)
             }
             .padding(14)
             .background(Color.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(color.opacity(0.35)))
         }
         .buttonStyle(.plain)
+    }
+}
+
+private enum HomeSheet: Identifiable {
+    case settings
+    case voiceNotice(HomeNotice, RelayEndpoint)
+
+    var id: String {
+        switch self {
+        case .settings: "settings"
+        case .voiceNotice: "voiceNotice"
+        }
+    }
+}
+
+private struct VoiceNoticeSheet: View {
+    let notice: HomeNotice
+    let endpoint: RelayEndpoint
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("現在は、通話での質問もテキストで届きます。音声で応答したときは、文字起こしと質問・会話履歴を利用プランの送信先へ送ります。")
+                }
+                Section("プランごとの送信先") {
+                    LabeledContent("FREE", value: VoiceAIDisclosure(provider: notice.providers["free"]).recipientName)
+                    LabeledContent("PLUS", value: VoiceAIDisclosure(provider: notice.providers["plus"]).recipientName)
+                }
+                Section {
+                    Button("送信先を確認して同意") {
+                        openURL(endpoint.url(segments: ["pair"], query: [URLQueryItem(name: "voice", value: "1")]))
+                        dismiss()
+                    }
+                    .tint(PagerTheme.orange)
+                }
+            }
+            .navigationTitle("音声通話の送信先")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("あとで") { dismiss() }
+                }
+            }
+        }
     }
 }
 

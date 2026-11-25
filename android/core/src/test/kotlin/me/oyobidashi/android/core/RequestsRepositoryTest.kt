@@ -27,6 +27,22 @@ class RequestsRepositoryTest {
     // ---- hello / created / updated ----
 
     @Test
+    fun `home notice clears independently from questions and drafts`() {
+        val hello = RelayEvent.parse(
+            """{"type":"hello","pending":[],"home_notice":{"type":"voice_plan_consent_required","providers":{"free":"meta","plus":"gemini"}}}"""
+        )!!
+        repo.onEvent(hello)
+        assertTrue(state.homeNotice?.requiresVoicePlanConsent == true)
+        assertEquals("gemini", state.homeNotice?.providers?.get("plus"))
+        repo.applyRequest(request("a"))
+        repo.editDraft("a", "入力中")
+        repo.onEvent(RelayEvent.parse("""{"type":"home_notice.updated","notice":null}""")!!)
+        assertNull(state.homeNotice)
+        assertEquals(listOf("a"), state.pending.map { it.id })
+        assertEquals("入力中", state.draft("a").text)
+    }
+
+    @Test
     fun `hello replaces the pending list`() {
         repo.onEvent(RelayEvent.Hello(listOf(request("a"), request("b", createdAt = t1))))
         assertEquals(listOf("b", "a"), state.pending.map { it.id }) // created_at 降順

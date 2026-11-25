@@ -38,8 +38,8 @@ android {
         applicationId = "me.oyobidashi.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.2.5"
+        versionCode = 10
+        versionName = "0.2.7"
 
         buildConfigField("String", "FIREBASE_PROJECT_ID", firebaseValue("projectId"))
         buildConfigField("String", "FIREBASE_APPLICATION_ID", firebaseValue("applicationId"))

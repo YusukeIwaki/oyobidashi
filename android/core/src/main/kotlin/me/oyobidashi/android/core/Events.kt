@@ -7,6 +7,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -15,9 +18,15 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 
+@Serializable
+data class HomeNotice(val type: String, val providers: Map<String, String> = emptyMap()) {
+    val requiresVoicePlanConsent: Boolean get() = type == "voice_plan_consent_required"
+}
+
 /** `/v1/events` のサーバー→クライアントイベント。 */
 sealed interface RelayEvent {
-    data class Hello(val pending: List<Request>) : RelayEvent
+    data class Hello(val pending: List<Request>, val homeNotice: HomeNotice? = null) : RelayEvent
+    data class HomeNoticeUpdated(val notice: HomeNotice?) : RelayEvent
     data class RequestCreated(val request: Request) : RelayEvent
     data class RequestUpdated(val request: Request) : RelayEvent
     data object Pong : RelayEvent
@@ -32,10 +41,12 @@ sealed interface RelayEvent {
                 "hello" -> {
                     val pending = obj["pending"]
                     Hello(
-                        if (pending == null || pending is kotlinx.serialization.json.JsonNull) emptyList()
-                        else OyobidashiJson.decodeFromJsonElement<List<Request>>(pending)
+                        if (pending == null || pending is JsonNull) emptyList()
+                        else OyobidashiJson.decodeFromJsonElement<List<Request>>(pending),
+                        try { decodeNotice(obj["home_notice"]) } catch (_: SerializationException) { null }
                     )
                 }
+                "home_notice.updated" -> HomeNoticeUpdated(decodeNotice(obj["notice"]))
                 "request.created" -> obj["request"]?.let { RequestCreated(OyobidashiJson.decodeFromJsonElement<Request>(it)) }
                 "request.updated" -> obj["request"]?.let { RequestUpdated(OyobidashiJson.decodeFromJsonElement<Request>(it)) }
                 "pong" -> Pong
@@ -46,6 +57,9 @@ sealed interface RelayEvent {
         } catch (e: IllegalArgumentException) {
             null
         }
+
+        private fun decodeNotice(value: JsonElement?): HomeNotice? =
+            value?.takeUnless { it is JsonNull }?.let { OyobidashiJson.decodeFromJsonElement<HomeNotice>(it) }
     }
 }
 

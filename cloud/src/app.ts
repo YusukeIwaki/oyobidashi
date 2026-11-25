@@ -50,6 +50,7 @@ export interface SocketData {
   seen: Map<string, number>;
   ready: boolean;
   closed: boolean;
+  homeNoticeKey?: string;
 }
 export interface Socket {
   data: SocketData;
@@ -314,7 +315,9 @@ export class CloudApp {
           throw new CloudError(403, "forbidden", "open the pairing page to change voice consent");
         const input = await readBody(req);
         if (typeof input.accept !== "boolean") throw invalid("accept must be a boolean");
-        return json(200, await this.service.run(p, tx => this.service.updateVoicePlanConsent(tx, input.policy, input.accept as boolean)));
+        const state = await this.service.run(p, tx => this.service.updateVoicePlanConsent(tx, input.policy, input.accept as boolean));
+        await this.service.wake(p.uid);
+        return json(200, state);
       }
       if (path === "/v1/voice" || path.startsWith("/v1/voice/")) {
         requireRole(p, "device");
@@ -731,6 +734,7 @@ export class CloudApp {
           return {
             devices,
             requests: [...map.values()],
+            homeNotice: await this.service.homeNotice(tx),
             revision: await tx.revision(),
           };
         });
@@ -748,14 +752,18 @@ export class CloudApp {
             this.closeSocket(ws);
             continue;
           }
+          const notice = snapshot.homeNotice;
+          const noticeKey = notice ? `${notice.type}:${notice.providers.free}:${notice.providers.plus}` : undefined;
           if (!ws.data.ready) {
             const pending = snapshot.requests.filter(
               (r) => r.status === "pending",
             );
             for (const r of pending) ws.data.seen.set(r.id, r.version);
-            this.send(ws, { type: "hello", pending });
+            this.send(ws, { type: "hello", pending, ...(notice ? { home_notice: notice } : {}) });
             ws.data.ready = true;
-          } else
+          } else {
+            if (ws.data.homeNoticeKey !== noticeKey)
+              this.send(ws, { type: "home_notice.updated", notice });
             for (const r of snapshot.requests) {
               const seen = ws.data.seen.get(r.id);
               if ((seen ?? 0) >= r.version) continue;
@@ -773,6 +781,8 @@ export class CloudApp {
               if (ws.data.seen.size > 400)
                 ws.data.seen.delete(ws.data.seen.keys().next().value!);
             }
+          }
+          ws.data.homeNoticeKey = noticeKey;
         }
       } while (this.dirty.has(uid));
     } catch {

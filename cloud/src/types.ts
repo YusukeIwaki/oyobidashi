@@ -27,6 +27,10 @@ export interface CloudRequest extends RequestObject {
   version: number;
   call: CloudCall | null;
 }
+export interface HomeNotice {
+  type: "voice_plan_consent_required";
+  providers: Record<VoicePlan, VoiceProvider>;
+}
 export interface Device extends DeviceObject {
   supports_request_items?: boolean;
   push_client_id?: string | null;

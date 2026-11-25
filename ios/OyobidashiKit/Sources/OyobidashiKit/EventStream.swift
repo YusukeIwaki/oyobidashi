@@ -3,22 +3,38 @@ import Foundation
 // MARK: - Events
 
 /// `GET /v1/events` のサーバー→クライアントメッセージ。
+public struct HomeNotice: Equatable, Sendable, Decodable {
+    public let type: String
+    public let providers: [String: String]
+
+    public var requiresVoicePlanConsent: Bool { type == "voice_plan_consent_required" }
+}
+
 public enum RelayEvent: Equatable, Sendable, Decodable {
-    case hello(pending: [AgentRequest])
+    case hello(pending: [AgentRequest], homeNotice: HomeNotice? = nil)
+    case homeNoticeUpdated(HomeNotice?)
     case created(AgentRequest)
     case updated(AgentRequest)
     case pong
     /// 未知の type (無視する)。
     case unknown(type: String)
 
-    enum CodingKeys: String, CodingKey { case type, pending, request }
+    enum CodingKeys: String, CodingKey {
+        case type, pending, request, notice
+        case homeNotice = "home_notice"
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let type = try c.decode(String.self, forKey: .type)
         switch type {
         case "hello":
-            self = .hello(pending: try c.decodeLossyArray(AgentRequest.self, forKey: .pending))
+            self = .hello(
+                pending: try c.decodeLossyArray(AgentRequest.self, forKey: .pending),
+                homeNotice: try? c.decode(HomeNotice.self, forKey: .homeNotice)
+            )
+        case "home_notice.updated":
+            self = .homeNoticeUpdated(try c.decodeIfPresent(HomeNotice.self, forKey: .notice))
         case "request.created":
             self = .created(try c.decode(AgentRequest.self, forKey: .request))
         case "request.updated":
@@ -249,7 +265,7 @@ public final class EventStreamClient: EventStreaming, @unchecked Sendable {
                     }
                     switch event {
                     case .pong, .unknown: continue
-                    case .hello, .created, .updated: await emit(.event(event))
+                    case .hello, .homeNoticeUpdated, .created, .updated: await emit(.event(event))
                     }
                 }
             } catch {

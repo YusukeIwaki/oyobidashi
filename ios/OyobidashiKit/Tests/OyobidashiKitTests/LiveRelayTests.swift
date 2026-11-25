@@ -65,7 +65,7 @@ final class LiveRelayTests: XCTestCase {
             if case .event(let event) = signal { await signals.add(event) }
         }
         let hello = await waitFor(signals) { if case .hello = $0 { return true } else { return false } }
-        guard case .hello(let helloPending)? = hello else { return XCTFail("hello must arrive") }
+        guard case .hello(let helloPending, _)? = hello else { return XCTFail("hello must arrive") }
         XCTAssertTrue(helloPending.contains { $0.id == requestID })
         if let subject = env["OYOBIDASHI_LIVE_SUBJECT"] {
             XCTAssertEqual(helloPending.first { $0.id == requestID }?.subject, subject)

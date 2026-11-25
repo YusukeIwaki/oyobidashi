@@ -755,13 +755,13 @@ public final class AppModel: AnswerSubmitting {
             // 通話リコンサイルはストア反映の前後どちらでも冪等。先に判定材料を取る。
             store.apply(event)
             switch event {
-            case .hello(let pending):
+            case .hello(let pending, _):
                 reconcileCalls(for: pending)
                 // 切断中に解決されたものを履歴に反映する。
                 await refresh()
             case .created(let req), .updated(let req):
                 reconcileCalls(for: req)
-            case .pong, .unknown:
+            case .homeNoticeUpdated, .pong, .unknown:
                 break
             }
         }

@@ -415,6 +415,11 @@ Model names stay deployment configuration and are never returned.
 `X-Oyobidashi-Voice-Plan-Consent: 1` を送る端末には現在の提供元も返します。
 着信時に `call.voice_plan`、`call.voice_provider` と `call.account_voice_consent: true` を記録します。
 未同意の場合は最初から文字で届けます。
+端末の WebSocket では、`hello.home_notice` が未同意の案内をアカウント単位で返します。
+案内は `{"type":"voice_plan_consent_required","providers":{"free":"meta","plus":"gemini"}}` の形式です。
+同意状況が変わると `{"type":"home_notice.updated","notice":null}` または新しい案内が届きます。
+アプリはホームに表示し、タップしたときに `/pair?voice=1` への導線を開きます。
+案内の変更は未回答の質問や下書きに影響しません。
 通話中のプラン変更や、同意の撤回・提供元の変更があった場合は以後の送信を止めます。
 `voice_handoff` と `call.end_call: true` の場合、アプリは保存済みの回答を表示して残りを入力できます。
 元の提供元に送信済みの発話は、結果を得られた場合に保存してから引き継ぎます。

@@ -59,6 +59,7 @@ public enum UpsertResult: Equatable, Sendable {
 @Observable
 public final class RequestListStore {
     public private(set) var requests: [AgentRequest] = []
+    public private(set) var homeNotice: HomeNotice?
     /// 回答時に 409 を受けたが、サーバー上の最終状態をまだ取得できていない request。未回答一覧からは外す。
     public private(set) var locallyResolvedIDs: Set<String> = []
     public internal(set) var loadState: LoadState = .idle
@@ -124,7 +125,8 @@ public final class RequestListStore {
     /// WebSocket イベントを反映する。
     public func apply(_ event: RelayEvent) {
         switch event {
-        case .hello(let pendingNow):
+        case .hello(let pendingNow, let notice):
+            homeNotice = notice
             // hello の pending が「いま未回答のもの」の全量。手元で未回答扱いなのに含まれないものは
             // 切断中に解決されているので取り除く (最終状態は直後の一覧再取得で履歴に戻る)。
             let ids = Set(pendingNow.map(\.id))
@@ -146,6 +148,8 @@ public final class RequestListStore {
             if wasCall, request.isAnswerable, request.deliveryMode == .text, request.call?.state == .ended {
                 notifications?.presentIncoming(request)
             }
+        case .homeNoticeUpdated(let notice):
+            homeNotice = notice
         case .pong, .unknown:
             break
         }
@@ -168,6 +172,7 @@ public final class RequestListStore {
 
     public func reset() {
         requests = []
+        homeNotice = nil
         locallyResolvedIDs = []
         loadState = .idle
         connection = .disconnected
