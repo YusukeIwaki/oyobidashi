@@ -9,7 +9,6 @@ struct PermissionSettingsView: View {
     @State private var notifications: UNAuthorizationStatus = .notDetermined
     @State private var speech = SFSpeechRecognizer.authorizationStatus()
     @State private var microphone = AVAudioApplication.shared.recordPermission
-    @State private var camera = AVCaptureDevice.authorizationStatus(for: .video)
     @State private var requesting = false
 
     var body: some View {
@@ -27,10 +26,6 @@ struct PermissionSettingsView: View {
             }
             permissionRow("音声認識", status: speech == .authorized ? "許可済み" : "未許可", needsRequest: speech == .notDetermined) {
                 if speech == .notDetermined { _ = await SpeechPermissions.requestSpeech() }
-                else { openSettings() }
-            }
-            permissionRow("カメラ（QRコード）", status: camera == .authorized ? "許可済み" : "未許可", needsRequest: camera == .notDetermined) {
-                if camera == .notDetermined { _ = await AVCaptureDevice.requestAccess(for: .video) }
                 else { openSettings() }
             }
             Button("ローカルネットワークの設定") { openSettings() }
@@ -83,6 +78,5 @@ struct PermissionSettingsView: View {
         notifications = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
         speech = SFSpeechRecognizer.authorizationStatus()
         microphone = AVAudioApplication.shared.recordPermission
-        camera = AVCaptureDevice.authorizationStatus(for: .video)
     }
 }

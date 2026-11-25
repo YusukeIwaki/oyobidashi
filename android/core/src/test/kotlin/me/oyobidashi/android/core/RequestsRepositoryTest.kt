@@ -170,6 +170,36 @@ class RequestsRepositoryTest {
     // ---- refresh ----
 
     @Test
+    fun `empty inbox is confirmed only by a successful initial fetch or hello`() = runTest {
+        assertFalse(state.inboxLoaded)
+        api.onList = { throw networkError() }
+        repo.refresh()
+        assertFalse(state.inboxLoaded)
+
+        repo.onEvent(RelayEvent.Hello(emptyList()))
+        assertTrue(state.inboxLoaded)
+        assertTrue(state.pending.isEmpty())
+    }
+
+    @Test
+    fun `cancelled refresh leaves the inbox unconfirmed and allows a retry`() = runTest {
+        val waiting = CompletableDeferred<List<Request>>()
+        api.onList = { waiting.await() }
+        val refresh = async { repo.refresh() }
+        runCurrent()
+        assertTrue(state.refreshing)
+        assertFalse(state.inboxLoaded)
+        refresh.cancel()
+        refresh.join()
+        assertFalse(state.refreshing)
+
+        api.onList = { listOf(request("a")) }
+        repo.refresh()
+        assertTrue(state.inboxLoaded)
+        assertEquals(listOf("a"), state.pending.map { it.id })
+    }
+
+    @Test
     fun `refresh keeps notified notices and dismisses cancelled notices`() = runTest {
         val notice = request("notice", RequestStatus.NOTIFIED, kind = RequestKind.NOTIFICATION, updatedAt = t1)
         api.onList = { listOf(notice) }

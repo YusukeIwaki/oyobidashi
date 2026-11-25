@@ -151,7 +151,7 @@ class AppGraph(private val app: Application) {
                 override fun onEvent(event: RelayEvent) = repository.onEvent(event)
                 override fun onStateChanged(state: ConnectionState) {
                     repository.onConnectionState(state)
-                    if (state == ConnectionState.CONNECTED) scope.launch { repository.refresh() }
+                    if (state == ConnectionState.CONNECTED) refreshRequestsIfIdle(repository)
                 }
 
                 override fun onUnauthorized() = repository.handleUnauthorized()
@@ -163,13 +163,9 @@ class AppGraph(private val app: Application) {
         callReconcileJob = scope.launch {
             repository.state.collect { callManager.reconcile(it.requests) }
         }
-        if (receivesLiveUpdates) {
-            events.start()
-            scope.launch { repository.refresh() }
-        } else {
-            // バックグラウンド起動 (FCM 等) でも初回は一覧を取る。
-            scope.launch { repository.refresh() }
-        }
+        if (receivesLiveUpdates) events.start()
+        // バックグラウンド起動 (FCM 等) でも初回は一覧を取る。
+        refreshRequestsIfIdle(repository)
         syncPushToken()
         syncPresence()
         billingManager.refresh()
@@ -307,7 +303,7 @@ class AppGraph(private val app: Application) {
         if (value) {
             checkPresenceExpiry()
             current.events.start()
-            scope.launch { current.repository.refresh() }
+            refreshRequestsIfIdle(current.repository)
             syncPushToken()
             syncPresence()
             billingManager.refresh()
@@ -321,7 +317,7 @@ class AppGraph(private val app: Application) {
         val current = _session.value ?: return
         if (visible) {
             current.events.start()
-            scope.launch { current.repository.refresh() }
+            refreshRequestsIfIdle(current.repository)
         } else if (!receivesLiveUpdates) {
             current.events.stop()
         }
@@ -332,8 +328,14 @@ class AppGraph(private val app: Application) {
         val current = _session.value ?: return
         if (!receivesLiveUpdates) return
         current.events.reconnectNow()
-        scope.launch { current.repository.refresh() }
+        refreshRequestsIfIdle(current.repository)
         syncPresence()
+    }
+
+    private fun refreshRequestsIfIdle(repository: RequestsRepository) {
+        scope.launch {
+            if (!repository.state.value.refreshing) repository.refresh()
+        }
     }
 
     private fun registerConnectivityCallback() {

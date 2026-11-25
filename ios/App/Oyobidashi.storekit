@@ -31,8 +31,8 @@
           "introductoryOffer": null,
           "localizations": [
             {
-              "description": "通話の内容は学習に使われません",
-              "displayName": "学習に使わないプラン",
+              "description": "音声通話で、より高精度なモデルを使います。",
+              "displayName": "Oyobidashi PLUS",
               "locale": "ja_JP"
             }
           ],

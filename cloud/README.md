@@ -89,7 +89,9 @@ FREEでMuse Ember Standard、PLUSでGemini 3.5 Flash-Liteを使う設定は、AP
 
 課金・購入の復元・自動同期は `https://api.oyobidashi.me` でのみ利用できます。公式APIでもストア商品を設定するまで課金は無効です。セルフホストと旧Railwayホストでは `GET /v1/billing` は `{"enabled":false}` を返します。セルフホストでは指定した標準モデルで通話でき、LLM APIやホスティングの費用は運営者が負担します。
 
-公式環境では購読中の利用者に標準モデルを使い、未購読者には `VOICE_MODEL_FREE` が指定されていればそのモデルを使います。片方が失敗しても、もう片方へは切り替えません。アプリとMCPは設定された学習利用条件を参照し、モデル名は表示しません。学習利用の設定値はプロバイダーとの契約・設定に合わせて指定してください。
+公式環境のアプリでは、音声通話で使うモデルの特徴と、APIから取得できる場合は送信先をプランごとに表示します。別途Claudeを連携している利用者には、連携先とAnthropicからの直接請求を案内します。
+
+旧構成の公式環境では、未購読者に `VOICE_MODEL_FREE` が指定されていればそのモデルを使い、その他の利用者に標準モデルを使います。片方が失敗しても、もう片方へは切り替えません。旧構成の学習利用の設定値はプロバイダーとの契約・設定に合わせて指定してください。
 
 - 購入の登録は端末認証に加えて、iOSはApp Attest、AndroidはPlay Integrityの検証を通った端末だけが呼べます。開発ビルドはApp Attestがdevelopment、Playを経由しないAndroidビルドは検証に通りません。
 - Appleの購読は、本人の購入のほか、ファミリー共有と、組織がApple Business／Apple School Managerでまとめて購入して割り当てた席も受け付けます。割り当てた席は端末での購入を伴わないので、アプリは起動時とストアの更新時にも同期します。
@@ -290,7 +292,7 @@ bun test --cwd cloud
 ### iOS 1.0.0 の公開時に合わせる設定
 
 - API の `FIREBASE_AUTH_SERVICE_ACCOUNT_JSON` のサービスアカウントには、対象プロジェクトの `firebaseauth.users.get` と `firebaseauth.users.delete` が必要です。Apple でサインインした利用者については、Firebase 側の Apple プロバイダーにサービス ID と OAuth コードフローの設定も必要です。
-- FREEプランの入力制限は、API とワーカーの `VOICE_MODEL_FREE` と `VOICE_FREE_TRAINING` から決まります。両サービスの設定を揃えます。公式クラウドで FREE 用の別モデルを使い、`VOICE_FREE_TRAINING` が `0` でない場合に限り、FREE の利用者へ「個人情報・機密情報を送らない」ことへの同意を求めます。同意はエージェントの連携時（`/oauth/authorize` の画面、または `login:cloud`）に1回だけ行い、通話中には何も確認しません。PLUS の利用者とセルフホストには制限も同意もありません。詳細は[docs/CLOUD_PROTOCOL.md](../docs/CLOUD_PROTOCOL.md#free-plan-input-restriction)を参照してください。
+- 旧構成のFREEプランの入力制限は、API とワーカーの `VOICE_MODEL_FREE` と `VOICE_FREE_TRAINING` から決まります。両サービスの設定を揃えます。旧構成の公式クラウドで FREE 用の別モデルを使い、`VOICE_FREE_TRAINING` が `0` でない場合に限り、FREE の利用者へ「個人情報・機密情報を送らない」ことへの同意を求めます。同意はエージェントの連携時（`/oauth/authorize` の画面、または `login:cloud`）に1回だけ行い、通話中には何も確認しません。PLUS の利用者とセルフホストには制限も同意もありません。詳細は[docs/CLOUD_PROTOCOL.md](../docs/CLOUD_PROTOCOL.md#free-plan-input-restriction)を参照してください。
 - 同意前の FREE 利用者には音声通話を発信せず、質問は文字で届きます。同意は `/oauth/connections` にログインして行えます。
 
 ### Apple課金の本番と審査用Sandbox

@@ -76,6 +76,7 @@ import me.oyobidashi.android.core.Availability
 import me.oyobidashi.android.core.CallState
 import me.oyobidashi.android.core.HomeNotice
 import me.oyobidashi.android.core.Priority
+import me.oyobidashi.android.core.RefreshError
 import me.oyobidashi.android.core.Request
 import me.oyobidashi.android.core.VoiceRecipient
 import kotlinx.coroutines.launch
@@ -86,6 +87,7 @@ import java.time.temporal.ChronoUnit
 @Composable
 fun RequestListScreen(vm: MainViewModel, session: Session) {
     val state by session.repository.state.collectAsState()
+    val pending = remember(state.requests) { state.pending }
     val voiceNotice = state.homeNotice?.takeIf { it.requiresVoicePlanConsent }
     var noticeOpen by remember(session) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -97,7 +99,6 @@ fun RequestListScreen(vm: MainViewModel, session: Session) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
-    LaunchedEffect(session) { session.repository.refresh() }
 
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
@@ -106,7 +107,7 @@ fun RequestListScreen(vm: MainViewModel, session: Session) {
                 title = { Text("お呼び出し") },
                 scrollBehavior = scrollBehavior,
                 actions = {
-                    IconButton(onClick = { scope.launch { session.repository.refresh() } }) {
+                    IconButton(onClick = { scope.launch { session.repository.refresh() } }, enabled = !state.refreshing) {
                         Icon(Icons.Default.Refresh, contentDescription = "更新")
                     }
                     IconButton(onClick = vm::openSettings, modifier = Modifier.padding(end = 8.dp)) {
@@ -122,9 +123,8 @@ fun RequestListScreen(vm: MainViewModel, session: Session) {
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                if (state.refreshing) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-                if (state.relayUnreachable) item { UnreachableBanner() }
-                item { AvailabilityCard(vm, voiceNeedsConsent = voiceNotice != null) }
+                item(key = "availability") { AvailabilityCard(vm) }
+                if (state.relayUnreachable) item(key = "relay_unreachable") { UnreachableBanner() }
                 if (voiceNotice != null) item(key = "home_voice_notice") {
                     Card(
                         onClick = { noticeOpen = true },
@@ -144,15 +144,20 @@ fun RequestListScreen(vm: MainViewModel, session: Session) {
                         }
                     }
                 }
-                item {
+                item(key = "inbox_heading") {
                     Row(Modifier.padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("未回答の通知", style = MaterialTheme.typography.titleMedium)
-                        if (state.pending.isNotEmpty()) Badge { Text(state.pending.size.toString()) }
+                        if (pending.isNotEmpty()) Badge { Text(pending.size.toString()) }
                     }
                 }
-                if (state.pending.isEmpty()) item { EmptyInboxCard() }
-                items(state.pending, key = { it.id }) { request ->
+                if (pending.isEmpty()) {
+                    if (state.inboxLoaded) item(key = "empty_inbox") { EmptyInboxCard() }
+                    else if (state.refreshError == RefreshError.SERVER) item(key = "inbox_load_error") {
+                        Text("未回答の通知を取得できませんでした。", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                items(pending, key = { it.id }) { request ->
                     RequestCard(request, hasDraft = state.draft(request.id).text.isNotEmpty()) {
                         val call = vm.graph.callManager.uiState.value
                         if (call != null && call.requestId == request.id &&
@@ -165,6 +170,9 @@ fun RequestListScreen(vm: MainViewModel, session: Session) {
                         } else vm.openRequest(request.id)
                     }
                 }
+            }
+            if (state.refreshing) {
+                LinearProgressIndicator(Modifier.widthIn(max = 640.dp).fillMaxWidth())
             }
         }
     }
@@ -208,7 +216,7 @@ private fun VoiceNoticeDialog(notice: HomeNotice, baseUrl: String, onClose: () -
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AvailabilityCard(vm: MainViewModel, voiceNeedsConsent: Boolean) {
+private fun AvailabilityCard(vm: MainViewModel) {
     val presence by vm.graph.presence.collectAsState()
     val syncError by vm.graph.presenceSyncError.collectAsState()
     val current = presence.effectiveAvailability
@@ -269,7 +277,7 @@ private fun AvailabilityCard(vm: MainViewModel, voiceNeedsConsent: Boolean) {
                 Text(when (current) {
                     Availability.BUSY -> "取り込み中は、通話の代わりに文字で連絡が届きます"
                     Availability.AWAY -> "離席中は、通話の代わりに文字で連絡が届きます"
-                    else -> if (voiceNeedsConsent) "質問や通知を文字で受け取れます" else "通話や通知で連絡を受け取れます"
+                    else -> "質問や通知を受け取れます"
                 }, style = MaterialTheme.typography.bodyMedium)
             }
             syncError?.let {

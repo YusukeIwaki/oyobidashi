@@ -82,6 +82,8 @@ data class RequestsState(
      */
     val relayUnreachable: Boolean = false,
     val homeNotice: HomeNotice? = null,
+    /** 一覧取得か WebSocket の hello で、未回答の有無を確認した。 */
+    val inboxLoaded: Boolean = false,
 ) {
     val pending: List<Request> get() = requests.filter { it.isPending }
     val history: List<Request> get() = requests.filterNot { it.isPending }
@@ -147,7 +149,7 @@ class RequestsRepository(
                 if (!keep) dropped += r.id
                 keep
             }
-            s.copy(requests = sorted(merge(kept, pending)), homeNotice = notice)
+            s.copy(requests = sorted(merge(kept, pending)), homeNotice = notice, inboxLoaded = true)
         }
         dropped.forEach { notifier.cancel(it) }
         pending.filter(::shouldDismissNotification).forEach { notifier.cancel(it.id) }
@@ -219,7 +221,9 @@ class RequestsRepository(
         try {
             val list = api.listRequests(status = null, limit = limit)
             markReachable()
-            _state.update { it.copy(requests = sorted(merge(it.requests, list)), refreshing = false, refreshError = null) }
+            _state.update {
+                it.copy(requests = sorted(merge(it.requests, list)), refreshing = false, refreshError = null, inboxLoaded = true)
+            }
             _state.value.requests.filter(::shouldDismissNotification).forEach { notifier.cancel(it.id) }
         } catch (e: RelayException) {
             noteReachability(e)
@@ -229,6 +233,8 @@ class RequestsRepository(
                 val error = if (e is RelayException.Network) RefreshError.NETWORK else RefreshError.SERVER
                 _state.update { it.copy(refreshing = false, refreshError = error) }
             }
+        } finally {
+            _state.update { if (it.refreshing) it.copy(refreshing = false) else it }
         }
     }
 

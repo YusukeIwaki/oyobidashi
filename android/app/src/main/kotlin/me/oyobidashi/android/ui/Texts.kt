@@ -2,6 +2,7 @@ package me.oyobidashi.android.ui
 
 import me.oyobidashi.android.core.AnswerError
 import me.oyobidashi.android.core.Availability
+import me.oyobidashi.android.core.BillingStatus
 import me.oyobidashi.android.core.CallOutcome
 import me.oyobidashi.android.core.DeliveryMode
 import me.oyobidashi.android.core.ErrorCode
@@ -11,6 +12,7 @@ import me.oyobidashi.android.core.RelayException
 import me.oyobidashi.android.core.Request
 import me.oyobidashi.android.core.RequestKind
 import me.oyobidashi.android.core.RequestStatus
+import me.oyobidashi.android.core.VoiceRecipient
 import me.oyobidashi.android.core.parseTimestamp
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -20,10 +22,14 @@ object Texts {
 
     const val UNREACHABLE = "中継サーバーに接続できません。ネットワーク接続を確認してください"
 
-    fun billingVoiceTraining(training: Boolean?): String = when (training) {
-        true -> "通話の内容がAIモデルの学習に使われる場合があります。"
-        false -> "通話の内容はAIモデルの学習に使われません。"
-        null -> "通話の学習利用は確認できません。"
+    fun billingVoiceSummary(status: BillingStatus, plus: Boolean = status.active): String {
+        if (status.voiceProvider == "anthropic-linked") {
+            return "通話には連携したClaudeを使い、APIの利用分はAnthropicから直接請求されます。"
+        }
+        val summary = if (plus) "より高精度なモデルを使います。" else "日常会話に適したモデルを使います。"
+        val provider = status.voicePlanProviders?.get(if (plus) "plus" else "free")
+        val recipient = VoiceRecipient.fromProvider(provider) ?: return summary
+        return "$summary\n${recipient.disclosure}"
     }
     const val BILLING_SYNC_FAILED = "プランの状態を確認できませんでした。しばらく待ってからもう一度お試しください"
     const val BILLING_MANAGE_FAILED = "ブラウザで開けませんでした"

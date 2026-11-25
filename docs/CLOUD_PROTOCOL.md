@@ -245,17 +245,18 @@ stores are unconfigured, with 404 for the other billing routes. The LAN relay
 has no billing routes. Self-hosted cloud uses its configured standard model
 for everyone.
 
-A subscription belongs to the owner UID. The official worker picks the
-voice model per turn: an owner with an active subscription gets the standard
-model, everyone else gets `VOICE_MODEL_FREE` when it is set. A failure of one
-model never falls back to the other. Model names are deployment configuration
-and are never returned by any API, tool result, error or log.
+A subscription belongs to the owner UID. The official cloud selects the
+voice model according to the owner's plan and the configured providers
+(`FREE_AI_PROVIDER` and `PLUS_AI_PROVIDER`). The legacy configuration uses
+`VOICE_MODEL_FREE` for FREE when set and the configured standard model
+otherwise. A failure of one model never falls back to the other.
 
 `GET /v1/billing` (device auth) returns
 
 ```json
 {"enabled":true,"active":false,"expires_at":null,"active_stores":[],
- "voice_training":{"free":true,"plus":false},
+ "voice_training":{"free":false,"plus":false},
+ "voice_plan_providers":{"free":"meta","plus":"gemini"},
  "purchase_account_id":"98765432-1234-5678-9abc-123456789abc",
  "apple":{"product_ids":["..."]},"google":{"product_ids":["..."]}}
 ```
@@ -273,7 +274,10 @@ still lists only real store subscriptions, so it may be empty.
 `voice_training` declares the configured training terms of the model used for
 each plan. `true` means conversations may be used for training, `false`
 means no training use, and `null` or a missing value means unknown. Both plans
-use the standard model's terms when they share a model.
+use the standard model's terms when they share a legacy model. The field is
+retained for older clients. The plan screen describes the models by their
+intended use and accuracy, and shows the recipients from
+`voice_plan_providers` when available.
 
 `purchase_account_id` is a stable, opaque UUID for this UID. New purchases
 use it as the StoreKit `appAccountToken` or Play Billing
@@ -361,12 +365,13 @@ test purchase (`testPurchase`) never grants access and is never acknowledged.
 
 ### FREE plan input restriction
 
-The FREE voice model of the hosted service accepts no personal or confidential
-input. That restriction applies to exactly one combination:
+The legacy hosted configuration can restrict personal and confidential input
+when FREE uses a separate voice model. The restriction applies as follows:
 
 | Deployment | Plan | Restricted |
 |---|---|---|
-| Hosted, separate FREE model (`VOICE_MODEL_FREE`, `VOICE_FREE_TRAINING` not `0`) | FREE | yes |
+| Legacy hosted configuration, separate FREE model (`VOICE_MODEL_FREE`, `VOICE_FREE_TRAINING` not `0`) | FREE | yes |
+| Hosted with `FREE_AI_PROVIDER` and `PLUS_AI_PROVIDER` | FREE | no |
 | Hosted | PLUS | no |
 | Self-hosted cloud or LAN relay (own model) | any | no |
 

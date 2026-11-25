@@ -93,7 +93,6 @@ fun SettingsScreen(vm: MainViewModel, session: Session) {
         onDispose { lifecycle.removeObserver(observer) }
     }
     val mic = remember(refresh) { ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED }
-    val camera = remember(refresh) { ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED }
     val notifications = remember(refresh) { vm.graph.notifier.canPost() }
     val speech = remember(refresh) { runCatching { SpeechRecognizer.isRecognitionAvailable(context) }.getOrDefault(false) }
     val fullScreen = remember(refresh) { Build.VERSION.SDK_INT < 34 || context.getSystemService(NotificationManager::class.java)?.canUseFullScreenIntent() == true }
@@ -153,16 +152,21 @@ fun SettingsScreen(vm: MainViewModel, session: Session) {
                         SettingsGroup {
                             ListItem(
                                 headlineContent = { Text(if (planStatus.active) "PLUS" else "FREE") },
-                                supportingContent = {
-                                    val policy = planStatus.voiceTraining
-                                    Text(Texts.billingVoiceTraining(if (planStatus.active) policy?.plus else policy?.free))
-                                },
+                                supportingContent = { Text(Texts.billingVoiceSummary(planStatus)) },
                                 trailingContent = {
                                     TextButton(onClick = { showingPlan = true }) { Text("変更") }
                                 },
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             )
                         }
+                    }
+                }
+                if (isOyobidashiCloud) {
+                    item { SectionHeading("音声通話") }
+                    item {
+                        TextButton(onClick = {
+                            openSettings(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://api.oyobidashi.me/oauth/connections")))
+                        }) { Text("接続済みアプリと音声設定") }
                     }
                 }
                 if (isOyobidashiCloud && billing.status?.voicePlanProviders != null) {
@@ -179,7 +183,6 @@ fun SettingsScreen(vm: MainViewModel, session: Session) {
                             openSettings(context, Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
                         }
                         PermissionItem("マイク", mic, R.drawable.ic_mic, ::appSettings)
-                        PermissionItem("カメラ（QRコード）", camera, R.drawable.ic_camera, ::appSettings)
                         SettingsItem("音声認識", if (speech) "利用できます" else "利用できません", icon = { Icon(painterResource(R.drawable.ic_mic), null) }) {
                             openSettings(context, Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
                         }

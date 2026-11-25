@@ -11,7 +11,7 @@ struct CurrentPlanRow: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(presentation.title)
                     .fontWeight(.semibold)
-                Text(presentation.privacyNotice)
+                Text(presentation.voiceSummary)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 if let period = presentation.periodDescription(formatDate: billingDateText) {
@@ -136,7 +136,7 @@ private struct PlanPickerContent: View {
                 ForEach(BillingPlanPresentation.Plan.allCases) { plan in
                     PlanOptionCard(
                         plan: plan,
-                        privacyNotice: presentation.privacyNotice(for: plan),
+                        voiceSummary: presentation.voiceSummary(for: plan),
                         price: plan.priceText(displayPrice: displayPrice),
                         isLoading: plan == .standard && isLoadingProducts,
                         isSelected: selection == plan,
@@ -245,7 +245,7 @@ private struct SandboxRefundButton: View {
 
 private struct PlanOptionCard: View {
     let plan: BillingPlanPresentation.Plan
-    let privacyNotice: String
+    let voiceSummary: String
     let price: String?
     let isLoading: Bool
     let isSelected: Bool
@@ -271,7 +271,7 @@ private struct PlanOptionCard: View {
                         .foregroundStyle(isSelected ? PagerTheme.orange : PagerTheme.inkSoft)
                         .accessibilityHidden(true)
                 }
-                Text(privacyNotice)
+                Text(voiceSummary)
                     .font(.subheadline)
                     .foregroundStyle(PagerTheme.inkSoft)
                 if isCurrent {
