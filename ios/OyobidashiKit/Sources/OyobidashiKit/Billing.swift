@@ -13,6 +13,7 @@ public struct BillingStatus: Codable, Equatable, Sendable {
     public var apple: BillingStoreProducts?
     public var google: BillingStoreProducts?
     public var voiceTraining: BillingVoiceTraining?
+    public var voiceProvider: String?
 
     enum CodingKeys: String, CodingKey {
         case enabled, active, apple, google
@@ -20,9 +21,10 @@ public struct BillingStatus: Codable, Equatable, Sendable {
         case activeStores = "active_stores"
         case purchaseAccountID = "purchase_account_id"
         case voiceTraining = "voice_training"
+        case voiceProvider = "voice_provider"
     }
 
-    public init(enabled: Bool, active: Bool = false, expiresAt: Date? = nil, apple: BillingStoreProducts? = nil, google: BillingStoreProducts? = nil, activeStores: Set<String>? = nil, purchaseAccountID: UUID? = nil, voiceTraining: BillingVoiceTraining? = nil) {
+    public init(enabled: Bool, active: Bool = false, expiresAt: Date? = nil, apple: BillingStoreProducts? = nil, google: BillingStoreProducts? = nil, activeStores: Set<String>? = nil, purchaseAccountID: UUID? = nil, voiceTraining: BillingVoiceTraining? = nil, voiceProvider: String? = nil) {
         self.enabled = enabled
         self.active = active
         self.expiresAt = expiresAt
@@ -31,6 +33,7 @@ public struct BillingStatus: Codable, Equatable, Sendable {
         self.apple = apple
         self.google = google
         self.voiceTraining = voiceTraining
+        self.voiceProvider = voiceProvider
     }
 
     public init(from decoder: Decoder) throws {
@@ -43,6 +46,7 @@ public struct BillingStatus: Codable, Equatable, Sendable {
         apple = try c.decodeIfPresent(BillingStoreProducts.self, forKey: .apple)
         google = try c.decodeIfPresent(BillingStoreProducts.self, forKey: .google)
         voiceTraining = try c.decodeIfPresent(BillingVoiceTraining.self, forKey: .voiceTraining)
+        voiceProvider = try c.decodeIfPresent(String.self, forKey: .voiceProvider)
     }
 
     public static let disabled = BillingStatus(enabled: false)

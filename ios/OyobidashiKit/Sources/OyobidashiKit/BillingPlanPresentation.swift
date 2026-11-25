@@ -38,10 +38,12 @@ public struct BillingPlanPresentation: Equatable, Sendable {
     public let nextRenewalDate: Date?
     public let freePlanStartsAt: Date?
     private let voiceTraining: BillingVoiceTraining?
+    private let usesLinkedClaude: Bool
 
     public init(status: BillingStatus, renewalPeriods: [BillingRenewalPeriod] = [], isAssigned: Bool = false, now: Date = Date()) {
         isEnabled = status.enabled
         voiceTraining = status.voiceTraining
+        usesLinkedClaude = status.voiceProvider == "anthropic-linked"
         currentPlan = status.enabled && status.active ? .standard : .free
         self.isAssigned = isAssigned
         hasGoogleSubscription = status.active && status.activeStores?.contains("google") == true
@@ -69,6 +71,7 @@ public struct BillingPlanPresentation: Equatable, Sendable {
     public var privacyNotice: String { privacyNotice(for: currentPlan) }
 
     public func privacyNotice(for plan: Plan) -> String {
+        if usesLinkedClaude { return "通話には連携したClaudeを使い、APIの利用分はAnthropicから直接請求されます。" }
         switch plan == .free ? voiceTraining?.free : voiceTraining?.plus {
         case true?: return "通話の内容がAIモデルの学習に使われる場合があります。"
         case false?: return "通話の内容はAIモデルの学習に使われません。"

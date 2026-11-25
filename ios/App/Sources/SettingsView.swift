@@ -45,6 +45,11 @@ struct SettingsView: View {
                         Text("接続先の変更が完了するまでは、現在のペアリングを維持します。")
                     }
                 }
+                if isOyobidashiCloud {
+                    Section("音声通話") {
+                        Link("接続済みアプリと音声設定", destination: URL(string: "https://api.oyobidashi.me/oauth/connections")!)
+                    }
+                }
                 PermissionSettingsView()
                 if billingStore.planPresentation.isEnabled {
                     Section {

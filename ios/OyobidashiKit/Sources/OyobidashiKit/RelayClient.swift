@@ -41,14 +41,16 @@ public struct RelayClient: Sendable {
     private let timeout: TimeInterval
     private let voiceTurnPolicy: VoiceTurnPolicy
     private let voiceAccessToken: String?
+    private let disclosedVoiceProvider: String?
 
-    public init(endpoint: RelayEndpoint, deviceToken: String?, transport: any HTTPTransport = URLSessionTransport(), timeout: TimeInterval = 20, voiceTurnPolicy: VoiceTurnPolicy = VoiceTurnPolicy(), voiceAccessToken: String? = nil) {
+    public init(endpoint: RelayEndpoint, deviceToken: String?, transport: any HTTPTransport = URLSessionTransport(), timeout: TimeInterval = 20, voiceTurnPolicy: VoiceTurnPolicy = VoiceTurnPolicy(), voiceAccessToken: String? = nil, disclosedVoiceProvider: String? = nil) {
         self.endpoint = endpoint
         self.deviceToken = deviceToken
         self.transport = transport
         self.timeout = timeout
         self.voiceTurnPolicy = voiceTurnPolicy
         self.voiceAccessToken = voiceAccessToken
+        self.disclosedVoiceProvider = disclosedVoiceProvider
     }
 
     // MARK: Endpoints
@@ -224,6 +226,10 @@ public struct RelayClient: Sendable {
     /// `GET /healthz` (認証不要)
     public func health() async throws -> HealthResponse {
         try await perform("GET", ["healthz"], authorized: false)
+    }
+
+    public func voiceDisclosure() async throws -> VoiceAIDisclosure {
+        try await perform("GET", ["v1", "voice", "disclosure"])
     }
 
     // MARK: Durable voice turns
@@ -420,6 +426,9 @@ public struct RelayClient: Sendable {
         }
         if segments.last == "call", let voiceAccessToken {
             request.setValue(voiceAccessToken, forHTTPHeaderField: "X-Oyobidashi-Voice-Token")
+        }
+        if endpoint.isOfficialCloud, segments.last == "call", disclosedVoiceProvider == "anthropic-linked" {
+            request.setValue("anthropic-linked", forHTTPHeaderField: "X-Oyobidashi-Voice-Provider")
         }
         if let bodyData {
             request.httpBody = bodyData

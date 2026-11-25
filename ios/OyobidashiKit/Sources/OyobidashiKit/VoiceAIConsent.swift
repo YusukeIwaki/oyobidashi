@@ -5,7 +5,7 @@ import Foundation
 // 文字・選択肢での回答はこの会話用AIを通らないので、同意の対象ではない。
 // 画面には送るものだけを書き、送らないものの列挙はしない。
 
-/// 接続先が `GET /healthz` の `voice_ai` で示す、音声会話の送信先。
+/// 接続先が示す音声会話の送信先。公式クラウドではペアリング後にアカウント別の送信先を確認する。
 public struct VoiceAIDisclosure: Decodable, Equatable, Sendable {
     /// 未知の値も保持する。画面では名前を出さず、同意の照合にだけ使う。
     public let provider: String?
@@ -20,7 +20,7 @@ public struct VoiceAIDisclosure: Decodable, Equatable, Sendable {
     /// 画面に出す送信先の名前。
     public var recipientName: String {
         switch provider {
-        case "anthropic": return "Anthropic"
+        case "anthropic", "anthropic-linked": return "Anthropic"
         case "meta": return "Meta"
         case "claude-code": return "接続先のMacで設定されたClaude Code（Anthropic）"
         default: return "接続先で設定された第三者のAIサービス"
@@ -32,10 +32,14 @@ public struct VoiceAIDisclosure: Decodable, Equatable, Sendable {
 
     /// 同意の前に見せる説明。何を・どこへ・何のために送るかを先に書く。
     public var paragraphs: [String] {
-        [
+        var contents = [
             "通話に音声で応答すると、話した内容を文字に変換し、エージェントからの質問・補足・選択肢と会話の履歴とともに、\(recipientName)へ送信します。",
             "送信した内容は、通話での返答の生成と、エージェントへ伝える回答の要約に使われます。音声そのものは送信しません。音声を文字に変換するため、Appleが音声を処理する場合があります。",
         ]
+        if provider == "anthropic-linked" {
+            contents.append("Claude APIの利用分は、連携したClaude Consoleの組織にAnthropicから直接請求されます。")
+        }
+        return contents
     }
 }
 

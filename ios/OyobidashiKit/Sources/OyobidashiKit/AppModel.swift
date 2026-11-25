@@ -198,6 +198,14 @@ public final class AppModel: AnswerSubmitting {
     public func reviewVoiceAIConsent() async {
         guard let credentials else { return }
         let record = voiceAIConsentStore.load()
+        if credentials.endpoint.isOfficialCloud, let client,
+           let disclosure = try? await client.voiceDisclosure(),
+           self.credentials == credentials {
+            hasVoiceAIConsent = record?.covers(credentials.endpoint, disclosure: disclosure) == true
+            if !hasVoiceAIConsent { voiceAIReview = disclosure }
+            else { voiceAIReview = nil }
+            return
+        }
         if record?.covers(credentials.endpoint) != true {
             hasVoiceAIConsent = false
             let disclosure = await voiceAIDisclosure(for: credentials.endpoint)
@@ -503,7 +511,9 @@ public final class AppModel: AnswerSubmitting {
         guard let credentials else { return .unauthorized }
         do {
             let voiceToken = (body.event == .answer || body.event == .turn) ? try await voiceAccessProvider?(credentials) : nil
-            let activeClient = RelayClient(endpoint: credentials.endpoint, deviceToken: credentials.deviceToken, transport: transport, voiceTurnPolicy: voiceTurnPolicy, voiceAccessToken: voiceToken)
+            let consent = voiceAIConsentStore.load()
+            let provider = hasVoiceAIConsent && consent?.covers(credentials.endpoint) == true ? consent?.provider : nil
+            let activeClient = RelayClient(endpoint: credentials.endpoint, deviceToken: credentials.deviceToken, transport: transport, voiceTurnPolicy: voiceTurnPolicy, voiceAccessToken: voiceToken, disclosedVoiceProvider: provider)
             let resp = try await activeClient.callAction(requestID: requestID, body: body)
             guard self.credentials == credentials else { return .failed(.cancelled) }
             if isPaired {
@@ -527,7 +537,11 @@ public final class AppModel: AnswerSubmitting {
     }
 
     public func answerCall(requestID: String) async -> CallActionOutcome {
-        await performCallAction(requestID: requestID, body: CallEventBody(event: .answer))
+        if credentials?.endpoint.isOfficialCloud == true {
+            await reviewVoiceAIConsent()
+            guard hasVoiceAIConsent else { return .failed(.voiceAIConsentRequired) }
+        }
+        return await performCallAction(requestID: requestID, body: CallEventBody(event: .answer))
     }
     public func declineCall(requestID: String) async -> CallActionOutcome {
         await performCallAction(requestID: requestID, body: CallEventBody(event: .decline))

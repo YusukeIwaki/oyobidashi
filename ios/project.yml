@@ -27,8 +27,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.oyobidashi.ios
         PRODUCT_NAME: Oyobidashi
-        MARKETING_VERSION: "1.0.2"
-        CURRENT_PROJECT_VERSION: "10"
+        MARKETING_VERSION: "1.0.3"
+        CURRENT_PROJECT_VERSION: "11"
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: NO
@@ -86,8 +86,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.oyobidashi.ios.NotificationService
-        MARKETING_VERSION: "1.0.2"
-        CURRENT_PROJECT_VERSION: "10"
+        MARKETING_VERSION: "1.0.3"
+        CURRENT_PROJECT_VERSION: "11"
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: NO
         SKIP_INSTALL: YES
