@@ -22,6 +22,7 @@ public enum RelayError: Error, Equatable, Sendable {
     case voiceAIConsentRequired
     case turnFailed
     case turnCancelled
+    case voiceHandoff
     /// The server may have accepted the utterance. Reuse its ID when recovering.
     case turnPending
     case idempotencyConflict
@@ -52,6 +53,7 @@ public enum RelayError: Error, Equatable, Sendable {
         case "turn_in_progress": return .turnInProgress
         case "idempotency_conflict": return .idempotencyConflict
         case "call_ended": return .turnCancelled
+        case "voice_handoff": return .voiceHandoff
         case "conversation_failed", "voice_unavailable", "turn_failed": return .turnFailed
         default: break
         }
@@ -129,6 +131,8 @@ public enum RelayError: Error, Equatable, Sendable {
             return "音声の応答を取得できませんでした。もう一度送信するか、文字で返信できます"
         case .turnCancelled:
             return "通話が終了しました。必要であれば文字で返信してください"
+        case .voiceHandoff:
+            return "残りの質問に回答してください"
         case .turnPending:
             return "発話の処理結果を確認できませんでした。入力内容は保存されています。通信が戻ったら再確認するか、文字で返信してください"
         case .idempotencyConflict:

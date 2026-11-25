@@ -48,6 +48,9 @@ struct SettingsView: View {
                 if isOyobidashiCloud {
                     Section("音声通話") {
                         Link("接続済みアプリと音声設定", destination: URL(string: "https://api.oyobidashi.me/oauth/connections")!)
+                        if !model.hasVoiceAIConsent {
+                            Button("音声の送信先を確認") { Task { await model.reviewVoiceAIConsent(force: true) } }
+                        }
                     }
                 }
                 PermissionSettingsView()

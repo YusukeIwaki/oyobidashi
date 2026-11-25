@@ -117,6 +117,8 @@ class AppGraph(private val app: Application) {
     private var callReconcileJob: Job? = null
 
     private var foreground = false
+    private var callScreenVisible = false
+    private val receivesLiveUpdates: Boolean get() = foreground || callScreenVisible
 
     val directReply = DirectReplyHandler(
         api = { _session.value?.api },
@@ -161,7 +163,7 @@ class AppGraph(private val app: Application) {
         callReconcileJob = scope.launch {
             repository.state.collect { callManager.reconcile(it.requests) }
         }
-        if (foreground) {
+        if (receivesLiveUpdates) {
             events.start()
             scope.launch { repository.refresh() }
         } else {
@@ -309,7 +311,18 @@ class AppGraph(private val app: Application) {
             syncPushToken()
             syncPresence()
             billingManager.refresh()
-        } else {
+        } else if (!receivesLiveUpdates) {
+            current.events.stop()
+        }
+    }
+
+    fun setCallScreenVisible(visible: Boolean) {
+        callScreenVisible = visible
+        val current = _session.value ?: return
+        if (visible) {
+            current.events.start()
+            scope.launch { current.repository.refresh() }
+        } else if (!receivesLiveUpdates) {
             current.events.stop()
         }
     }
@@ -317,7 +330,7 @@ class AppGraph(private val app: Application) {
     /** ネットワークが戻った (Wi‑Fi に繋がった等): バックオフを待たずに再接続する。 */
     private fun onNetworkAvailable() {
         val current = _session.value ?: return
-        if (!foreground) return
+        if (!receivesLiveUpdates) return
         current.events.reconnectNow()
         scope.launch { current.repository.refresh() }
         syncPresence()

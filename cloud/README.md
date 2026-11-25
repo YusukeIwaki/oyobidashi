@@ -48,10 +48,9 @@ bun run --cwd cloud worker
 | `PUSH_CONCURRENCY` | LLMとは独立したPush同時実行上限。既定4 |
 | `MAX_SOCKETS` | 1APIのWebSocket／回答待ち上限。既定10000。実測の収容数ではありません |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | Anthropicの会話判断。キーはworkerに、モデル名はAPIとworkerに設定 |
-| `VOICE_PROVIDER` | APIとworker共通。`anthropic`（既定）または `meta` |
-| `MODEL_API_KEY`, `META_MODEL` | Metaの会話判断。キーはworkerに、モデル名はAPIとworkerに設定 |
-| `VOICE_MODEL_FREE` | 公式環境で未購読の利用者に使うモデル名。APIとworkerに同じ値を設定。空または標準と同じなら全員が標準モデルを使用 |
-| `VOICE_STANDARD_TRAINING`, `VOICE_FREE_TRAINING` | 実際に使用する各モデルの学習利用条件。APIとworkerに同じ値を設定。`1`は学習利用の可能性あり、`0`はなし、空は不明。FREEも標準モデルを使う場合は標準側の値が適用される。公式環境で`VOICE_MODEL_FREE`を使い、`VOICE_FREE_TRAINING`が`0`でないとき、FREEの利用者に入力制限と連携時の同意が適用される |
+| `FREE_AI_PROVIDER`, `PLUS_AI_PROVIDER` | プランの提供元を `meta`、`gemini`、`claude` から選ぶ。APIとworkerに同じ値を設定 |
+| `META_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` | 選んだモデルのAPI認証。workerにのみ設定。Gemini APIキーには有料プロジェクトを使用 |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | GeminiをVertex AI経由で使う場合のworker専用の秘密変数。JSONのプロジェクトで推論する |
 | `VOICE_REQUIRE_DEVICE_PROOF` | APIとworker共通。セルフホストでApp Attest／Play Integrityを必須にする場合は`1`。公式環境では常に必須 |
 | `VOICE_APPLE_TEAM_ID`, `VOICE_APPLE_BUNDLE_ID`, `VOICE_APP_ATTEST_ENVIRONMENTS` | API。クラウド音声のiOS端末証明。未設定時は`APPLE_TEAM_ID`、`APPLE_IAP_BUNDLE_ID`、`APPLE_APP_ATTEST_ENVIRONMENTS`を使う。課金の有効化は不要 |
 | `VOICE_ANDROID_PACKAGE_NAME`, `VOICE_GOOGLE_SERVICE_ACCOUNT_JSON` | API。クラウド音声のAndroid端末証明。未設定時はGoogle Play課金の同名設定を使う。アプリ側にはPlay Integrity用Cloud Project Numberも必要 |
@@ -78,11 +77,13 @@ bun run --cwd cloud worker
 
 異常利用による停止条件は、1分に異なる発話IDを30件、または5分に2000文字超の発話3件です。停止記録に期限や利用者向け解除APIはありません。Firebase UIDを新規作成できる状態では、新しいアカウントまで恒久的に阻止するものではありません。
 
-Metaのキー用変数名は`MODEL_API_KEY`です。Muse Sparkを使う場合は、APIとworkerに`VOICE_PROVIDER=meta`と`META_MODEL=muse-spark-1.2`、workerに`MODEL_API_KEY`を設定します。キーは[Meta Model API](https://dev.meta.ai/)で発行し、RailwayのVariablesから保存してください。接続先は公式の`https://api.meta.ai/v1/messages`に固定し、Bearer認証で送信します。推論の深さをmediumにし、JSONスキーマと既存の業務検証の両方で応答を検査します。キーが未設定でも他社のキーへ自動フォールバックしません。[公式Messages仕様](https://dev.meta.ai/docs/protocols/messages)
+FREEでMuse Ember Standard、PLUSでGemini 3.5 Flash-Liteを使う設定は、APIとworkerに`FREE_AI_PROVIDER=meta`と`PLUS_AI_PROVIDER=gemini`です。workerには`META_API_KEY`と、Gemini用の`GOOGLE_SERVICE_ACCOUNT_JSON`または`GEMINI_API_KEY`のどちらか一方を設定します。Vertex AIは課金とAPIを有効にし、サービスアカウントに`aiplatform.endpoints.predict`を付与します。モデル名と推論設定は提供元ごとにコードで選びます。通話に対応するアプリが送信先を確認してから設定を切り替えてください。[Vertex AIのアクセス制御](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/access-control)
 
 過去にMetaプロバイダーを異なるリージョンから検証しました。Singaporeの当該workerからは`404 model_not_found`でしたが、同じキーで日本のMacからは成功しました。workerを米国西部へ移し、実際の会話判断・回答要約・お礼の取得に成功しています。送信元や配信経路による差と考えられますが、Singapore全体の利用可否を断定するものではありません。実iPhoneでも、クラウド経由の着信・音声認識・確認質問への再回答・お礼の読み上げ・自動終話を確認しました。[検証記録](../docs/VALIDATION.md)
 
 2026-11-25の再検証では、同じ本番キーで米国西部・東部の通話モデルがHTTP 404を返し、Singaporeでは標準版とContributor版の通話モデルが応答しました。本番workerをSingaporeへ移し、複数の回答を一つの発話から保存して残りをテキストで完了する処理を検証しました。リージョンを変えた際は、モデル一覧とあわせて本番設定のモデルへの実際のリクエストを確認してください。
+
+両方のプラン設定が空の場合は、既存の`VOICE_PROVIDER`、`VOICE_MODEL_FREE`と関連する設定で稼働します。既存の公式環境ではMetaのキーを`MODEL_API_KEY`から読み取れるため、切り替えの前後に認証の互換性を保てます。
 
 ### サブスクリプション
 

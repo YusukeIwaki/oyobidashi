@@ -245,7 +245,8 @@ class CallService : Service() {
         var guardReleased = false
         return try {
             graph.session.value?.repository?.flushVoiceDraft(body.turnId)
-            val res = client.postCall(reqId, body)
+            val provider = graph.callManager.consentedVoiceProvider(reqId, cId)
+            val res = client.postCall(reqId, body.copy(voiceProvider = provider))
             graph.callManager.finishVoiceTurn(reqId, res.isResolved)
             guardReleased = true
             graph.session.value?.repository?.completeVoiceTurn(reqId, body.turnId)
@@ -261,7 +262,7 @@ class CallService : Service() {
                     null
                 }
                 e is RelayException.VoiceTurn && e.state == "cancelled" ||
-                    e is RelayException.Api && e.code in listOf(ErrorCode.CALL_ENDED, ErrorCode.CALL_CLAIMED) -> {
+                    e is RelayException.Api && e.code in listOf(ErrorCode.CALL_ENDED, ErrorCode.CALL_CLAIMED, ErrorCode.VOICE_HANDOFF) -> {
                     try {
                         graph.session.value?.repository?.applyRequest(client.getRequest(reqId))
                     } catch (_: RelayException) { }

@@ -221,6 +221,11 @@ export class JobWorker {
       // Checked per turn, like the plan: a subscription that lapses mid-call must not
       // send an owner's words to the restricted model before they accepted its terms.
       const linked = await this.service.linkedVoice(tx, r);
+      if (!linked && !(await this.service.samePlanCall(tx, r.call))) {
+        await this.service.handoffPlanCall(tx, r);
+        await this.done(tx, current);
+        return null;
+      }
       if (linked === false || (linked && (!this.options.linkedConversation || current.attempts > 1)) ||
           (await this.service.inputConsentMissing(tx))) {
         await this.service.endCall(tx, r, "failed", true);
@@ -235,11 +240,10 @@ export class JobWorker {
       return {
         r,
         t,
-        // Decided per turn: a subscription that starts or lapses mid-call takes effect at once.
         linked: !!linked,
         conversation: linked ? this.options.linkedConversation?.(linked) :
-          this.options.freeConversation &&
-          !(await this.service.hasPlus(tx))
+          r.call.voice_plan === "free" || (!r.call.voice_plan &&
+            this.options.freeConversation && !(await this.service.hasPlus(tx)))
             ? this.options.freeConversation
             : this.options.conversation,
         call: {
@@ -278,6 +282,12 @@ export class JobWorker {
         return;
       }
       const now = this.service.now();
+      const changedPlan = !!r.call.voice_plan && !(await this.service.samePlanCall(tx, r.call));
+      if (changedPlan && (error || !result || signal.aborted || t.deadline <= now)) {
+        await this.service.handoffPlanCall(tx, r);
+        await this.done(tx, current);
+        return;
+      }
       if (!input.linked && signal.aborted && signal.reason === "shutdown" && t.deadline > now) {
         current.state = "ready";
         current.available = now;
@@ -323,18 +333,22 @@ export class JobWorker {
         return;
       }
       t.state = "completed";
-      t.reply = result.reply;
+      t.reply = changedPlan && !result.resolved ? "残りの質問に回答してください。" : result.reply;
       t.resolved = result.resolved;
       if ("itemAnswers" in result) {
         r.item_answers = result.itemAnswers;
         if (result.handoff) t.end_call = true;
+      }
+      if (changedPlan && !result.resolved) {
+        t.end_call = true;
+        r.call.end_call = true;
       }
       t.error = null;
       await tx.put("turn", t.id, t, this.service.now() + 30 * 86400_000);
       r.call.turn = turnView(t);
       r.call.transcript = boundedTranscript([
         ...input.call.transcript,
-        { role: "assistant", text: result.reply },
+        { role: "assistant", text: t.reply },
       ]);
       r.call.updated_at = iso(now);
       if (result.resolved) {

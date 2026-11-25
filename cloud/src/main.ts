@@ -3,7 +3,7 @@ import { firebaseVerifier } from "./auth.ts";
 import { RedisWakeBus } from "./bus.ts";
 import { cloudConfig, OFFICIAL_CLOUD_ORIGIN, requiresVoiceProof } from "./config.ts";
 import { PostgresDatabase } from "./postgres.ts";
-import { apiConversation, configuredConversations, voiceModels } from "./provider.ts";
+import { apiConversation, configuredConversations, configuredPlanConversations, planVoiceProviders, voiceModels } from "./provider.ts";
 import { loadClaudePlatform } from "./claude-platform.ts";
 import { ClaudeTokenWorker } from "./claude-tokens.ts";
 import { ClaudeBilling } from "./claude-billing.ts";
@@ -54,7 +54,11 @@ export async function main(
   const mcpReview = role === "api" && official
     ? loadMcpReviewAuth(process.env.MCP_REVIEW_FIREBASE, config.projectId)
     : undefined;
-  const models = voiceModels(process.env, official);
+  const plans = planVoiceProviders(process.env);
+  const legacyModels = plans ? undefined : voiceModels(process.env, official);
+  const conversations = role === "worker" ? (plans
+    ? configuredPlanConversations(plans, process.env)
+    : configuredConversations(legacyModels!)) : undefined;
   const appleSandboxReviewUids = official ? loadAppleSandboxReviewUids(process.env) : null;
   const plusGrantUids = loadPlusGrantUids(process.env);
   const reviewPortal = role === "api" && appleSandboxReviewUids
@@ -87,11 +91,12 @@ export async function main(
   }
   const bus = new RedisWakeBus(config.redisUrl),
     service = new CloudService(db, bus);
-  service.voiceTrainingPolicy = models.training;
+  service.voiceTrainingPolicy = legacyModels?.training ?? { free: false, plus: false };
   service.appleSandboxReviewUids = appleSandboxReviewUids;
   service.plusGrantUids = plusGrantUids;
-  service.freeInputRestricted = models.freeInputRestricted;
-  service.voiceProvider = models.provider;
+  service.freeInputRestricted = legacyModels?.freeInputRestricted ?? false;
+  service.voiceProvider = legacyModels?.provider ?? (plans && plans.free === plans.plus ? plans.free : null);
+  service.planVoiceProviders = plans;
   service.voiceProofRequired = voiceProofRequired;
   const claude = official ? loadClaudePlatform(process.env) : undefined;
   const claudePlatform = claude?.platform;
@@ -138,8 +143,6 @@ export async function main(
           claude?.signer,
         )
       : null;
-  const conversations =
-    role === "worker" ? configuredConversations(models) : undefined;
   const worker =
     role === "worker"
       ? new JobWorker(service, {

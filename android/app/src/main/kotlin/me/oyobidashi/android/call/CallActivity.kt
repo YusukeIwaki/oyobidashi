@@ -48,13 +48,15 @@ import me.oyobidashi.android.graph
 import me.oyobidashi.android.ui.MainActivity
 import me.oyobidashi.android.ui.OyobidashiTheme
 import me.oyobidashi.android.ui.Texts
+import me.oyobidashi.android.core.VoiceRecipient
 
 /**
  * 着信・通話中の全画面 UI。CallStyle 通知の応答・拒否・フルスクリーンから開く。
  * 応答はマイク権限を確認してから [CallManager.answer] する。
  */
 class CallActivity : ComponentActivity() {
-    private var pendingAnswer: Pair<String, String>? = null
+    private data class PendingAnswer(val requestId: String, val callId: String, val acceptedProvider: String?)
+    private var pendingAnswer: PendingAnswer? = null
     private var displayedRequestId by mutableStateOf("")
     private var displayedCallId by mutableStateOf("")
 
@@ -62,9 +64,9 @@ class CallActivity : ComponentActivity() {
         val pending = pendingAnswer
         pendingAnswer = null
         if (granted && pending != null) {
-            graph.callManager.answer(pending.first, pending.second)
+            graph.callManager.answer(pending.requestId, pending.callId, pending.acceptedProvider)
         } else if (pending != null) {
-            graph.callManager.onServiceError(pending.first, pending.second, "通話にはマイクの権限が必要です")
+            graph.callManager.onServiceError(pending.requestId, pending.callId, "通話にはマイクの権限が必要です")
         }
     }
 
@@ -86,7 +88,7 @@ class CallActivity : ComponentActivity() {
                 CallScreen(
                     requestId = displayedRequestId,
                     callId = displayedCallId,
-                    onAnswer = { r, c -> requestAnswer(r, c) },
+                    onAnswer = { r, c, provider -> requestAnswer(r, c, provider) },
                     onDecline = { r, c ->
                         graph.callManager.decline(r, c)
                         finish()
@@ -104,6 +106,16 @@ class CallActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        graph.setCallScreenVisible(true)
+    }
+
+    override fun onStop() {
+        graph.setCallScreenVisible(false)
+        super.onStop()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -137,11 +149,13 @@ class CallActivity : ComponentActivity() {
         }
     }
 
-    private fun requestAnswer(reqId: String, callId: String) {
+    private fun requestAnswer(reqId: String, callId: String, acceptedProvider: String? = null) {
+        val state = graph.callManager.uiState.value?.takeIf { it.requestId == reqId && it.callId == callId }
+        if (state?.voiceConsentRequired == true && acceptedProvider != state.voiceProvider) return
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            graph.callManager.answer(reqId, callId)
+            graph.callManager.answer(reqId, callId, acceptedProvider)
         } else {
-            pendingAnswer = reqId to callId
+            pendingAnswer = PendingAnswer(reqId, callId, acceptedProvider)
             micPermission.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
@@ -169,7 +183,7 @@ class CallActivity : ComponentActivity() {
 private fun CallScreen(
     requestId: String,
     callId: String,
-    onAnswer: (String, String) -> Unit,
+    onAnswer: (String, String, String?) -> Unit,
     onDecline: (String, String) -> Unit,
     onHangup: (String, String) -> Unit,
     onRetry: (String, String) -> Unit,
@@ -248,6 +262,21 @@ private fun CallScreen(
                     }
                     return@Column
                 }
+                if (state.voiceProvider == "anthropic-linked") {
+                    Text(
+                        "通話の文字起こしと質問はAnthropicに送信されます。Claude APIの利用分は連携した組織に請求されます。",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                val recipient = VoiceRecipient.fromProvider(state.voiceProvider)
+                if (recipient != null) {
+                    Text(
+                        if (state.voiceConsentRequired)
+                            "通話の文字起こしと質問・補足・選択肢・会話の履歴を${recipient.displayName}に送信します。"
+                        else "送信先  ${recipient.displayName}",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
                 state.error?.let {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                 }
@@ -256,9 +285,9 @@ private fun CallScreen(
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                         Button(
-                            onClick = { onAnswer(state.requestId, state.callId) },
+                            onClick = { onAnswer(state.requestId, state.callId, recipient?.provider) },
                             modifier = Modifier.weight(1f),
-                        ) { Text("応答") }
+                        ) { Text(if (state.voiceConsentRequired) "同意して応答" else "応答") }
                         OutlinedButton(
                             onClick = { onDecline(state.requestId, state.callId) },
                             modifier = Modifier.weight(1f),

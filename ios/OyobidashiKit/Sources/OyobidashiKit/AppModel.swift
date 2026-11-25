@@ -99,6 +99,8 @@ public final class AppModel: AnswerSubmitting {
     /// 同意の確認が必要なときの送信先。ペアリング済みで同意の記録がない (アプリ更新後など)、
     /// または接続先の送信先が変わった場合に入る。
     public private(set) var voiceAIReview: VoiceAIDisclosure?
+    public private(set) var voiceHandoffRequestID: String?
+    @ObservationIgnored private var deferredVoiceAIReview: VoiceAIDisclosure?
     public let store: RequestListStore
     public let drafts: DraftStore
     public let callReconciler = CallReconciler()
@@ -191,25 +193,29 @@ public final class AppModel: AnswerSubmitting {
         voiceAIConsentStore.save(disclosure.map { VoiceAIConsent(endpoint: endpoint, disclosure: $0, acceptedAt: now()) })
         hasVoiceAIConsent = disclosure != nil
         voiceAIReview = nil
+        deferredVoiceAIReview = nil
     }
 
     /// ペアリング済みの端末で、同意が今の接続先・送信先に対するものかを確かめる。
     /// 起動時と前面復帰時に呼ぶ。通話中には呼ばない。
-    public func reviewVoiceAIConsent() async {
+    public func reviewVoiceAIConsent(force: Bool = false) async {
         guard let credentials else { return }
+        if force { deferredVoiceAIReview = nil }
         let record = voiceAIConsentStore.load()
-        if credentials.endpoint.isOfficialCloud, let client,
+        if let client,
            let disclosure = try? await client.voiceDisclosure(),
            self.credentials == credentials {
             hasVoiceAIConsent = record?.covers(credentials.endpoint, disclosure: disclosure) == true
-            if !hasVoiceAIConsent { voiceAIReview = disclosure }
+            if !hasVoiceAIConsent { voiceAIReview = disclosure == deferredVoiceAIReview ? nil : disclosure }
             else { voiceAIReview = nil }
             return
         }
         if record?.covers(credentials.endpoint) != true {
             hasVoiceAIConsent = false
             let disclosure = await voiceAIDisclosure(for: credentials.endpoint)
-            if self.credentials == credentials, !hasVoiceAIConsent { voiceAIReview = disclosure }
+            if self.credentials == credentials, !hasVoiceAIConsent {
+                voiceAIReview = disclosure == deferredVoiceAIReview ? nil : disclosure
+            }
             return
         }
         // 送信先を確認できないときは、すでに受け取った同意をそのまま使う。
@@ -218,7 +224,7 @@ public final class AppModel: AnswerSubmitting {
         if record?.covers(credentials.endpoint, disclosure: disclosure) != true {
             voiceAIConsentStore.save(nil)
             hasVoiceAIConsent = false
-            voiceAIReview = disclosure
+            voiceAIReview = disclosure == deferredVoiceAIReview ? nil : disclosure
         }
     }
 
@@ -226,6 +232,15 @@ public final class AppModel: AnswerSubmitting {
     public func acceptVoiceAI(_ disclosure: VoiceAIDisclosure) {
         guard let credentials else { return }
         recordVoiceAIConsent(disclosure, for: credentials.endpoint)
+    }
+
+    public func deferVoiceAIConsent() {
+        deferredVoiceAIReview = voiceAIReview
+        voiceAIReview = nil
+    }
+
+    public func clearVoiceHandoff() {
+        voiceHandoffRequestID = nil
     }
 
     /// `POST /v1/pair` を呼び、成功したら接続情報を保存する。
@@ -307,6 +322,8 @@ public final class AppModel: AnswerSubmitting {
         voiceAIConsentStore.save(nil)
         hasVoiceAIConsent = false
         voiceAIReview = nil
+        deferredVoiceAIReview = nil
+        voiceHandoffRequestID = nil
         phase = .unpaired
         lastAnswerSubmission = nil
         signedOutReason = reason
@@ -471,6 +488,9 @@ public final class AppModel: AnswerSubmitting {
             case .endCall(let callID, let reqID, let reason):
                 if fallbackCallRequest?.id == reqID { fallbackCallRequest = nil }
                 incomingCallHandler?.handleCallEnded(callID: callID, requestID: reqID, reason: reason)
+                if requests.first(where: { $0.id == reqID })?.isVoiceHandoff == true {
+                    voiceHandoffRequestID = reqID
+                }
             case .none:
                 break
             }
@@ -492,6 +512,7 @@ public final class AppModel: AnswerSubmitting {
         case .endCall(let callID, let reqID, let reason):
             if fallbackCallRequest?.id == reqID { fallbackCallRequest = nil }
             incomingCallHandler?.handleCallEnded(callID: callID, requestID: reqID, reason: reason)
+            if request.isVoiceHandoff { voiceHandoffRequestID = reqID }
         case .none:
             break
         }
@@ -530,6 +551,11 @@ public final class AppModel: AnswerSubmitting {
             case .unauthorized:
                 signOut(reason: .unauthorized)
                 return .unauthorized
+            case .voiceHandoff where body.event == .answer || body.event == .turn:
+                if await refreshRequest(id: requestID)?.isVoiceHandoff == true {
+                    voiceHandoffRequestID = requestID
+                }
+                return .failed(relayError)
             default:
                 return relayError.isUnreachable ? .unreachable : .failed(relayError)
             }
@@ -537,10 +563,8 @@ public final class AppModel: AnswerSubmitting {
     }
 
     public func answerCall(requestID: String) async -> CallActionOutcome {
-        if credentials?.endpoint.isOfficialCloud == true {
-            await reviewVoiceAIConsent()
-            guard hasVoiceAIConsent else { return .failed(.voiceAIConsentRequired) }
-        }
+        await reviewVoiceAIConsent()
+        guard hasVoiceAIConsent else { return .failed(.voiceAIConsentRequired) }
         return await performCallAction(requestID: requestID, body: CallEventBody(event: .answer))
     }
     public func declineCall(requestID: String) async -> CallActionOutcome {
@@ -575,7 +599,7 @@ public final class AppModel: AnswerSubmitting {
             // A definitive failed/cancelled turn can be retried explicitly with a new ID.
             // Uncertain delivery retains its ID for GET recovery rather than duplicate POST.
             switch outcome {
-            case .failed(.turnFailed), .failed(.turnCancelled), .failed(.idempotencyConflict):
+            case .failed(.turnFailed), .failed(.turnCancelled), .failed(.voiceHandoff), .failed(.idempotencyConflict):
                 drafts.set(AnswerDraft(text: trimmed, usedVoice: true), for: requestID)
             default: break
             }
@@ -590,11 +614,12 @@ public final class AppModel: AnswerSubmitting {
 
     /// The response and WebSocket update may arrive in either order. The local voice owner
     /// finishes the acknowledgement before ending its own call UI.
-    public func finishVoiceCall(requestID: String) {
+    public func finishVoiceCall(requestID: String, handoff: Bool = false) {
         sendingVoiceRequests.remove(requestID)
         finishingVoiceRequests.remove(requestID)
         if let callID = store.request(id: requestID)?.call?.id { callReconciler.markEnded(callID: callID) }
         if fallbackCallRequest?.id == requestID { fallbackCallRequest = nil }
+        if handoff { voiceHandoffRequestID = requestID }
     }
 
     public func refreshPresence() async {

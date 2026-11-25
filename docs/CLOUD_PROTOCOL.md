@@ -404,6 +404,16 @@ warned or limited, and no API response changes for them.
 
 Model names stay deployment configuration and are never returned.
 
+### プランごとの音声送信先
+
+`FREE_AI_PROVIDER` と `PLUS_AI_PROVIDER` を設定した環境では、同じアカウントでもプランによって
+送信先が変わります。端末認証付きの `GET /v1/voice/disclosure` は現在の送信先を返します。
+着信時に `call.voice_plan` と `call.voice_provider` を記録するので、端末は表示した提供元について
+同意を受けた場合だけ `X-Oyobidashi-Voice-Provider` を応答と発話に付けます。
+提供元が異なる同意、未同意、または通話中に変わったプランは次のモデルへの送信を許可しません。
+`voice_handoff` と `call.end_call: true` の場合、アプリは保存済みの回答を表示して残りを入力できます。
+元の提供元に送信済みの発話は、結果を得られた場合に保存してから引き継ぎます。
+
 ### Claude Console の請求先連携（公式ホスト）
 
 `POST /oauth/claude/organization` はログイン済みの Firebase UID を管理者として組織を作ります。

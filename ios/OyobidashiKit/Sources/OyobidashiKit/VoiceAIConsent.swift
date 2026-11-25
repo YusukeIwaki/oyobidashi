@@ -22,6 +22,7 @@ public struct VoiceAIDisclosure: Decodable, Equatable, Sendable {
         switch provider {
         case "anthropic", "anthropic-linked": return "Anthropic"
         case "meta": return "Meta"
+        case "gemini": return "Google（Gemini）"
         case "claude-code": return "接続先のMacで設定されたClaude Code（Anthropic）"
         default: return "接続先で設定された第三者のAIサービス"
         }

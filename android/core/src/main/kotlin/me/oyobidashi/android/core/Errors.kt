@@ -11,6 +11,7 @@ enum class ErrorCode(val wire: String?) {
     TURN_IN_PROGRESS("turn_in_progress"),
     IDEMPOTENCY_CONFLICT("idempotency_conflict"),
     CALL_ENDED("call_ended"),
+    VOICE_HANDOFF("voice_handoff"),
     CALL_CLAIMED("call_claimed"),
     PAYLOAD_TOO_LARGE("payload_too_large"),
     RATE_LIMITED("rate_limited"),

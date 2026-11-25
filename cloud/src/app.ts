@@ -308,7 +308,7 @@ export class CloudApp {
         requireRole(p, "device");
         const device = p as Extract<Principal, { role: "device" }>;
         if (path === "/v1/voice/disclosure" && method === "GET" &&
-            requestOrigin(req) === OFFICIAL_CLOUD_ORIGIN)
+            (requestOrigin(req) === OFFICIAL_CLOUD_ORIGIN || this.service.planVoiceProviders))
           return json(200, await this.service.run(device, async tx => ({ provider: await this.service.voiceDisclosure(tx) })));
         if (!this.voice) throw missing();
         if (path === "/v1/voice" && method === "GET")

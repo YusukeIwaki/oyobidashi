@@ -305,7 +305,7 @@ public struct RelayClient: Sendable {
                     // Completion and polling may straddle a hangup, cancellation
                     // or a text answer. Never resume listening from an old reply.
                     if !turn.resolved && (response.request.status != .pending || response.call?.state == .ended || response.request.call?.state == .ended) {
-                        throw RelayError.turnCancelled
+                        throw response.request.isVoiceHandoff ? RelayError.voiceHandoff : RelayError.turnCancelled
                     }
                     guard let reply = turn.reply, !reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                           turn.error == nil,
@@ -318,7 +318,7 @@ public struct RelayClient: Sendable {
                 case .failed:
                     throw RelayError.turnFailed
                 case .cancelled:
-                    throw RelayError.turnCancelled
+                    throw turn.error?.code == "voice_handoff" ? RelayError.voiceHandoff : RelayError.turnCancelled
                 }
             } catch {
                 let error = RelayError.wrap(error)
@@ -427,8 +427,10 @@ public struct RelayClient: Sendable {
         if segments.last == "call", let voiceAccessToken {
             request.setValue(voiceAccessToken, forHTTPHeaderField: "X-Oyobidashi-Voice-Token")
         }
-        if endpoint.isOfficialCloud, segments.last == "call", disclosedVoiceProvider == "anthropic-linked" {
-            request.setValue("anthropic-linked", forHTTPHeaderField: "X-Oyobidashi-Voice-Provider")
+        if segments.last == "call", let disclosedVoiceProvider,
+           ["meta", "gemini", "anthropic"].contains(disclosedVoiceProvider)
+            || (endpoint.isOfficialCloud && disclosedVoiceProvider == "anthropic-linked") {
+            request.setValue(disclosedVoiceProvider, forHTTPHeaderField: "X-Oyobidashi-Voice-Provider")
         }
         if let bodyData {
             request.httpBody = bodyData

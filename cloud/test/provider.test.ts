@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { generateKeyPairSync } from "node:crypto";
 import { runConversationTurn, SPOKEN_QUESTION_GUIDANCE } from "../../relay/src/conversation.ts";
 import type { Call, RequestObject } from "../../relay/src/types.ts";
 import {
@@ -474,6 +475,130 @@ describe("voice provider configuration", () => {
     expect(
       await conversation!.turn(request, call, new AbortController().signal),
     ).toEqual(resolved);
+  });
+});
+
+describe("Gemini Flash-Lite", () => {
+  const model = "gemini-3.5-flash-lite";
+  const project = "gemini-test";
+  const gemini = (send: typeof fetch) => apiConversation({
+    model,
+    vertex: { project, accessToken: async () => "GEMINI_SECRET" },
+    fetch: send,
+  });
+  const output = (result: unknown, finishReason = "STOP") => ({
+    candidates: [{ finishReason, content: { parts: [
+      { thought: true, text: "PRIVATE_REASONING" },
+      { text: JSON.stringify(result) },
+    ] } }],
+  });
+
+  test("requests constrained JSON from Vertex using only its bearer token", async () => {
+    const signal = new AbortController().signal;
+    const provider = gemini(fetcher(async (url, init) => {
+      expect(String(url)).toBe("https://aiplatform.googleapis.com/v1/projects/gemini-test/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent");
+      expect(init).toMatchObject({ method: "POST", redirect: "error", signal });
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBe("Bearer GEMINI_SECRET");
+      expect(headers.get("x-goog-api-key")).toBeNull();
+      expect(headers.get("x-api-key")).toBeNull();
+      const body = JSON.parse(String(init?.body));
+      expect(body.systemInstruction.parts[0].text).toContain(SPOKEN_QUESTION_GUIDANCE);
+      expect(JSON.parse(body.contents[0].parts[0].text)).toMatchObject({ question: request.question, transcript: call.transcript });
+      expect(body.generationConfig).toMatchObject({
+        responseMimeType: "application/json",
+        responseJsonSchema: { required: ["reply", "resolved", "answer"] },
+      });
+      expect(body.tools).toBeUndefined();
+      return json(output(resolved));
+    }));
+    expect(await provider.turn(request, call, signal)).toEqual(resolved);
+  });
+
+  test("passes Gemini item updates through grounding and applies the next question on the server", async () => {
+    const items = [
+      { id: "method", question: "配送方法は？", choices: ["通常便", "速達"] },
+      { id: "day", question: "発送日は？" },
+      { id: "label", question: "ラベルの版は？", ask_on_call: false },
+    ];
+    const provider = gemini(fetcher(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      expect(JSON.parse(body.contents[0].parts[0].text)).toMatchObject({ items, current_item_id: "method" });
+      expect(body.generationConfig.responseJsonSchema.required).toEqual(["updates", "clarification", "handoff"]);
+      return json(output({
+        updates: [
+          { item_id: "method", evidence: "速達", choice_index: 1 },
+          { item_id: "day", evidence: "木曜日" },
+          { item_id: "label", evidence: "第2版" },
+        ],
+        clarification: null, handoff: false,
+      }));
+    }));
+    const result = await runConversationTurn(provider, { ...request, items }, {
+      ...call, transcript: [{ role: "user", text: "速達で木曜日にお願いします" }],
+    }, new AbortController().signal);
+    expect(result).toMatchObject({
+      resolved: false,
+      handoff: true,
+      itemAnswers: [
+        { item_id: "method", text: "速達", choice_index: 1 },
+        { item_id: "day", text: "木曜日" },
+      ],
+    });
+  });
+
+  test("rejects unavailable, incomplete, or malformed Gemini results with the existing retry policy", async () => {
+    const send = (body: unknown, status = 200) => gemini(fetcher(async () => json(body, status)))
+      .turn(request, call, new AbortController().signal);
+    await failure(send({ promptFeedback: { blockReason: "SAFETY" } }), false);
+    await failure(send(output(resolved, "MAX_TOKENS")), false);
+    await failure(send(output({ invalid: true })), false);
+    await failure(send({ error: "SECRET" }, 403), false);
+    await failure(send({ error: "SECRET" }, 429), true);
+    await failure(send({ error: "SECRET" }, 503), true);
+  });
+
+  test("refuses missing Gemini credentials and model IDs from another provider", () => {
+    expect(configuredConversation({
+      VOICE_PROVIDER: "gemini", GEMINI_MODEL: model, MODEL_API_KEY: "META_SECRET",
+    })).toBeUndefined();
+    expect(() => configuredConversations(voiceModels({
+      VOICE_PROVIDER: "gemini", GEMINI_MODEL: model, GEMINI_VERTEX_PROJECT: project,
+      GEMINI_VERTEX_SERVICE_ACCOUNT_JSON: JSON.stringify({
+        client_email: "test@example.com", private_key: "unused", project_id: project,
+      }),
+      VOICE_MODEL_FREE: "muse-spark-1.3-contributor",
+    }, true))).toThrow("invalid Gemini model ID");
+  });
+
+  test("exchanges service account credentials only with Google and shares the token across turns", async () => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    let tokenRequests = 0;
+    let turns = 0;
+    const provider = configuredConversation({
+      VOICE_PROVIDER: "gemini", GEMINI_MODEL: model, GEMINI_VERTEX_PROJECT: project,
+      GEMINI_VERTEX_SERVICE_ACCOUNT_JSON: JSON.stringify({
+        client_email: "test@example.com", private_key: privateKey.export({ type: "pkcs8", format: "pem" }),
+        project_id: project, token_uri: "https://untrusted.example/token",
+      }),
+    }, fetcher(async (url, init) => {
+      if (String(url) === "https://oauth2.googleapis.com/token") {
+        tokenRequests++;
+        expect(init?.redirect).toBe("error");
+        expect(String(init?.body)).toContain("assertion=");
+        return json({ access_token: "VERTEX_SECRET", expires_in: 3600 });
+      }
+      turns++;
+      expect(String(url)).toStartWith("https://aiplatform.googleapis.com/");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer VERTEX_SECRET");
+      return json(output(resolved));
+    }))!;
+    const signal = new AbortController().signal;
+    expect(await Promise.all([provider.turn(request, call, signal), provider.turn(request, call, signal)]))
+      .toEqual([resolved, resolved]);
+    expect(await provider.turn(request, call, signal)).toEqual(resolved);
+    expect(tokenRequests).toBe(1);
+    expect(turns).toBe(3);
   });
 });
 

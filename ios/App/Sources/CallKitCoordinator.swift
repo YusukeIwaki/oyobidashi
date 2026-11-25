@@ -52,7 +52,7 @@ final class CallKitCoordinator: NSObject, IncomingCallHandling {
             if handoff {
                 Task { _ = await self.model?.hangupCall(requestID: requestID) }
             }
-            self.model?.finishVoiceCall(requestID: requestID)
+            self.model?.finishVoiceCall(requestID: requestID, handoff: handoff)
             if let callID = self.uuidByCallID.first(where: { $0.value == self.activeCallUUID })?.key {
                 self.handleCallEnded(callID: callID, requestID: requestID, reason: handoff ? .remoteEnded : .resolved)
             } else {

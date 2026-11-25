@@ -30,11 +30,23 @@ struct RootView: View {
             router.showAnswerCompletion(submission)
             if scenePhase != .active { router.finishAnswerCompletion(submission) }
         }
+        .onChange(of: model.voiceHandoffRequestID) { _, requestID in
+            if scenePhase == .active, let requestID {
+                router.open(requestID: requestID)
+                model.clearVoiceHandoff()
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active, let submission = router.answerCompletion {
                 router.finishAnswerCompletion(submission)
             }
-            if phase == .active { Task { await model.reviewVoiceAIConsent() } }
+            if phase == .active {
+                if let requestID = model.voiceHandoffRequestID {
+                    router.open(requestID: requestID)
+                    model.clearVoiceHandoff()
+                }
+                Task { await model.reviewVoiceAIConsent() }
+            }
         }
         .task(id: model.credentials) { await model.reviewVoiceAIConsent() }
         // ディープリンクからのペアリングも、同意の画面を通る。
@@ -58,9 +70,9 @@ struct RootView: View {
             if let endpoint = model.credentials?.endpoint {
                 VoiceAIConsentView(
                     known: review.disclosure, endpoint: endpoint,
-                    acceptTitle: "同意する", declineTitle: "ペアリングを解除",
+                    acceptTitle: "同意する", declineTitle: "文字で利用する",
                     onAccept: { model.acceptVoiceAI($0) },
-                    onDecline: { Task { await model.unpair() } }
+                    onDecline: { model.deferVoiceAIConsent() }
                 )
                 .environment(model)
             }

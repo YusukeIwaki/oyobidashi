@@ -1,5 +1,6 @@
 import { ITEM_HANDOFF_TIMEOUT_MS, canAskItemsOnCall, itemAnswerSummary, itemCallOpening, parseRequestItems, submitItemAnswers } from "../../relay/src/request-items.ts";
 import { claudeTokensNeedRelink } from "./claude-tokens.ts";
+import type { PlanVoiceProviders, VoicePlan, VoiceProvider } from "./provider.ts";
 import { deliveryMode } from "../../relay/src/policy.ts";
 import { INPUT_CONSENT_MISSING_MESSAGE, INPUT_RESTRICTION_VERSION, type InputRestriction } from "./input-restriction.ts";
 import { PUSH_FIELDS, registrationField, freshPushRegistration, validPushClientId } from "../../relay/src/push/lifecycle.ts";
@@ -65,7 +66,8 @@ export class CloudService {
    * Where voice conversations are sent. Phones show it when pairing, which is
    * where the human permits sending their words to that third party.
    */
-  voiceProvider: "anthropic" | "meta" | null = null;
+  voiceProvider: VoiceProvider | null = null;
+  planVoiceProviders?: PlanVoiceProviders;
   /**
    * True only where FREE voice calls reach a model whose terms accept no personal
    * or confidential input (the hosted service). Never set for self-hosted use.
@@ -153,14 +155,30 @@ export class CloudService {
     }
   }
   async voiceDisclosure(tx: Transaction) {
-    return await tx.claudeAccess() ? "anthropic-linked" : this.voiceProvider;
+    if (await tx.claudeAccess()) return "anthropic-linked";
+    return this.planVoiceProviders ? this.planVoiceProviders[await this.voicePlan(tx)] : this.voiceProvider;
+  }
+  private async voicePlan(tx: Transaction): Promise<VoicePlan> {
+    return await this.hasPlus(tx) ? "plus" : "free";
+  }
+  /** An old or mismatched worker must never send a pinned call to its default provider. */
+  async samePlanCall(tx: Transaction, call: NonNullable<CloudRequest["call"]>) {
+    if (call.voice_provider === "anthropic-linked") return true;
+    if (!this.planVoiceProviders && !call.voice_plan) return true;
+    const plan = await this.voicePlan(tx);
+    return call.voice_plan === plan && this.planVoiceProviders?.[plan] === call.voice_provider;
+  }
+  async handoffPlanCall(tx: Transaction, request: CloudRequest) {
+    if (request.call) request.call.end_call = true;
+    await this.endCall(tx, request, "hangup", true);
+    await this.save(tx, request, "fallback");
   }
   /** Compare the request's original model choice with the owner's current selection. */
   async linkedVoice(tx: Transaction, request: CloudRequest): Promise<ClaudeCredentialRef | false | null> {
     const access = await tx.claudeAccess();
     const billing = access?.billing;
     const choice = await tx.get("claude_request", request.id);
-    if (!access && !choice && !request.call?.voice_provider) return null;
+    if (!access && !choice && request.call?.voice_provider !== "anthropic-linked") return null;
     if (!this.claudeBillingEnabled || !access || !billing || billing.disabled ||
         claudeTokensNeedRelink(access, this.now()) || (access.tokens?.retryAfter ?? 0) > this.now() ||
         choice?.organizationId !== access.organizationId || choice.grantId !== access.member.grantId ||
@@ -301,7 +319,7 @@ export class CloudService {
       if (t) {
         t.state = "cancelled";
         t.error = {
-          code: "call_ended",
+          code: c.end_call ? "voice_handoff" : "call_ended",
           message:
             "通話が終了しました。必要であればテキストで返信してください。",
         };
@@ -667,6 +685,8 @@ export class CloudService {
   }
   private async openCall(tx: Transaction, r: CloudRequest) {
     const now = iso(this.now());
+    const linked = await this.pinLinkedVoice(tx, r);
+    const plan = !linked && this.planVoiceProviders ? await this.voicePlan(tx) : undefined;
     r.call = {
       id: crypto.randomUUID(),
       request_id: r.id,
@@ -676,7 +696,8 @@ export class CloudService {
       started_at: now,
       updated_at: now,
       transcript: [],
-      ...(await this.pinLinkedVoice(tx, r) ? { voice_provider: "anthropic-linked" } : {}),
+      ...(linked ? { voice_provider: "anthropic-linked" as const } : {}),
+      ...(plan ? { voice_plan: plan, voice_provider: this.planVoiceProviders![plan] } : {}),
     };
   }
   envelope(r: CloudRequest, t?: Turn) {
@@ -734,8 +755,8 @@ export class CloudService {
     const c = r.call;
     if (!c || c.state === "ended")
       throw conflict(
-        "call_ended",
-        "通話は終了しました。テキストで返信できます。",
+        c?.end_call ? "voice_handoff" : "call_ended",
+        c?.end_call ? "残りの質問に回答してください。" : "通話は終了しました。テキストで返信できます。",
       );
     if (c.device_id && c.device_id !== deviceId)
       throw conflict("call_claimed", "call was answered on another device");
@@ -756,6 +777,12 @@ export class CloudService {
         await this.save(tx, r, "fallback");
         return { status: 409, body: { error: {
           code: "call_ended", message: "音声の送信先を確認できませんでした。文字で返信できます。",
+        } } };
+      }
+      if (!linked && (!(await this.samePlanCall(tx, c)) || (c.voice_plan && disclosedProvider !== c.voice_provider))) {
+        await this.handoffPlanCall(tx, r);
+        return { status: 409, body: { error: {
+          code: "voice_handoff", message: "残りの質問に回答してください。",
         } } };
       }
     }

@@ -25,6 +25,8 @@ x-cloud: &cloud
     # Optional HTTPS public origin for device-scoped notification previews.
     PUBLIC_URL: ${PUBLIC_URL:-}
     VOICE_REQUIRE_DEVICE_PROOF: ${VOICE_REQUIRE_DEVICE_PROOF:-0}
+    FREE_AI_PROVIDER: ${FREE_AI_PROVIDER:-}
+    PLUS_AI_PROVIDER: ${PLUS_AI_PROVIDER:-}
     VOICE_PROVIDER: ${VOICE_PROVIDER:-anthropic}
     ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
     META_MODEL: ${META_MODEL:-}
@@ -59,6 +61,9 @@ services:
     environment:
       <<: *cloud-environment
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      META_API_KEY: ${META_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${GOOGLE_SERVICE_ACCOUNT_JSON:-}
       MODEL_API_KEY: ${MODEL_API_KEY:-}
       FCM_SERVICE_ACCOUNT_JSON: ${FCM_SERVICE_ACCOUNT_JSON:-}
       APNS_KEY_PEM: ${APNS_KEY_PEM:-}

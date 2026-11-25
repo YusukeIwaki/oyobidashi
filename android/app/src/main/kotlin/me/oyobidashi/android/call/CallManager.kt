@@ -17,6 +17,7 @@ import me.oyobidashi.android.core.CallEventBody
 import me.oyobidashi.android.core.CallState
 import me.oyobidashi.android.core.CallTranscriptEntry
 import me.oyobidashi.android.core.DeliveryMode
+import me.oyobidashi.android.core.ErrorCode
 import me.oyobidashi.android.core.NotificationContent
 import me.oyobidashi.android.core.RelayApi
 import me.oyobidashi.android.core.RelayException
@@ -25,6 +26,7 @@ import me.oyobidashi.android.core.RequestStatus
 import me.oyobidashi.android.core.CallOutcome
 import me.oyobidashi.android.core.RequestNotifier
 import me.oyobidashi.android.core.RequestsRepository
+import me.oyobidashi.android.core.VoiceRecipient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -48,6 +50,8 @@ data class CallUiState(
     val awaitingReply: Boolean = false,
     val canRetryVoice: Boolean = false,
     val subject: String? = null,
+    val voiceProvider: String? = null,
+    val voiceConsentRequired: Boolean = false,
     val handoffToAnswer: Boolean = false,
 )
 
@@ -78,6 +82,7 @@ class CallManager(
         var agentName: String?,
         var question: String,
         var subject: String?,
+        val voiceProvider: String?,
         var transcript: List<CallTranscriptEntry>,
         var lastReply: String?,
         var error: String?,
@@ -87,6 +92,7 @@ class CallManager(
     )
 
     private val stoppedPreferences = context.getSharedPreferences("oyobidashi_call_history", Context.MODE_PRIVATE)
+    private val voiceConsent = context.getSharedPreferences("oyobidashi_voice_consent", Context.MODE_PRIVATE)
     private val stoppedCallIds = LinkedHashSet(stoppedPreferences.getStringSet("ended", emptySet()).orEmpty())
     private fun markStopped(id: String) {
         stoppedCallIds.add(id)
@@ -319,6 +325,7 @@ class CallManager(
             agentName = req.agent?.name,
             question = req.question,
             subject = req.subject,
+            voiceProvider = call.voiceProvider,
             transcript = call.transcript,
             lastReply = if (call.isActive) call.transcript.lastOrNull()?.takeIf { it.role == me.oyobidashi.android.core.CallRole.ASSISTANT }?.text else null,
             error = if (call.isActive) "通話が中断されました。再開するか、テキストで返信できます" else null,
@@ -404,11 +411,19 @@ class CallManager(
 
     // ---- 応答・拒否・切断 ----
 
-    fun answer(requestId: String, callId: String) {
-        scope.launch { doAnswer(requestId, callId) }
+    fun answer(requestId: String, callId: String, acceptedProvider: String? = null) {
+        scope.launch { doAnswer(requestId, callId, acceptedProvider) }
     }
 
-    private suspend fun doAnswer(requestId: String, callId: String) {
+    private fun consentRequired(provider: String?, deviceId: String? = myDeviceId()): Boolean =
+        VoiceRecipient.fromProvider(provider) != null &&
+            (deviceId == null || voiceConsent.getString(deviceId, null) != provider)
+
+    fun consentedVoiceProvider(requestId: String, callId: String): String? =
+        current?.takeIf { it.requestId == requestId && it.callId == callId }
+            ?.voiceProvider?.takeUnless { consentRequired(it) }
+
+    private suspend fun doAnswer(requestId: String, callId: String, acceptedProvider: String?) {
         val cur = current
         if (cur == null || cur.requestId != requestId || cur.callId != callId) {
             // 不明な通話への応答。最新を取り直して終わり (stale push 対策)。
@@ -416,6 +431,14 @@ class CallManager(
             return
         }
         if (cur.state == CallState.ACTIVE) return // 済み
+        val deviceId = myDeviceId()
+        if (consentRequired(cur.voiceProvider, deviceId)) {
+            if (deviceId == null || acceptedProvider != cur.voiceProvider) {
+                publish(cur)
+                return
+            }
+            voiceConsent.edit().putString(deviceId, acceptedProvider).apply()
+        }
         // マイク権限がなければ UI 側で求める。ここでは止めてエラーを出す。
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             cur.error = "通話にはマイクの権限が必要です"
@@ -438,7 +461,7 @@ class CallManager(
         cur.error = null
         publish(cur)
         val res = try {
-            client.postCall(requestId, CallEventBody(CallEvent.ANSWER))
+            client.postCall(requestId, CallEventBody(CallEvent.ANSWER, voiceProvider = consentedVoiceProvider(requestId, callId)))
         } catch (e: RelayException) {
             if (e.isUnauthorized) {
                 repository()?.handleUnauthorized() ?: onSignedOut()
@@ -450,6 +473,11 @@ class CallManager(
                 cleanupCurrent(silently = true)
                 regularNotifier.cancel(requestId)
                 refreshQuietly(requestId)
+                return
+            }
+            if (e is RelayException.Api && e.code in listOf(ErrorCode.CALL_ENDED, ErrorCode.VOICE_HANDOFF)) {
+                refreshQuietly(requestId)
+                if (current === cur) onRemoteEnded(cur, repository()?.state?.value?.find(requestId))
                 return
             }
             cur.error = if (e is RelayException.Network) {
@@ -579,7 +607,7 @@ class CallManager(
     private fun onRemoteEnded(cur: ActiveCall, latest: Request?) {
         val wasActive = cur.state == CallState.ACTIVE
         CallService.stop(context)
-        cleanupCurrent(silently = true)
+        cleanupCurrent(silently = true, handoffToAnswer = latest?.isItemAnswerHandoff == true)
         regularNotifier.cancel(cur.requestId)
         if (latest != null && latest.isPending) {
             // 通話は終わったが質問は残る (declined/hangup/missed/failed/cancel 後のフォールバック)。
@@ -720,7 +748,8 @@ class CallManager(
         scope.launch {
             val cur = current
             if (cur != null && cur.requestId == requestId && cur.callId == callId) {
-                cleanupCurrent(silently = true)
+                val latest = repository()?.state?.value?.find(requestId)
+                cleanupCurrent(silently = true, handoffToAnswer = latest?.isItemAnswerHandoff == true)
             }
             regularNotifier.cancel(requestId)
             if (postFailedEvent) {
@@ -740,6 +769,8 @@ class CallManager(
             agentName = cur.agentName,
             question = cur.question,
             subject = cur.subject,
+            voiceProvider = cur.voiceProvider,
+            voiceConsentRequired = consentRequired(cur.voiceProvider),
             state = cur.state,
             transcript = cur.transcript,
             lastReply = cur.lastReply,

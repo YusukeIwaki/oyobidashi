@@ -169,6 +169,8 @@ data class Call(
     val transcript: List<CallTranscriptEntry> = emptyList(),
     /** クラウドの最新ターン。LAN relay はこのフィールドを返さない。 */
     val turn: CallTurn? = null,
+    @SerialName("voice_provider") val voiceProvider: String? = null,
+    @SerialName("voice_plan") val voicePlan: String? = null,
     /** LAN の自動切断マーカー。クラウドでは turn.end_call に含まれる。 */
     @SerialName("end_call") val endCall: Boolean? = null,
 ) {
@@ -221,7 +223,8 @@ data class Request(
             call != null && call.isValid && call.isLive
 
     val isItemAnswerHandoff: Boolean get() =
-        isAnswerable && !items.isNullOrEmpty() && (call?.endCall == true || call?.turn?.endCall == true)
+        isAnswerable && (call?.voicePlan != null || !items.isNullOrEmpty()) &&
+            (call?.endCall == true || call?.turn?.endCall == true)
 
     /** 通話が終わってテキストにフォールバックした pending か (call ended + pending)。 */
     val isCallFallback: Boolean get() =
@@ -347,6 +350,7 @@ data class CallEventBody(
     @SerialName("async") val async: Boolean? = null,
     /** 端末内の復旧ヒント。ネットワークには送信しない。 */
     @kotlinx.serialization.Transient val resumeTurn: Boolean = false,
+    @kotlinx.serialization.Transient val voiceProvider: String? = null,
 )
 
 /** 未知・欠落の状態は成功へ丸めず、ターン待機側で拒否する。 */

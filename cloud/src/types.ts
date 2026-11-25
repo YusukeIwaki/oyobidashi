@@ -4,6 +4,7 @@ import type {
   Presence,
   RequestObject,
 } from "../../relay/src/types.ts";
+import type { VoicePlan, VoiceProvider } from "./provider.ts";
 
 export interface TurnView {
   end_call?: boolean;
@@ -17,7 +18,9 @@ export interface TurnView {
 export interface CloudCall extends Call {
   turn?: TurnView;
   turn_count?: number;
-  voice_provider?: "anthropic-linked";
+  voice_provider?: VoiceProvider | "anthropic-linked";
+  voice_plan?: VoicePlan;
+  end_call?: boolean;
 }
 export interface CloudRequest extends RequestObject {
   version: number;

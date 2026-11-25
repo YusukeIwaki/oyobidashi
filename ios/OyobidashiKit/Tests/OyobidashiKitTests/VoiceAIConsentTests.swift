@@ -36,6 +36,7 @@ final class VoiceAIConsentTests: XCTestCase {
     func testDisclosureNamesTheRecipientAndWhatIsSent() {
         XCTAssertEqual(VoiceAIDisclosure(provider: "anthropic").recipientName, "Anthropic")
         XCTAssertEqual(VoiceAIDisclosure(provider: "meta").recipientName, "Meta")
+        XCTAssertEqual(VoiceAIDisclosure(provider: "gemini").recipientName, "Google（Gemini）")
         XCTAssertTrue(VoiceAIDisclosure(provider: "claude-code").recipientName.contains("Claude Code"))
         // 知らない送信先の名前を推測で出さない。
         XCTAssertEqual(VoiceAIDisclosure(provider: "someone-new").recipientName, VoiceAIDisclosure.unknown.recipientName)
@@ -69,6 +70,7 @@ final class VoiceAIConsentTests: XCTestCase {
         XCTAssertFalse(consent(cloud, provider: "anthropic", version: VoiceAIConsent.currentVersion + 1).covers(cloud))
         XCTAssertTrue(record.covers(cloud, disclosure: VoiceAIDisclosure(provider: "anthropic")))
         XCTAssertFalse(record.covers(cloud, disclosure: VoiceAIDisclosure(provider: "meta")))
+        XCTAssertFalse(record.covers(cloud, disclosure: VoiceAIDisclosure(provider: "gemini")))
         // 送信先を確認できないだけなら、受け取った同意は有効のまま。
         XCTAssertTrue(record.covers(cloud, disclosure: .unknown))
         // 送信先を示さない接続先で同意した後に送信先が示されたら、取り直す。
@@ -157,6 +159,45 @@ final class VoiceAIConsentTests: XCTestCase {
         _ = await model.sendCallTurn(requestID: "req_1", text: "はい")
         // 送信されるのは発話そのものだけで、送信先の確認などは挟まらない。
         XCTAssertEqual(stub.requests.map { $0.url?.path }, ["/v1/requests/req_1/call"])
+        XCTAssertEqual(stub.requests.first?.value(forHTTPHeaderField: "X-Oyobidashi-Voice-Provider"), "meta")
+    }
+
+    func testProviderChangeOffersTextWithoutDiscardingThePairing() async throws {
+        try credentialStore.save(Credentials(endpoint: cloud, deviceToken: "kd_token", deviceID: "dev_01"))
+        consentStore.save(consent(cloud, provider: "meta"))
+        stub.on("GET", "/v1/voice/disclosure", status: 200, body: Data(#"{"provider":"gemini"}"#.utf8))
+        let model = makeModel()
+        await model.reviewVoiceAIConsent()
+        XCTAssertEqual(model.voiceAIReview?.recipientName, "Google（Gemini）")
+        XCTAssertFalse(model.hasVoiceAIConsent)
+        model.deferVoiceAIConsent()
+        await model.reviewVoiceAIConsent()
+        XCTAssertNil(model.voiceAIReview)
+        XCTAssertTrue(model.isPaired)
+        let refused = await model.sendCallTurn(requestID: "req_1", text: "はい")
+        XCTAssertEqual(refused, .failed(.voiceAIConsentRequired))
+        XCTAssertFalse(stub.requests.contains { $0.httpMethod == "POST" })
+        await model.reviewVoiceAIConsent(force: true)
+        XCTAssertEqual(model.voiceAIReview?.provider, "gemini")
+    }
+
+    func testHandoffFetchesTheRequestAndKeepsTheAnswersAlreadySaved() async throws {
+        try credentialStore.save(Credentials(endpoint: cloud, deviceToken: "kd_token", deviceID: "dev_01"))
+        consentStore.save(consent(cloud, provider: "gemini"))
+        stub.on("POST", "/v1/requests/req_1/call", status: 409,
+                body: Data(#"{"error":{"code":"voice_handoff"}}"#.utf8))
+        stub.on("GET", "/v1/requests/req_1", status: 200, body: Data("""
+            {"request":{"id":"req_1","question":"配送確認","status":"pending","created_at":"2026-11-25T00:00:00.000Z",
+            "delivery_mode":"text","items":[{"id":"route","question":"配送方法"},{"id":"day","question":"発送日"}],
+            "item_answers":[{"item_id":"route","status":"answered","text":"通常便","input_method":"voice"}],
+            "call":{"id":"call_1","state":"ended","end_call":true}}}
+            """.utf8))
+        let model = makeModel()
+        let outcome = await model.sendCallTurn(requestID: "req_1", text: "金曜日")
+        XCTAssertEqual(outcome, .failed(.voiceHandoff))
+        XCTAssertEqual(model.voiceHandoffRequestID, "req_1")
+        XCTAssertEqual(model.store.request(id: "req_1")?.itemAnswers?.first?.text, "通常便")
+        XCTAssertEqual(stub.requests.first?.value(forHTTPHeaderField: "X-Oyobidashi-Voice-Provider"), "gemini")
     }
 
     // MARK: 起動時: 既存のペアリングと、送信先の変更

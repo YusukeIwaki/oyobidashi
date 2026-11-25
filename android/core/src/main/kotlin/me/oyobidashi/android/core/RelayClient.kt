@@ -122,6 +122,8 @@ class RelayClient(
         val builder = newRequest(url("requests", id, "call"))
         if (body.event == CallEvent.ANSWER || body.event == CallEvent.TURN) {
             voiceTokenProvider?.token()?.let { builder.header("X-Oyobidashi-Voice-Token", it) }
+            body.voiceProvider?.takeIf { (it == "anthropic-linked" && isOfficialCloud) || VoiceRecipient.fromProvider(it) != null }
+                ?.let { builder.header("X-Oyobidashi-Voice-Provider", it) }
         }
         val request = builder.post(jsonBody(OyobidashiJson.encodeToString(CallEventBody.serializer(), body))).build()
         val exchange = executeExchange(request)

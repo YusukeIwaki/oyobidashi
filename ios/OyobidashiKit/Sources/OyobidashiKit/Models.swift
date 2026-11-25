@@ -457,6 +457,7 @@ public struct CallSession: Codable, Equatable, Sendable, Identifiable {
     public var transcript: [CallTranscriptEntry]
     /// Latest durable turn, also available after a WebSocket reconnect.
     public var turn: CallTurn?
+    public var endCall: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id, state, outcome, transcript, turn
@@ -464,9 +465,10 @@ public struct CallSession: Codable, Equatable, Sendable, Identifiable {
         case deviceID = "device_id"
         case startedAt = "started_at"
         case updatedAt = "updated_at"
+        case endCall = "end_call"
     }
 
-    public init(id: String, requestID: String, state: CallState, outcome: CallOutcome? = nil, deviceID: String? = nil, startedAt: Date, updatedAt: Date? = nil, transcript: [CallTranscriptEntry] = [], turn: CallTurn? = nil) {
+    public init(id: String, requestID: String, state: CallState, outcome: CallOutcome? = nil, deviceID: String? = nil, startedAt: Date, updatedAt: Date? = nil, transcript: [CallTranscriptEntry] = [], turn: CallTurn? = nil, endCall: Bool? = nil) {
         self.id = id
         self.requestID = requestID
         self.state = state
@@ -476,6 +478,7 @@ public struct CallSession: Codable, Equatable, Sendable, Identifiable {
         self.updatedAt = updatedAt ?? startedAt
         self.transcript = transcript
         self.turn = turn
+        self.endCall = endCall
     }
 
     public init(from decoder: Decoder) throws {
@@ -492,6 +495,7 @@ public struct CallSession: Codable, Equatable, Sendable, Identifiable {
         updatedAt = (try? c.decodeIfPresent(Date.self, forKey: .updatedAt)) ?? startedAt
         transcript = (try? c.decodeLossyArray(CallTranscriptEntry.self, forKey: .transcript)) ?? []
         turn = try c.decodeIfPresent(CallTurn.self, forKey: .turn)
+        endCall = try c.decodeIfPresent(Bool.self, forKey: .endCall)
     }
 
     public var isRinging: Bool { state == .ringing }
@@ -613,6 +617,7 @@ public struct AgentRequest: Codable, Equatable, Identifiable, Sendable {
 
     /// 回答を送れるか (question かつ pending)。未知の kind / status は回答不可とする。
     public var isAnswerable: Bool { kind == .question && status == .pending }
+    public var isVoiceHandoff: Bool { isAnswerable && (call?.endCall == true || call?.turn?.endCall == true) }
 
     public var incomingCallerName: String {
         CallPresentation.callerName(agentName: agent?.name, subject: subject, fallbackName: "エージェント")
