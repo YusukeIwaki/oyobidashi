@@ -75,7 +75,7 @@ export default defineRailway(() => {
     healthcheck: "/readyz",
     healthcheckTimeout: 120,
     preDeploy: "bun run cloud/src/main.ts migrate",
-    replicas: { "us-west2": 1 },
+    replicas: { "asia-southeast1-eqsg3a": 1 },
     deploy: {
       limitOverride: { containers: { cpu: 2, memoryBytes: 2_000_000_000 } },
       drainingSeconds: 60,

@@ -82,6 +82,8 @@ Metaのキー用変数名は`MODEL_API_KEY`です。Muse Sparkを使う場合は
 
 過去にMetaプロバイダーを異なるリージョンから検証しました。Singaporeの当該workerからは`404 model_not_found`でしたが、同じキーで日本のMacからは成功しました。workerを米国西部へ移し、実際の会話判断・回答要約・お礼の取得に成功しています。送信元や配信経路による差と考えられますが、Singapore全体の利用可否を断定するものではありません。実iPhoneでも、クラウド経由の着信・音声認識・確認質問への再回答・お礼の読み上げ・自動終話を確認しました。[検証記録](../docs/VALIDATION.md)
 
+2026-11-25の再検証では、同じ本番キーで米国西部・東部の通話モデルがHTTP 404を返し、Singaporeでは標準版とContributor版の通話モデルが応答しました。本番workerをSingaporeへ移し、複数の回答を一つの発話から保存して残りをテキストで完了する処理を検証しました。リージョンを変えた際は、モデル一覧とあわせて本番設定のモデルへの実際のリクエストを確認してください。
+
 ### サブスクリプション
 
 課金・購入の復元・自動同期は `https://api.oyobidashi.me` でのみ利用できます。公式APIでもストア商品を設定するまで課金は無効です。セルフホストと旧Railwayホストでは `GET /v1/billing` は `{"enabled":false}` を返します。セルフホストでは指定した標準モデルで通話でき、LLM APIやホスティングの費用は運営者が負担します。
@@ -109,7 +111,7 @@ railway config plan
 railway config apply
 ```
 
-Railway CLIは5.74.0で検証しています。本番へ設定を適用する前に、`railway config plan` で対象のサービスと変更項目を確認します。設定はSingaporeのAPI 1台・米国西部のworker 1台を初期値とし、DB/RedisはSingaporeです。会話APIとの実接続を確認した配置を使用しています。リージョンをまたぐDB/Redis接続には通信時間が加わるため、負荷を計測して配置を調整してください。アカウントの既存プロジェクトを確認し、重複作成しないでください。
+Railway CLIは5.74.0で検証しています。本番へ設定を適用する前に、`railway config plan` で対象のサービスと変更項目を確認します。設定はSingaporeのAPI 1台・worker 1台を初期値とし、DB/RedisもSingaporeです。アカウントの既存プロジェクトを確認し、重複作成しないでください。
 
 公式環境の `api` と `worker` は GitHub の `YusukeIwaki/oyobidashi` の `main` から自動デプロイします。`Dockerfile.cloud` が取り込むクラウド・MCP・relay のソース、依存関係やDockerのビルド設定を更新すると、両サービスが再ビルドされます。反映は、リンク済みの `cloud/` で `railway deployment list --service api` と `railway deployment list --service worker` を実行して確認します。
 
