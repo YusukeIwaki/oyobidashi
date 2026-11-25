@@ -622,9 +622,11 @@ if (mode === "authorize") {
   describe(clientDetails);
 } else if (mode === "pair") {
   heading.textContent = voiceSettings ? "音声通話の設定" : "スマホをペアリング";
-  explanation.textContent = fromApp
-    ? "エージェント（MCP）の接続に使ったアカウントでログインすると、このスマホを登録できます。"
-    : "エージェント（MCP）の接続に使ったアカウントでログインすると、スマホを登録する手順を表示します。";
+  explanation.textContent = voiceSettings
+    ? "ペアリングに使ったアカウントでログインすると、音声通話の送信先と同意の状態を確認できます。"
+    : fromApp
+      ? "エージェント（MCP）の接続に使ったアカウントでログインすると、このスマホを登録できます。"
+      : "エージェント（MCP）の接続に使ったアカウントでログインすると、スマホを登録する手順を表示します。";
 } else {
   heading.textContent = "接続済みアプリ";
   const result = new URLSearchParams(location.search).get("claude");
